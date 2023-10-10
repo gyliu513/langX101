@@ -1,2 +1,4 @@
 langchain/.env
+langfuse/.env
+langflow/.env
 langchain/.chroma
