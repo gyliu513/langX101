@@ -3,4 +3,5 @@ langfuse/.env
 langflow/.env
 langchain/.chroma
 embedchain/.env
+helicone/.env
 embedchain/db
