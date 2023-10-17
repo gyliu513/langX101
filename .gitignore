@@ -4,4 +4,5 @@ langflow/.env
 langchain/.chroma
 embedchain/.env
 helicone/.env
+promptlayer/.env
 embedchain/db
