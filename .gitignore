@@ -2,3 +2,5 @@ langchain/.env
 langfuse/.env
 langflow/.env
 langchain/.chroma
+embedchain/.env
+embedchain/db
