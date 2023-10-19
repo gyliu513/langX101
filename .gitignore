@@ -6,3 +6,4 @@ embedchain/.env
 helicone/.env
 promptlayer/.env
 embedchain/db
+.DS_Store
