@@ -1,0 +1,14 @@
+[tool.poetry]
+name = "my-project"
+version = "0.1.0"
+description = ""
+authors = ["Guangya Liu <gyliu@ibm.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.11"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
