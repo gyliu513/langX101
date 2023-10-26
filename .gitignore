@@ -8,3 +8,5 @@ promptlayer/.env
 embedchain/db
 .DS_Store
 watsonx/.env
+openai/.env
+openai/__pycache__
