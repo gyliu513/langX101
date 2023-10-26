@@ -7,3 +7,4 @@ helicone/.env
 promptlayer/.env
 embedchain/db
 .DS_Store
+watsonx/.env
