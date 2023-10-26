@@ -5,11 +5,6 @@ from datetime import datetime
 from dotenv import load_dotenv
 load_dotenv()
 
-'''
-import openai
-from openai.api_resources import ChatCompletion, Completion
-'''
-
 from genai.credentials import Credentials
 from genai.model import Model
 from genai.schemas import GenerateParams
@@ -104,7 +99,7 @@ class WatsonxLangfuse:
             try:
                 startTime = datetime.now()
                 arg_extractor = CreateArgsExtractor(*args, **kwargs)
-                result = func(**arg_extractor.get_openai_args())
+                result = func(**arg_extractor.get_watsonx_args())
                 call_details = self._get_call_details(result, api_resource_class, **arg_extractor.get_langfuse_args())
                 call_details["startTime"] = startTime
                 self._log_result(call_details)
@@ -124,8 +119,34 @@ class WatsonxLangfuse:
         ]
 
         for api_resource_class, method in api_resources_classes:
-            create_method = getattr(api_resource_class, method)
-            setattr(api_resource_class, method, self.langfuse_modified(create_method, api_resource_class))
+            generate_method = getattr(api_resource_class, method)
+            setattr(api_resource_class, method, self.langfuse_modified(generate_method, api_resource_class))
 
 modifier = WatsonxLangfuse()
 modifier.replace_watsonx_funcs()
+
+import os
+
+api_key = os.getenv("GENAI_KEY", None)
+api_endpoint = os.getenv("GENAI_API", None)
+
+bob_params = GenerateParams(
+    decoding_method="sample",
+    max_new_tokens=25,
+    min_new_tokens=1,
+    stream=False,
+    temperature=1,
+    top_k=50,
+    top_p=1,
+)
+
+creds = Credentials(api_key, api_endpoint)
+bob_model = Model("google/flan-ul2", params=bob_params, credentials=creds)
+
+alice_q = "What is 1 + 1?"
+print(f"[Alice][Q] {alice_q}")
+
+
+bob_response = bob_model.generate([alice_q])
+bob_a = bob_response[0].generated_text
+print(f"[Bob][A] {bob_a}")
