@@ -16,10 +16,10 @@ from langfuse.api.resources.commons.types.llm_usage import LlmUsage
 class CreateArgsExtractor:
     def __init__(self, name=None, metadata=None, trace_id=None, **kwargs):
         self.args = {}
-        self.args["name"] = name
-        self.args["metadata"] = metadata
-        self.args["trace_id"] = trace_id
-        self.kwargs = kwargs
+        # self.args["name"] = name
+        # self.args["metadata"] = metadata
+        # self.args["trace_id"] = trace_id
+        self.kwargs = {"prompts": metadata}
 
     def get_langfuse_args(self):
         return {**self.args, **self.kwargs}
@@ -48,7 +48,10 @@ class WatsonxLangfuse:
         cls._instance.langfuse.flush()
 
     def _get_call_details(self, result, api_resource_class, **kwargs):
-        name = kwargs.get("name", "Watsonx-generation")
+        # name = kwargs.get("name", "Watsonx-generation")
+        now = datetime.now()
+        timestamp_str = now.strftime("%Y-%m-%d %H:%M:%S")
+        name = "Watsonx-generation" + timestamp_str
 
         if name is not None and not isinstance(name, str):
             raise TypeError("name must be a string")
@@ -57,7 +60,8 @@ class WatsonxLangfuse:
         if trace_id is not None and not isinstance(trace_id, str):
             raise TypeError("trace_id must be a string")
 
-        metadata = kwargs.get("metadata", {})
+        # metadata = kwargs.get("metadata", {})
+        metadata = {}
 
         if metadata is not None and not isinstance(metadata, dict):
             raise TypeError("metadata must be a dictionary")
@@ -97,22 +101,41 @@ class WatsonxLangfuse:
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
             try:
+                bob_params = GenerateParams(
+                    decoding_method="sample",
+                    max_new_tokens=25,
+                    min_new_tokens=1,
+                    stream=False,
+                    temperature=1,
+                    top_k=50,
+                    top_p=1,
+                )
+
+                creds = Credentials(api_key, api_endpoint)
+                bob_model = Model("google/flan-ul2", params=bob_params, credentials=creds)
                 startTime = datetime.now()
                 arg_extractor = CreateArgsExtractor(*args, **kwargs)
-                result = func(**arg_extractor.get_watsonx_args())
+                alice_q = "What is 1 + 1?"
+                aliceq = [alice_q]
+                # result = bob_model.func(prompts=aliceq)
+                result = func(api_resource_class, prompts=aliceq)
+                # result = func(**arg_extractor.get_watsonx_args())
                 call_details = self._get_call_details(result, api_resource_class, **arg_extractor.get_langfuse_args())
                 call_details["startTime"] = startTime
                 self._log_result(call_details)
             except Exception as ex:
-                call_details = self._get_call_details(ex, api_resource_class, **arg_extractor.get_langfuse_args())
-                call_details["startTime"] = startTime
-                self._log_result(call_details)
+                # call_details = self._get_call_details(ex, api_resource_class, **arg_extractor.get_langfuse_args())
+                # call_details["startTime"] = startTime
+                # self._log_result(call_details)
                 raise ex
 
             return result
 
         return wrapper
 
+    '''
+    Question/Issue: generate is not a class method like openai, how to modify this function??
+    '''
     def replace_watsonx_funcs(self):
         api_resources_classes = [
             (Model, "generate"),
