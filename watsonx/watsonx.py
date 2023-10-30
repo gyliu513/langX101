@@ -70,18 +70,21 @@ class WatsonxLangfuse:
 
         if api_resource_class == Model:
             print("generate")
+            completion = "oooooook"
         else:
             completion = None
 
-        model = kwargs.get("model", None) if isinstance(result, Exception) else result.model
+        model = "google/flan-ul2"
+        # model = kwargs.get("model", None) if isinstance(result, Exception) else result.model
 
-        usage = None if isinstance(result, Exception) or result.usage is None else LlmUsage(**result.usage)
+        usage = None
+        # usage = None if isinstance(result, Exception) or result.usage is None else LlmUsage(**result.usage)
         endTime = datetime.now()
         
         all_details = {
             "status_message": str(result) if isinstance(result, Exception) else None,
             "name": name,
-            "prompt": "xxx",
+            "prompt": "What is 1 + 1?",
             "completion": completion,
             "endTime": endTime,
             "model": model,
@@ -97,27 +100,29 @@ class WatsonxLangfuse:
         generation = InitialGeneration(**call_details)
         self.langfuse.generation(generation)
 
+    def instrument_method(self, cls, method_name):
+        method = getattr(cls, method_name)
+
+        @functools.wraps(method)
+        def wrapper(*args, **kwargs):
+            print(f"Before calling {method.__name__}")
+            arg_extractor = CreateArgsExtractor(*args, **kwargs)
+            startTime = datetime.now()
+            result = method(*args, **kwargs)
+            print(f"After calling {method.__name__}")
+            call_details = self._get_call_details(result, cls, **arg_extractor.get_langfuse_args())
+            call_details["startTime"] = startTime
+            self._log_result(call_details)
+            return result
+
+        setattr(cls, method_name, wrapper)
+
+'''
     def langfuse_modified(self, func, api_resource_class):
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
             try:
-                bob_params = GenerateParams(
-                    decoding_method="sample",
-                    max_new_tokens=25,
-                    min_new_tokens=1,
-                    stream=False,
-                    temperature=1,
-                    top_k=50,
-                    top_p=1,
-                )
-
-                creds = Credentials(api_key, api_endpoint)
-                bob_model = Model("google/flan-ul2", params=bob_params, credentials=creds)
-                startTime = datetime.now()
                 arg_extractor = CreateArgsExtractor(*args, **kwargs)
-                alice_q = "What is 1 + 1?"
-                aliceq = [alice_q]
-                # result = bob_model.func(prompts=aliceq)
                 result = func(api_resource_class, prompts=aliceq)
                 # result = func(**arg_extractor.get_watsonx_args())
                 call_details = self._get_call_details(result, api_resource_class, **arg_extractor.get_langfuse_args())
@@ -133,9 +138,6 @@ class WatsonxLangfuse:
 
         return wrapper
 
-    '''
-    Question/Issue: generate is not a class method like openai, how to modify this function??
-    '''
     def replace_watsonx_funcs(self):
         api_resources_classes = [
             (Model, "generate"),
@@ -144,9 +146,27 @@ class WatsonxLangfuse:
         for api_resource_class, method in api_resources_classes:
             generate_method = getattr(api_resource_class, method)
             setattr(api_resource_class, method, self.langfuse_modified(generate_method, api_resource_class))
+'''
+
+'''
+def instrument_method(cls, method_name):
+    method = getattr(cls, method_name)
+
+    @functools.wraps(method)
+    def wrapper(*args, **kwargs):
+        print(f"Before calling {method.__name__}")
+        result = method(*args, **kwargs)
+        print(f"After calling {method.__name__}")
+        return result
+
+    setattr(cls, method_name, wrapper)
+
+# Instrument the 'display' method of the SimpleClass
+instrument_method(SimpleClass, 'display')
+'''
 
 modifier = WatsonxLangfuse()
-modifier.replace_watsonx_funcs()
+modifier.instrument_method(Model, "generate")
 
 import os
 
