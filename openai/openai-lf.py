@@ -12,6 +12,7 @@ from langfuse import Langfuse
 from langfuse.client import InitialGeneration
 from langfuse.api.resources.commons.types.llm_usage import LlmUsage
 
+from langfuse.model import Usage
 
 class CreateArgsExtractor:
     def __init__(self, name=None, metadata=None, trace_id=None, **kwargs):
@@ -115,6 +116,20 @@ class OpenAILangfuse:
     def _log_result(self, call_details):
         generation = InitialGeneration(**call_details)
         self.langfuse.generation(generation)
+        
+        generationStartTime = datetime.now()
+ 
+        generation2 = self.langfuse.generation(InitialGeneration(
+          name="summary-generation-watsonx",
+          startTime=generationStartTime,
+          endTime=datetime.now(),
+          model="gpt-3.5-turbo",
+          modelParameters={"maxTokens": "1000", "temperature": "0.9"},
+          prompt=[{"role": "system", "content": "You are a helpful assistant."}, {"role": "user", "content": "Please generate a summary of the following documents \nThe engineering department defined the following OKR goals...\nThe marketing department defined the following OKR goals..."}],
+          completion="The Q3 OKRs contain goals for multiple teams...",
+          usage=Usage(promptTokens=50, completionTokens = 49),
+          metadata={"interface": "whatsapp"}
+        ))
 
     def langfuse_modified(self, func, api_resource_class):
         @functools.wraps(func)
@@ -152,8 +167,11 @@ class OpenAILangfuse:
 modifier = OpenAILangfuse()
 modifier.replace_openai_funcs()
 
+now = datetime.now()
+timestamp_str = now.strftime("%Y-%m-%d-%H:%M:%S")
+        
 completion = openai.ChatCompletion.create(
-  name="test-chat-local",
+  name="test-chat-local-" + timestamp_str,
   model="gpt-3.5-turbo",
   messages=[
       {"role": "system", "content": "You are a very accurate calculator. You output only the result of the calculation."},
