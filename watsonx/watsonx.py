@@ -13,6 +13,8 @@ from langfuse import Langfuse
 from langfuse.client import InitialGeneration
 from langfuse.api.resources.commons.types.llm_usage import LlmUsage
 
+from langfuse.model import Usage
+
 class CreateArgsExtractor:
     def __init__(self, name=None, metadata=None, trace_id=None, **kwargs):
         self.args = {}
@@ -50,8 +52,9 @@ class WatsonxLangfuse:
     def _get_call_details(self, result, api_resource_class, **kwargs):
         # name = kwargs.get("name", "Watsonx-generation")
         now = datetime.now()
-        timestamp_str = now.strftime("%Y-%m-%d %H:%M:%S")
-        name = "Watsonx-generation" + timestamp_str
+        timestamp_str = now.strftime("%Y-%m-%d-%H:%M:%S")
+        # name = "Watsonx-generation-xxxxxxx" + timestamp_str
+        name = "Watsonx-generation-xxxxxxx"
 
         if name is not None and not isinstance(name, str):
             raise TypeError("name must be a string")
@@ -97,8 +100,23 @@ class WatsonxLangfuse:
         return all_details
 
     def _log_result(self, call_details):
+        print(call_details)
         generation = InitialGeneration(**call_details)
         self.langfuse.generation(generation)
+        
+        generationStartTime = datetime.now()
+ 
+        generation2 = self.langfuse.generation(InitialGeneration(
+          name="summary-generation-watsonx",
+          startTime=generationStartTime,
+          endTime=datetime.now(),
+          model="gpt-3.5-turbo",
+          modelParameters={"maxTokens": "1000", "temperature": "0.9"},
+          prompt=[{"role": "system", "content": "You are a helpful assistant."}, {"role": "user", "content": "Please generate a summary of the following documents \nThe engineering department defined the following OKR goals...\nThe marketing department defined the following OKR goals..."}],
+          completion="The Q3 OKRs contain goals for multiple teams...",
+          usage=Usage(promptTokens=50, completionTokens = 49),
+          metadata={"interface": "whatsapp"}
+        ))
 
     def instrument_method(self, cls, method_name):
         method = getattr(cls, method_name)
@@ -116,6 +134,7 @@ class WatsonxLangfuse:
             return result
 
         setattr(cls, method_name, wrapper)
+        setattr(Model, "flush_langfuse", self.flush)
 
 '''
     def langfuse_modified(self, func, api_resource_class):
@@ -186,9 +205,8 @@ bob_params = GenerateParams(
 creds = Credentials(api_key, api_endpoint)
 bob_model = Model("google/flan-ul2", params=bob_params, credentials=creds)
 
-alice_q = "What is 1 + 1?"
+alice_q = "What is IBM Cloud Pak for Watson AIOps?"
 print(f"[Alice][Q] {alice_q}")
-
 
 bob_response = bob_model.generate([alice_q])
 bob_a = bob_response[0].generated_text
