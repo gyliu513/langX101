@@ -10,3 +10,4 @@ embedchain/db
 watsonx/.env
 openai/.env
 openai/__pycache__
+langfuse/openai-test/.env
