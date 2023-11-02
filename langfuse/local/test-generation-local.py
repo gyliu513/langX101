@@ -26,3 +26,5 @@ generation = langfuse.generation(InitialGeneration(
     usage=Usage(promptTokens=50, completionTokens = 49),
     metadata={"interface": "whatsapp"}
 ))
+
+langfuse.flush()
