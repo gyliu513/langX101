@@ -205,13 +205,12 @@ model = Model(
     project_id = project_id
     )
 
-prompt_input = """for John Doe's successful delivery of "X11" project
+prompt_input = """Calculate result
 
-Write a thank you note for attending a workshop.
+Input:
+what is the capital of China.
 
-Attendees: interns
-Topic: codefest, AI
-Tone: energetic
+Output:
 """
 
 print("Submitting generation request...")

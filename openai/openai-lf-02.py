@@ -13,7 +13,7 @@ timestamp_str = now.strftime("%Y-%m-%d-%H:%M:%S")
 completion = openai.ChatCompletion.create(
   name="test-chat-local-" + timestamp_str,
   metadata={"openai_chatCompletion": "testdata"},
-  trace_id=trace_id,
+  #trace_id=trace_id,
   model="gpt-3.5-turbo",
   messages=[
       {"role": "system", "content": "You are a very accurate calculator. You output only the result of the calculation."},
