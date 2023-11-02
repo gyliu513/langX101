@@ -53,8 +53,7 @@ class WatsonxLangfuse:
         # name = kwargs.get("name", "Watsonx-generation")
         now = datetime.now()
         timestamp_str = now.strftime("%Y-%m-%d-%H:%M:%S")
-        # name = "Watsonx-generation-xxxxxxx" + timestamp_str
-        name = "Watsonx-generation-xxxxxxx"
+        name = "Watsonx-generation-xxxxxxx-" + timestamp_str
 
         if name is not None and not isinstance(name, str):
             raise TypeError("name must be a string")
@@ -95,7 +94,7 @@ class WatsonxLangfuse:
             "usage": usage,
             "metadata": metadata,
             "level": "ERROR" if isinstance(result, Exception) else "DEFAULT",
-            "trace_id": trace_id,
+            # "trace_id": trace_id,
         }
         return all_details
 
