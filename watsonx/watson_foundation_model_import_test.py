@@ -2,16 +2,9 @@ from datetime import datetime
 
 from dotenv import load_dotenv, find_dotenv
 load_dotenv(find_dotenv())
-# import ibm_watson_machine_learning.foundation_models as watsonf
-# from ibm_watson_machine_learning.foundation_models import Model
+
 from langfuse import Langfuse
-#from watsonxai_lib import Model
 from langfuse.ibm_watson_machine_learning.foundation_models import Model
-
-# from genai.credentials import Credentials
-# from genai.model import Model
-# from genai.schemas import GenerateParams
-
 
 import os
 
