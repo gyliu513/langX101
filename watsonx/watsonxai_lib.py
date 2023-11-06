@@ -2,19 +2,19 @@ import threading
 import functools
 from datetime import datetime
 
-from dotenv import load_dotenv, find_dotenv
-load_dotenv(find_dotenv())
-import ibm_watson_machine_learning.foundation_models as watsonf
+import ibm_watson_machine_learning.foundation_models as watson_foundation_models
 from ibm_watson_machine_learning.foundation_models import Model
-
-# from genai.credentials import Credentials
-# from genai.model import Model
-# from genai.schemas import GenerateParams
 
 from langfuse import Langfuse
 from langfuse.client import InitialGeneration
 from langfuse.api.resources.commons.types.llm_usage import LlmUsage
 import tiktoken
+
+## put this file renamed as 'model.py' under "site-packages/langfuse/ibm_watson_machine_learning/foundation_models" alone with 
+# "__init__py" file content below:
+# from .model import Model
+# Use import as following:
+# from langfuse.ibm_watson_machine_learning.foundation_models import Model
 
 class CreateArgsExtractor:
     def __init__(self, watson_model=None, name=None, metadata=None, **kwargs):
@@ -118,7 +118,7 @@ class WatsonxLangfuse:
     def _log_result(self, call_details):
         generation = InitialGeneration(**call_details)
         self.langfuse.generation(generation)
-
+    
     def langfuse_modified(self, func, api_resource_class):
         self.watson_model = None
 
@@ -138,6 +138,7 @@ class WatsonxLangfuse:
                 self._log_result(call_details)
                 raise ex
 
+            self.langfuse.flush()
             return response
 
         return wrapper
@@ -152,153 +153,29 @@ class WatsonxLangfuse:
             create_method = getattr(api_resource_class, method)
             setattr(api_resource_class, method, self.langfuse_modified(create_method, api_resource_class))
 
-        setattr(watsonf, "flush_langfuse", self.flush)
+        setattr(watson_foundation_models, "flush_langfuse", self.flush)
 
-    def instrument_method(self, cls, method_name):
-        method = getattr(cls, method_name)
-        self.watson_model = None
 
-        @functools.wraps(method)
-        def wrapper(*args, **kwargs):
-            print(f"Before calling {method.__name__}")
-            arg_extractor = CreateArgsExtractor(*args, **kwargs)
-            self.watson_model = arg_extractor.get_watsonx_model()
-            startTime = datetime.now()
-            result = method(*arg_extractor.get_watsonx_args(), **arg_extractor.get_watsonx_kwargs())
-            print(f"After calling {method.__name__}")
-            call_details = self._get_call_details(result, cls, **arg_extractor.get_langfuse_args())
-            call_details["startTime"] = startTime
-            self._log_result(call_details)
+    # def instrument_method(self, cls, method_name):
+    #     method = getattr(cls, method_name)
+    #     self.watson_model = None
+
+    #     @functools.wraps(method)
+    #     def wrapper(*args, **kwargs):
+    #         arg_extractor = CreateArgsExtractor(*args, **kwargs)
+    #         self.watson_model = arg_extractor.get_watsonx_model()
+    #         startTime = datetime.now()
+    #         result = method(*arg_extractor.get_watsonx_args(), **arg_extractor.get_watsonx_kwargs())
+    #         call_details = self._get_call_details(result, cls, **arg_extractor.get_langfuse_args())
+    #         call_details["startTime"] = startTime
+    #         self._log_result(call_details)
             
-            return result
+    #         return result
 
-        setattr(cls, method_name, wrapper)
-        setattr(watsonf, "flush_langfuse", self.flush)
-
-'''
-    def langfuse_modified(self, func, api_resource_class):
-        @functools.wraps(func)
-        def wrapper(*args, **kwargs):
-            try:
-                arg_extractor = CreateArgsExtractor(*args, **kwargs)
-                result = func(api_resource_class, prompts=aliceq)
-                # result = func(**arg_extractor.get_watsonx_args())
-                call_details = self._get_call_details(result, api_resource_class, **arg_extractor.get_langfuse_args())
-                call_details["startTime"] = startTime
-                self._log_result(call_details)
-            except Exception as ex:
-                # call_details = self._get_call_details(ex, api_resource_class, **arg_extractor.get_langfuse_args())
-                # call_details["startTime"] = startTime
-                # self._log_result(call_details)
-                raise ex
-
-            return result
-
-        return wrapper
-
-    def replace_watsonx_funcs(self):
-        api_resources_classes = [
-            (Model, "generate"),
-        ]
-
-        for api_resource_class, method in api_resources_classes:
-            generate_method = getattr(api_resource_class, method)
-            setattr(api_resource_class, method, self.langfuse_modified(generate_method, api_resource_class))
-'''
-
-'''
-def instrument_method(cls, method_name):
-    method = getattr(cls, method_name)
-
-    @functools.wraps(method)
-    def wrapper(*args, **kwargs):
-        print(f"Before calling {method.__name__}")
-        result = method(*args, **kwargs)
-        print(f"After calling {method.__name__}")
-        return result
-
-    setattr(cls, method_name, wrapper)
-
-# Instrument the 'display' method of the SimpleClass
-instrument_method(SimpleClass, 'display')
-'''
+    #     setattr(cls, method_name, wrapper)
+    #     setattr(watson_foundation_models, "flush_langfuse", self.flush)
 
 modifier = WatsonxLangfuse()
 # modifier.instrument_method(Model, "generate_text")
 modifier.replace_watson_funcs()
 
-
-import os
-
-def get_credentials(api_key):
-    return {
-        "url" : "https://us-south.ml.cloud.ibm.com",
-        "apikey" : api_key,
-    }
-
-iam_api_key = os.environ["IAM_API_KEY"]
-project_id = os.environ["PROJECT_ID"]
-print(project_id)
-
-model_id = "google/flan-ul2"
-
-parameters = {
-    "decoding_method": "sample",
-    "max_new_tokens": 200,
-    "min_new_tokens": 50,
-    "random_seed": 111,
-    "temperature": 0.9,
-    "top_k": 50,
-    "top_p": 1,
-    "repetition_penalty": 2
-}
-
-model = watsonf.Model(
-    model_id = model_id,
-    params = parameters,
-    credentials = get_credentials(iam_api_key),
-    project_id = project_id
-    )
-
-
-prompt_input = """Calculate result
-
-Input:
-what is the capital of China.
-
-Output:
-"""
-
-now = datetime.now()
-timestamp_str = now.strftime("%Y-%m-%d %H:%M:%S")
-name = "Watsonx-generation-foundation-" + timestamp_str
-print("Submitting generation request...")
-
-# generated_response = model.generate_text(
-#     name=name, 
-#     metadata={"generate_text":"some values"},
-#     prompt=prompt_input
-#     )
-
-model_id = "meta-llama/llama-2-70b-chat"
-parameters = {
-    "max_new_tokens": 50,
-    "min_new_tokens": 10
-}
-
-model = Model(
-    model_id = model_id,
-    params = parameters,
-    credentials=get_credentials(iam_api_key),
-    project_id= project_id
-    )
-
-prompt_input = "What is the result of 1+1"
-generated_response = model.generate(
-    name=name, 
-    metadata={"generate":"testresult"},
-    prompt=prompt_input)
-
-modifier.langfuse.flush()
-
-print(generated_response)
