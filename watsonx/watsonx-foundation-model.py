@@ -17,19 +17,24 @@ from langfuse.api.resources.commons.types.llm_usage import LlmUsage
 import tiktoken
 
 class CreateArgsExtractor:
-    def __init__(self, name=None, metadata=None, trace_id=None, **kwargs):
+    def __init__(self, watson_model=None, name=None, metadata=None, **kwargs):
         self.args = {}
+        self.watson_model = watson_model
         self.args["name"] = name
         self.args["metadata"] = metadata
-        self.args["trace_id"] = trace_id
-        self.kwargs = kwargs  # {"prompts": metadata}
+        self.kwargs = kwargs
 
     def get_langfuse_args(self):
         return {**self.args, **self.kwargs}
 
-    def get_watsonx_args(self):
+    def get_watsonx_kwargs(self):
         return self.kwargs
 
+    def get_watsonx_args(self):
+        return (self.watson_model,)
+
+    def get_watsonx_model(self):
+        return self.watson_model
 
 class WatsonxLangfuse:
     _instance = None
@@ -51,26 +56,29 @@ class WatsonxLangfuse:
         cls._instance.langfuse.flush()
 
     # count plain text prompt and result
-    # need to check if watsonx model has other formats.
+    # need to further investigate watsonx model token count rules.
     def count_token(self, message):
         encoding = tiktoken.get_encoding("cl100k_base")
         return len(encoding.encode(message))
 
-    def _get_call_details(self, result, api_resource_class, **kwargs):
-        #name = kwargs.get("name", "Watsonx-generation")
-        now = datetime.now()
-        timestamp_str = now.strftime("%Y-%m-%d %H:%M:%S")
-        name = "Watsonx-generation-foundation-" + timestamp_str
+    def count_token_params(self, params):
+        encoding = tiktoken.get_encoding("cl100k_base")
+        token_count = 0
+        for key, value in params.items():
+            token_count += len(encoding.encode(key)) + len(encoding.encode(str(value)))
+        return token_count
 
+    def _get_call_details(self, result, api_resource_class, **kwargs):
+        name = kwargs.get("name", "Watsonx-generation")
         if name is not None and not isinstance(name, str):
             raise TypeError("name must be a string")
 
-        trace_id = kwargs.get("trace_id", "Watsonx-generation")
-        if trace_id is not None and not isinstance(trace_id, str):
-            raise TypeError("trace_id must be a string")
+        # trace_id = kwargs.get("trace_id", "Watsonx-generation")
+        # if trace_id is not None and not isinstance(trace_id, str):
+        #     raise TypeError("trace_id must be a string")
 
-        # metadata = kwargs.get("metadata", {})
-        metadata = {}
+        metadata = kwargs.get("metadata", {})
+        #metadata = {}
 
         if metadata is not None and not isinstance(metadata, dict):
             raise TypeError("metadata must be a dictionary")
@@ -79,15 +87,19 @@ class WatsonxLangfuse:
 
         if api_resource_class == Model:
             prompt = kwargs.get("prompt", "")
-            completion = "oooooook"
+            completion = result
         else:
             completion = None
-
-        model = "google/flan-ul2"
+        watson_model =  self.watson_model
+        model = watson_model.model_id
+        modelParameters = watson_model.params
+        #model = "google/flan-ul2"
         # model = kwargs.get("model", None) if isinstance(result, Exception) else result.model
 
         
-        usage = LlmUsage(prompt_tokens=self.count_token(prompt), completion_tokens=self.count_token(result))
+        usage = LlmUsage(prompt_tokens=self.count_token(prompt) +
+            self.count_token_params(modelParameters),
+            completion_tokens=self.count_token(result))
         # usage = None if isinstance(result, Exception) or result.usage is None else LlmUsage(**result.usage)
         endTime = datetime.now()
         # modelParameters = {
@@ -104,7 +116,7 @@ class WatsonxLangfuse:
             "completion": completion,
             "endTime": endTime,
             "model": model,
-            "modelParameters": "",
+            "modelParameters": modelParameters,
             "usage": usage,
             "metadata": metadata,
             "level": "ERROR" if isinstance(result, Exception) else "DEFAULT",
@@ -118,18 +130,19 @@ class WatsonxLangfuse:
 
     def instrument_method(self, cls, method_name):
         method = getattr(cls, method_name)
+        self.watson_model = None
 
         @functools.wraps(method)
         def wrapper(*args, **kwargs):
             print(f"Before calling {method.__name__}")
             arg_extractor = CreateArgsExtractor(*args, **kwargs)
+            self.watson_model = arg_extractor.get_watsonx_model()
             startTime = datetime.now()
-            result = method(*args, **kwargs)
+            result = method(*arg_extractor.get_watsonx_args(), **arg_extractor.get_watsonx_kwargs())
             print(f"After calling {method.__name__}")
             call_details = self._get_call_details(result, cls, **arg_extractor.get_langfuse_args())
             call_details["startTime"] = startTime
             self._log_result(call_details)
-            
             
             return result
 
@@ -206,7 +219,7 @@ parameters = {
     "max_new_tokens": 200,
     "min_new_tokens": 50,
     "random_seed": 111,
-    "temperature": 0.8,
+    "temperature": 0.9,
     "top_k": 50,
     "top_p": 1,
     "repetition_penalty": 2
@@ -219,6 +232,7 @@ model = watsonf.Model(
     project_id = project_id
     )
 
+
 prompt_input = """Calculate result
 
 Input:
@@ -227,38 +241,17 @@ what is the capital of China.
 Output:
 """
 
+now = datetime.now()
+timestamp_str = now.strftime("%Y-%m-%d %H:%M:%S")
+name = "Watsonx-generation-foundation-" + timestamp_str
 print("Submitting generation request...")
+
 generated_response = model.generate_text(
-    name="watson-name-test", 
+    name=name, 
     metadata={"metakey":"some values"},
-    trace_id="01",
     prompt=prompt_input
     )
-# -- Test token count ---
-# now = datetime.now()
-# timestamp_str = now.strftime("%Y-%m-%d-%H:%M:%S")
-
-# generation = modifier.langfuse.generation(InitialGeneration(
-#     name="watson-token-test=" + timestamp_str,
-#     startTime=now,
-#     endTime=datetime.now(),
-#     model="gpt-3.5-turboxxxxx",
-#     modelParameters={"maxTokens": "1000", "temperature": "0.9"},
-#     prompt=[{"role": "system", "content": "You are a helpful assistant."}, {"role": "user", "content": "Please generate a summary of the following documents \nThe engineering department defined the following OKR goals...\nThe marketing department defined the following OKR goals..."}],
-#     completion="The Q3 OKRs contain goals for multiple teams...",
-#     usage=LlmUsage(prompt_tokens=88, completion_tokens=8,total_tokens=96),
-#     metadata={"interface": "whatsapp"}
-# ))
 
 modifier.langfuse.flush()
 
 print(generated_response)
-
-"""
-Output:
-Submitting generation request...
-Before calling generate_text
-After calling generate_text
-generate
-We are thrilled to have you on our team! Thank you so much for participating in the codefest. There were lots of great ideas that came out of the discussions, and we'll definitely be looking into many of them during our ongoing work on X11. Please feel free to reach out to me with any questions or thoughts you might have about other projects or events at Enron Labs. I look forward to working with you further. Sincerely,
-"""
