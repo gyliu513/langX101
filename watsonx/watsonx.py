@@ -135,54 +135,6 @@ class WatsonxLangfuse:
         setattr(cls, method_name, wrapper)
         setattr(Model, "flush_langfuse", self.flush)
 
-'''
-    def langfuse_modified(self, func, api_resource_class):
-        @functools.wraps(func)
-        def wrapper(*args, **kwargs):
-            try:
-                arg_extractor = CreateArgsExtractor(*args, **kwargs)
-                result = func(api_resource_class, prompts=aliceq)
-                # result = func(**arg_extractor.get_watsonx_args())
-                call_details = self._get_call_details(result, api_resource_class, **arg_extractor.get_langfuse_args())
-                call_details["startTime"] = startTime
-                self._log_result(call_details)
-            except Exception as ex:
-                # call_details = self._get_call_details(ex, api_resource_class, **arg_extractor.get_langfuse_args())
-                # call_details["startTime"] = startTime
-                # self._log_result(call_details)
-                raise ex
-
-            return result
-
-        return wrapper
-
-    def replace_watsonx_funcs(self):
-        api_resources_classes = [
-            (Model, "generate"),
-        ]
-
-        for api_resource_class, method in api_resources_classes:
-            generate_method = getattr(api_resource_class, method)
-            setattr(api_resource_class, method, self.langfuse_modified(generate_method, api_resource_class))
-'''
-
-'''
-def instrument_method(cls, method_name):
-    method = getattr(cls, method_name)
-
-    @functools.wraps(method)
-    def wrapper(*args, **kwargs):
-        print(f"Before calling {method.__name__}")
-        result = method(*args, **kwargs)
-        print(f"After calling {method.__name__}")
-        return result
-
-    setattr(cls, method_name, wrapper)
-
-# Instrument the 'display' method of the SimpleClass
-instrument_method(SimpleClass, 'display')
-'''
-
 modifier = WatsonxLangfuse()
 modifier.instrument_method(Model, "generate")
 

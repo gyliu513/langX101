@@ -9,8 +9,6 @@ langfuse = Langfuse()
 from datetime import datetime
 from langfuse.model import InitialGeneration, Usage
 
-
- 
 generationStartTime = datetime.now()
  
 # call to an LLM API
