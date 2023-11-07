@@ -7,7 +7,9 @@ helicone/.env
 promptlayer/.env
 embedchain/db
 .DS_Store
+.env
 watsonx/.env
+watsonx/__pycache__/
 openai/.env
 openai/__pycache__
 langfuse/openai-test/.env
