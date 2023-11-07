@@ -3,8 +3,8 @@ from datetime import datetime
 from dotenv import load_dotenv, find_dotenv
 load_dotenv(find_dotenv())
 
-from langfuse import Langfuse
 from langfuse.ibm_watson_machine_learning.foundation_models import Model
+#from watsonxai_lib import Model
 
 import os
 

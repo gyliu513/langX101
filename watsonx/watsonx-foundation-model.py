@@ -4,7 +4,7 @@ from datetime import datetime
 
 from dotenv import load_dotenv, find_dotenv
 load_dotenv(find_dotenv())
-import ibm_watson_machine_learning.foundation_models as watsonf
+import ibm_watson_machine_learning.foundation_models as watson_foundation_models
 from ibm_watson_machine_learning.foundation_models import Model
 
 # from genai.credentials import Credentials
@@ -14,7 +14,7 @@ from ibm_watson_machine_learning.foundation_models import Model
 from langfuse import Langfuse
 from langfuse.client import InitialGeneration
 from langfuse.api.resources.commons.types.llm_usage import LlmUsage
-import tiktoken
+import tiktoken, os
 
 class CreateArgsExtractor:
     def __init__(self, watson_model=None, name=None, metadata=None, **kwargs):
@@ -152,35 +152,11 @@ class WatsonxLangfuse:
             create_method = getattr(api_resource_class, method)
             setattr(api_resource_class, method, self.langfuse_modified(create_method, api_resource_class))
 
-        setattr(watsonf, "flush_langfuse", self.flush)
-
-    def instrument_method(self, cls, method_name):
-        method = getattr(cls, method_name)
-        self.watson_model = None
-
-        @functools.wraps(method)
-        def wrapper(*args, **kwargs):
-            print(f"Before calling {method.__name__}")
-            arg_extractor = CreateArgsExtractor(*args, **kwargs)
-            self.watson_model = arg_extractor.get_watsonx_model()
-            startTime = datetime.now()
-            result = method(*arg_extractor.get_watsonx_args(), **arg_extractor.get_watsonx_kwargs())
-            print(f"After calling {method.__name__}")
-            call_details = self._get_call_details(result, cls, **arg_extractor.get_langfuse_args())
-            call_details["startTime"] = startTime
-            self._log_result(call_details)
-            
-            return result
-
-        setattr(cls, method_name, wrapper)
-        setattr(watsonf, "flush_langfuse", self.flush)
+        setattr(watson_foundation_models, "flush_langfuse", self.flush)
 
 modifier = WatsonxLangfuse()
-# modifier.instrument_method(Model, "generate_text")
 modifier.replace_watson_funcs()
 
-
-import os
 
 def get_credentials(api_key):
     return {
@@ -190,7 +166,6 @@ def get_credentials(api_key):
 
 iam_api_key = os.environ["IAM_API_KEY"]
 project_id = os.environ["PROJECT_ID"]
-print(project_id)
 
 model_id = "google/flan-ul2"
 
@@ -205,7 +180,7 @@ parameters = {
     "repetition_penalty": 2
 }
 
-model = watsonf.Model(
+model = Model(
     model_id = model_id,
     params = parameters,
     credentials = get_credentials(iam_api_key),

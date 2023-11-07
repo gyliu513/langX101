@@ -155,27 +155,6 @@ class WatsonxLangfuse:
 
         setattr(watson_foundation_models, "flush_langfuse", self.flush)
 
-
-    # def instrument_method(self, cls, method_name):
-    #     method = getattr(cls, method_name)
-    #     self.watson_model = None
-
-    #     @functools.wraps(method)
-    #     def wrapper(*args, **kwargs):
-    #         arg_extractor = CreateArgsExtractor(*args, **kwargs)
-    #         self.watson_model = arg_extractor.get_watsonx_model()
-    #         startTime = datetime.now()
-    #         result = method(*arg_extractor.get_watsonx_args(), **arg_extractor.get_watsonx_kwargs())
-    #         call_details = self._get_call_details(result, cls, **arg_extractor.get_langfuse_args())
-    #         call_details["startTime"] = startTime
-    #         self._log_result(call_details)
-            
-    #         return result
-
-    #     setattr(cls, method_name, wrapper)
-    #     setattr(watson_foundation_models, "flush_langfuse", self.flush)
-
 modifier = WatsonxLangfuse()
-# modifier.instrument_method(Model, "generate_text")
 modifier.replace_watson_funcs()
 
