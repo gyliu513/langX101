@@ -13,7 +13,7 @@ pip install opentelemetry-exporter-otlp
 ## Run the openai script
 
 ```
-python openai-otel.py
+python openai-manual.py
 ```
 
 ## Check from Jaeger
