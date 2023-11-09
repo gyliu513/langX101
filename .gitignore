@@ -15,3 +15,5 @@ openai/__pycache__
 langfuse/openai-test/.env
 langfuse/openai-test/__pycache__/
 langfuse/local/.env
+otel/.env
+otel/__pycache__
