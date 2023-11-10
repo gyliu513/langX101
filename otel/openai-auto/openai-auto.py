@@ -1,12 +1,20 @@
 from dotenv import load_dotenv
 import os
 load_dotenv()
-import openai
 
-openai.api_key = os.getenv("OPENAI_API_KEY")
+from openai import OpenAI
 
-response = openai.Completion.create(
-    engine="text-davinci-002",
-    prompt="Generate some text...",
-    max_tokens=50,
+client = OpenAI(
+    # defaults to os.environ.get("OPENAI_API_KEY")
+    api_key=os.getenv("OPENAI_API_KEY"),
+)
+
+chat_completion = client.chat.completions.create(
+    messages=[
+        {
+            "role": "user",
+            "content": "Say this is a test",
+        }
+    ],
+    model="gpt-3.5-turbo",
 )

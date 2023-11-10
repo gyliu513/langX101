@@ -1,9 +1,6 @@
 from dotenv import load_dotenv
 import os
 load_dotenv()
-import openai
-
-openai.api_key = os.getenv("OPENAI_API_KEY")
 
 from opentelemetry import trace
 from opentelemetry.instrumentation.wsgi import collect_request_attributes
@@ -40,10 +37,22 @@ trace.set_tracer_provider(tracer_provider)
 
 tracer = trace.get_tracer_provider().get_tracer(__name__)
 
+from openai import OpenAI
+
 with tracer.start_as_current_span("OpenAI_API_Call"):
-    # Your OpenAI API code here
-    response = openai.Completion.create(
-        engine="text-davinci-002",
-        prompt="Generate some text...",
-        max_tokens=50,
+
+    client = OpenAI(
+        # defaults to os.environ.get("OPENAI_API_KEY")
+        api_key=os.getenv("OPENAI_API_KEY"),
     )
+
+    chat_completion = client.chat.completions.create(
+        messages=[
+           {
+                "role": "user",
+                "content": "Say this is a test",
+            }
+        ],
+        model="gpt-3.5-turbo",
+    )
+
