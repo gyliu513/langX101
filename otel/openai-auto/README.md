@@ -10,6 +10,12 @@ opentelemetry-bootstrap -a install
 pip install opentelemetry-exporter-otlp
 ```
 
+## ignore SSL errors
+
+```
+export OTEL_EXPORTER_OTLP_INSECURE=true
+```
+
 ## Run the openai script
 
 ```

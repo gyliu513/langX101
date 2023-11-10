@@ -8,6 +8,7 @@ readme = "README.md"
 [tool.poetry.dependencies]
 python = "^3.11"
 opentelemetry-instrumentation-requests = "^0.41b0"
+opentelemetry-instrument-openai = "^0.7.0"
 
 
 [build-system]
