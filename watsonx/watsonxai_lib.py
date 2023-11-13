@@ -17,10 +17,11 @@ import tiktoken
 # from langfuse.ibm_watson_machine_learning.foundation_models import Model
 
 class CreateArgsExtractor:
-    def __init__(self, watson_model=None, name=None, metadata=None, **kwargs):
+    def __init__(self, watson_model=None, name=None, trace_id=None, metadata=None, **kwargs):
         self.args = {}
         self.watson_model = watson_model
         self.args["name"] = name
+        self.args["trace_id"] = trace_id
         self.args["metadata"] = metadata
         self.kwargs = kwargs
 
@@ -71,9 +72,9 @@ class WatsonxLangfuse:
         if name is not None and not isinstance(name, str):
             raise TypeError("name must be a string")
 
-        # trace_id = kwargs.get("trace_id", "Watsonx-generation")
-        # if trace_id is not None and not isinstance(trace_id, str):
-        #     raise TypeError("trace_id must be a string")
+        trace_id = kwargs.get("trace_id", "Watsonx-generation")
+        if trace_id is not None and not isinstance(trace_id, str):
+            raise TypeError("trace_id must be a string")
 
         metadata = kwargs.get("metadata", {})
         if metadata is not None and not isinstance(metadata, dict):
