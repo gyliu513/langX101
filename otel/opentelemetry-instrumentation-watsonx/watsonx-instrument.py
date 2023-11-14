@@ -33,6 +33,48 @@ WRAPPED_METHODS_VERSION_1 = [
     },
 ]
 
+def _set_span_attribute(span, name, value):
+    if value is not None:
+        if value != "":
+            span.set_attribute(name, value)
+    return
+
+def _set_api_attributes(span):
+    _set_span_attribute(
+        span,
+        WatsonxSpanAttributes.WATSONX_API_BASE,
+        "https://us-south.ml.cloud.ibm.com",
+    )
+    _set_span_attribute(span, WatsonxSpanAttributes.WATSONX_API_TYPE, "watsonx.ai")
+    _set_span_attribute(
+        span, WatsonxSpanAttributes.WATSONX_API_VERSION, "1.0"
+    )
+
+    return
+
+def _set_input_attributes(span, llm_request_type, kwargs):
+    _set_span_attribute(span, SpanAttributes.LLM_REQUEST_MODEL, kwargs.get("model"))
+    # Set other attributes
+    return
+
+def _set_response_attributes(span, llm_request_type, response):
+    _set_span_attribute(span, SpanAttributes.LLM_RESPONSE_MODEL, response.get("model"))
+   # Set other attributes
+
+    _set_span_attribute(
+        span, SpanAttributes.LLM_USAGE_TOTAL_TOKENS, "100",
+    )
+    _set_span_attribute(
+        span,
+        SpanAttributes.LLM_USAGE_COMPLETION_TOKENS,
+        "66",
+    )
+    _set_span_attribute(
+        span, SpanAttributes.LLM_USAGE_PROMPT_TOKENS, "34"
+    )
+
+    return
+
 def _with_tracer_wrapper(func):
     """Helper for providing tracer for wrapper functions."""
 
@@ -61,10 +103,20 @@ def _wrap(tracer, to_wrap, wrapped, instance, args, kwargs):
         },
     )
 
+    _set_api_attributes(span)
+    _set_input_attributes(span, "watsonx.ai", kwargs)
+
     response = wrapped(*args, **kwargs)
+
+    _set_response_attributes(span, "watsonx.ai", response)
 
     span.end()
     return response
+
+class WatsonxSpanAttributes:
+    WATSONX_API_VERSION = "watsonx.api_version"
+    WATSONX_API_BASE = "watsonx.api_base"
+    WATSONX_API_TYPE = "watsonx.api_type"
 
 class WatsonxInstrumentor(BaseInstrumentor):
     """An instrumentor for Watsonx's client library."""
@@ -125,7 +177,7 @@ from opentelemetry.trace import (
 )
 
 tracer_provider = TracerProvider(
-    resource=Resource.create({'service.name': 'my-service-watsonx-12'}),
+    resource=Resource.create({'service.name': 'my-service-watsonx-15'}),
 )
 
 # Create an OTLP Span Exporter

@@ -366,6 +366,8 @@ from dotenv import load_dotenv
 import os
 load_dotenv()
 
+os.environ['OTEL_EXPORTER_OTLP_INSECURE'] = 'True'
+
 from opentelemetry import trace
 from opentelemetry.instrumentation.wsgi import collect_request_attributes
 from opentelemetry.propagate import extract
