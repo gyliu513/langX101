@@ -32,7 +32,6 @@ export OTEL_EXPORTER_OTLP_INSECURE=true
 ```console
 (py311) guangyaliu@Guangyas-MacBook-Pro-2 tests % python openai-instrument.py
 calling instrument
-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
 ChatCompletion(id='chatcmpl-8KsKLRaePBYVpkkLM6QUcgEORMQsH', choices=[Choice(finish_reason='stop', index=0, message=ChatCompletionMessage(content='This is a test.', role='assistant', function_call=None, tool_calls=None))], created=1699986085, model='gpt-3.5-turbo-0613', object='chat.completion', system_fingerprint=None, usage=CompletionUsage(completion_tokens=5, prompt_tokens=12, total_tokens=17))
 ```
 
