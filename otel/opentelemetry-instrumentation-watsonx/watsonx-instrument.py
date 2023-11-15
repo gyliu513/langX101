@@ -5,7 +5,6 @@ import types
 import pkg_resources
 from typing import Collection
 from wrapt import wrap_function_wrapper
-import openai
 
 from opentelemetry import context as context_api
 from opentelemetry.trace import get_tracer, SpanKind
@@ -57,9 +56,9 @@ def _set_input_attributes(span, llm_request_type, instance, kwargs):
     # Set other attributes
     modelParameters = instance.params
     # need to update opentelemetry.semconv.ai to add Watsonx model parameters.
-    _set_span_attribute(span, SpanAttributes.LLM_DECODING_METHOD, modelParameters.get("decoding_method"))
+    # _set_span_attribute(span, SpanAttributes.LLM_DECODING_METHOD, modelParameters.get("decoding_method"))
     _set_span_attribute(span, SpanAttributes.LLM_TEMPERATURE, modelParameters.get("temperature"))
-    _set_span_attribute(span, SpanAttributes.LLM_RANDOM_SEED, modelParameters.get("random_seed"))
+    # _set_span_attribute(span, SpanAttributes.LLM_RANDOM_SEED, modelParameters.get("random_seed"))
     _set_span_attribute(span, SpanAttributes.LLM_TOP_P, modelParameters.get("top_p"))
     _set_span_attribute(span, f"{SpanAttributes.LLM_PROMPTS}.0.user", kwargs.get("prompt"))
     
@@ -159,9 +158,13 @@ class WatsonxInstrumentor(BaseInstrumentor):
             unwrap(f"openai.{wrap_object}", wrapped_method.get("method"))
 
 
-# from dotenv import load_dotenv
+###################################################################
+#####################This is the test program######################
+###################################################################
+
+from dotenv import load_dotenv
 import os
-# load_dotenv()
+load_dotenv()
 
 os.environ['OTEL_EXPORTER_OTLP_INSECURE'] = 'True'
 
@@ -185,7 +188,7 @@ from opentelemetry.trace import (
 )
 
 tracer_provider = TracerProvider(
-    resource=Resource.create({'service.name': 'my-service-watsonx-15'}),
+    resource=Resource.create({'service.name': os.environ["SVC_NAME"]}),
 )
 
 # Create an OTLP Span Exporter
@@ -239,6 +242,7 @@ model = Model(
     )
 
 prompt_input = "What is the result of 1+1"
+print(prompt_input)
 
 generated_response = model.generate(prompt=prompt_input)
-# print(generated_response)
+print(generated_response["results"][0]["generated_text"])
