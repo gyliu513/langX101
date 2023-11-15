@@ -52,25 +52,33 @@ def _set_api_attributes(span):
 
     return
 
-def _set_input_attributes(span, llm_request_type, kwargs):
-    _set_span_attribute(span, SpanAttributes.LLM_REQUEST_MODEL, kwargs.get("model"))
+def _set_input_attributes(span, llm_request_type, instance, kwargs):
+    _set_span_attribute(span, SpanAttributes.LLM_REQUEST_MODEL, instance.model_id)
     # Set other attributes
+    modelParameters = instance.params
+    # need to update opentelemetry.semconv.ai to add Watsonx model parameters.
+    _set_span_attribute(span, SpanAttributes.LLM_DECODING_METHOD, modelParameters.get("decoding_method"))
+    _set_span_attribute(span, SpanAttributes.LLM_TEMPERATURE, modelParameters.get("temperature"))
+    _set_span_attribute(span, SpanAttributes.LLM_RANDOM_SEED, modelParameters.get("random_seed"))
+    _set_span_attribute(span, SpanAttributes.LLM_TOP_P, modelParameters.get("top_p"))
+    _set_span_attribute(span, f"{SpanAttributes.LLM_PROMPTS}.0.user", kwargs.get("prompt"))
+    
     return
 
 def _set_response_attributes(span, llm_request_type, response):
     _set_span_attribute(span, SpanAttributes.LLM_RESPONSE_MODEL, response.get("model"))
    # Set other attributes
 
+    usage = response['results'][0]
     _set_span_attribute(
-        span, SpanAttributes.LLM_USAGE_TOTAL_TOKENS, "100",
+        span, SpanAttributes.LLM_USAGE_TOTAL_TOKENS, usage.get("input_token_count") + usage.get("generated_token_count"),
     )
     _set_span_attribute(
         span,
-        SpanAttributes.LLM_USAGE_COMPLETION_TOKENS,
-        "66",
+        SpanAttributes.LLM_USAGE_COMPLETION_TOKENS, usage.get("generated_token_count"),
     )
     _set_span_attribute(
-        span, SpanAttributes.LLM_USAGE_PROMPT_TOKENS, "34"
+        span, SpanAttributes.LLM_USAGE_PROMPT_TOKENS, usage.get("input_token_count"),
     )
 
     return
@@ -104,7 +112,7 @@ def _wrap(tracer, to_wrap, wrapped, instance, args, kwargs):
     )
 
     _set_api_attributes(span)
-    _set_input_attributes(span, "watsonx.ai", kwargs)
+    _set_input_attributes(span, "watsonx.ai", instance, kwargs)
 
     response = wrapped(*args, **kwargs)
 
@@ -151,9 +159,9 @@ class WatsonxInstrumentor(BaseInstrumentor):
             unwrap(f"openai.{wrap_object}", wrapped_method.get("method"))
 
 
-from dotenv import load_dotenv
+# from dotenv import load_dotenv
 import os
-load_dotenv()
+# load_dotenv()
 
 os.environ['OTEL_EXPORTER_OTLP_INSECURE'] = 'True'
 
@@ -182,7 +190,7 @@ tracer_provider = TracerProvider(
 
 # Create an OTLP Span Exporter
 otlp_exporter = OTLPSpanExporter(
-    endpoint="0.0.0.0:4317",  # Replace with your OTLP endpoint URL
+    endpoint=os.environ["OTLP_EXPORTER"]+":4317",  # Replace with your OTLP endpoint URL
 )
 
 # Add the exporter to the TracerProvider
@@ -213,8 +221,14 @@ Output:
 
 model_id = "meta-llama/llama-2-70b-chat"
 parameters = {
-    "max_new_tokens": 50,
-    "min_new_tokens": 10
+    "decoding_method": "sample",
+    "max_new_tokens": 60,
+    "min_new_tokens": 10,
+    "random_seed": 111,
+    "temperature": 0.9,
+    "top_k": 50,
+    "top_p": 1,
+    "repetition_penalty": 2
 }
 
 model = Model(
