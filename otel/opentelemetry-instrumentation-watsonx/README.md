@@ -30,7 +30,8 @@ export OTEL_EXPORTER_OTLP_INSECURE=true
 
 ## Run the watsonx script
 ```console
-(py311) guangyaliu@guangyas-mbp-2 opentelemetry-instrumentation-watsonx % /Users/guangyaliu/py311/bin/python /Users/guangyaliu/go/src/github.com/
+(py311) guangyaliu@guangyas-mbp-2 opentelemetry-instrumentation-watsonx % python ../watsonx-programatic
+/watsonx-instrument.py
 gyliu513/langX101/otel/opentelemetry-instrumentation-watsonx/watsonx-instrument.py
 calling instrument
 ```
