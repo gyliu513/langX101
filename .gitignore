@@ -20,6 +20,6 @@ otel/__pycache__
 otel/openai-auto/.env
 otel/openai-manual/.env
 otel/openai-programatic
-opentelemetry/instrumentation/watsonx/__pycache__
 .vscode
 otel/opentelemetry-instrumentation-watsonx/opentelemetry/instrumentation/watsonx/__pycache__/
+arize/.env
