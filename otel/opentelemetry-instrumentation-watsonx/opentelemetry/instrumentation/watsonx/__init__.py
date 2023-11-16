@@ -1,4 +1,11 @@
 
+import sys
+
+# Append the path of the external package to sys.path
+sys.path.append('/Users/gyliu/go/src/github.com/gyliu513/langX101/otel/opentelemetry-semantic-conventions-ai')
+
+print(sys.path)
+
 import logging
 import os
 import types
@@ -17,7 +24,7 @@ from opentelemetry.instrumentation.utils import (
 )
 
 from opentelemetry.semconv.ai import SpanAttributes, LLMRequestTypeValues
-from opentelemetry.instrumentation.openai.version import __version__
+from opentelemetry.instrumentation.watsonx.version import __version__
 
 logger = logging.getLogger(__name__)
 
