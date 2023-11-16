@@ -8,6 +8,12 @@ load_dotenv()
 
 os.environ['OTEL_EXPORTER_OTLP_INSECURE'] = 'True'
 
+import sys
+
+# Append the path of the external package to sys.path
+sys.path.append('/Users/gyliu/go/src/github.com/gyliu513/langX101/otel/opentelemetry-instrumentation-watsonx')
+sys.path.append('/Users/gyliu/go/src/github.com/gyliu513/langX101/otel/opentelemetry-semantic-conventions-ai')
+
 from ibm_watson_machine_learning.foundation_models import Model
 
 from opentelemetry import trace
