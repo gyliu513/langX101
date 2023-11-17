@@ -23,3 +23,5 @@ otel/openai-programatic
 .vscode
 otel/opentelemetry-instrumentation-watsonx/opentelemetry/instrumentation/watsonx/__pycache__/
 arize/.env
+otel/opentelemetry-instrumentation-langchain/.env
+otel/opentelemetry-instrumentation-langchain/opentelemetry/instrumentation/langchain/.env
