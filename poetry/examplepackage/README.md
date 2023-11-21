@@ -67,7 +67,7 @@ pip install dist/examplepackage-0.1.0-py3-none-any.whl
 在 Python 解释器中或者在一个新的 Python 脚本中测试你的包是否正确安装和工作：
 
 ```python
-from examplepackage import greet
+from examplepackage.instrument.watsonx import greet
 
 print(greet("World"))
 ```
