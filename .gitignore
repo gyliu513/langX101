@@ -25,3 +25,5 @@ otel/opentelemetry-instrumentation-watsonx/opentelemetry/instrumentation/watsonx
 arize/.env
 otel/opentelemetry-instrumentation-langchain/.env
 otel/opentelemetry-instrumentation-langchain/opentelemetry/instrumentation/langchain/.env
+otel/opentelemetry-instrumentation-watsonx/build/
+otel/opentelemetry-instrumentation-watsonx/opentelemetry.egg-info/
