@@ -6,6 +6,26 @@ from opentelemetry.semconv.ai import SpanAttributes, TraceloopSpanKindValues
 
 from opentelemetry.instrumentation.langchain.utils import _with_tracer_wrapper
 
+def _set_span_attribute(span, name, value):
+    if value is not None:
+        if value != "":
+            span.set_attribute(name, value)
+    return
+
+def _extract_llm_parms(instance, span):
+    if hasattr(instance, "llm"):
+        _set_span_attribute(span, SpanAttributes.LLM_TEMPERATURE, instance.llm.temperature)
+        _set_span_attribute(span, SpanAttributes.LLM_REQUEST_MODEL, instance.llm.model_name)
+        if hasattr(instance, "prompt"):
+            for msg in instance.prompt.messages:
+                if msg.__class__.__name__ in "SystemMessage":
+                    _set_span_attribute(span, f"{SpanAttributes.LLM_PROMPTS}.0.system", msg.content)
+                elif msg.__class__.__name__ == "HumanMessage":
+                    _set_span_attribute(span, f"{SpanAttributes.LLM_PROMPTS}.0.user", msg.content)
+                elif msg.__class__.__name__ == "HumanMessagePromptTemplate":
+                    _set_span_attribute(span, f"{SpanAttributes.LLM_PROMPTS}.0.user", msg.prompt.template)
+
+    return
 
 @_with_tracer_wrapper
 def task_wrapper(tracer, to_wrap, wrapped, instance, args, kwargs):
@@ -30,6 +50,9 @@ def task_wrapper(tracer, to_wrap, wrapped, instance, args, kwargs):
             kind,
         )
         span.set_attribute(SpanAttributes.TRACELOOP_ENTITY_NAME, name)
+
+        # extract llm parms
+        _extract_llm_parms(instance, span)
 
         return_value = wrapped(*args, **kwargs)
 
