@@ -18,7 +18,7 @@ def _extract_llm_parms(instance, span):
         _set_span_attribute(span, SpanAttributes.LLM_REQUEST_MODEL, instance.llm.model_name)
         if hasattr(instance, "prompt"):
             for msg in instance.prompt.messages:
-                if msg.__class__.__name__ in "SystemMessage":
+                if msg.__class__.__name__ == "SystemMessage":
                     _set_span_attribute(span, f"{SpanAttributes.LLM_PROMPTS}.0.system", msg.content)
                 elif msg.__class__.__name__ == "HumanMessage":
                     _set_span_attribute(span, f"{SpanAttributes.LLM_PROMPTS}.0.user", msg.content)
