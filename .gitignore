@@ -21,6 +21,8 @@ otel/openai-auto/.env
 otel/openai-manual/.env
 otel/openai-programatic
 otel/venv/
+otel/venv_2nd/
+otel_lib/__pycache__/
 .vscode
 otel/opentelemetry-instrumentation-watsonx/opentelemetry/instrumentation/watsonx/__pycache__/
 arize/.env
