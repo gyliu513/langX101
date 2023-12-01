@@ -320,23 +320,16 @@ class OpenInferenceTracer(BaseTracer):  # type: ignore
         run: Dict[str, Any],
         parent: Optional[Span] = None,
     ) -> None:
-        attributes: Dict[str, Any] = {}
-        # for io_key, io_attributes in {
-        #     "inputs": (INPUT_VALUE, INPUT_MIME_TYPE),
-        #     "outputs": (OUTPUT_VALUE, OUTPUT_MIME_TYPE),
-        # }.items():
-        #     attributes.update(zip(io_attributes, _convert_io(run.get(io_key))))
 
         span_kind = (
             SpanKind.AGENT
             if "agent" in run["name"].lower()
             else _langchain_run_type_to_span_kind(run["run_type"])
         )
-        print(type(self.tracer))
-        print(self.tracer)
         print(f"span_kind: {span_kind}")
         for item in run.items():
             print(item)
+        span_name = run["name"] if run["name"] is not None and run["name"] != "" else span_kind
         # print("inputs:")
         # print(run["inputs"])
         # print("outputs: ")
@@ -398,7 +391,7 @@ class OpenInferenceTracer(BaseTracer):  # type: ignore
         #     events=events,
         # )
         print(f"span_kind type: {type(span_kind)}")
-        with self.tracer.start_as_current_span(run["name"]) as span:
+        with self.tracer.start_as_current_span(span_name) as span:
             print(f"span type: {type(span)}")
             print(f"span: {span}")
             span.set_attribute(
@@ -406,10 +399,10 @@ class OpenInferenceTracer(BaseTracer):  # type: ignore
                 str(span_kind),
             )
             span.set_attribute(SpanAttributes.TRACELOOP_ENTITY_NAME, run["name"])
-        
-        for child_run in run["child_runs"]:
-            # self._convert_run_to_spans(child_run, span)
-            self._convert_run_to_spans(child_run)
+       
+            for child_run in run["child_runs"]:
+                # self._convert_run_to_spans(child_run, span)
+                self._convert_run_to_spans(child_run)
 
     def _persist_run(self, run: Run) -> None:
         # Note that this relies on `.dict()` from pydantic for the
