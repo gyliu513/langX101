@@ -308,97 +308,26 @@ def _extract_llm_parms(instance, span):
                     _set_span_attribute(span, f"{SpanAttributes.LLM_PROMPTS}.0.user", msg.prompt.template)
     return
         
-class OpenInferenceTracer(BaseTracer):  # type: ignore
+class OpenInferenceTracer(BaseTracer):  
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
-        # self._exporter = self._exporter or HttpExporter()
         self.tracer = None
-
 
     def _convert_run_to_spans(
         self,
         run: Dict[str, Any],
         parent: Optional[Span] = None,
     ) -> None:
-        attributes: Dict[str, Any] = {}
-        # for io_key, io_attributes in {
-        #     "inputs": (INPUT_VALUE, INPUT_MIME_TYPE),
-        #     "outputs": (OUTPUT_VALUE, OUTPUT_MIME_TYPE),
-        # }.items():
-        #     attributes.update(zip(io_attributes, _convert_io(run.get(io_key))))
 
         span_kind = (
             SpanKind.AGENT
             if "agent" in run["name"].lower()
             else _langchain_run_type_to_span_kind(run["run_type"])
         )
-        print(type(self.tracer))
-        print(self.tracer)
-        print(f"span_kind: {span_kind}")
-        for item in run.items():
-            print(item)
-        # print("inputs:")
-        # print(run["inputs"])
-        # print("outputs: ")
-        # print(run["outputs"])
-        # print("param")
-        # # print(_invocation_parameters(run))
-        # for parm in _invocation_parameters(run):
-        #     print(parm)
-        # print("serialized:")
-        # print(run["serialized"])
-        # print("extra:")
-        # print(run["extra"])
-        # print("child run")
-        # print(run["child_runs"])
-                
-        # attributes.update(_prompts(run["inputs"]))
-        # attributes.update(_input_messages(run["inputs"]))
-        # attributes.update(_output_messages(run["outputs"]))
-        # attributes.update(_prompt_template(run["serialized"]))
-        # attributes.update(_invocation_parameters(run))
-        # attributes.update(_model_name(run["extra"]))
-        # attributes.update(_token_counts(run["outputs"]))
-        # attributes.update(_function_calls(run["outputs"]))
-        # attributes.update(_tools(run))
-        # attributes.update(_retrieval_documents(run))
-        # events: List[SpanEvent] = []
-        # if (error := run["error"]) is None:
-        #     status_code = SpanStatusCode.OK
-        # else:
-        #     status_code = SpanStatusCode.ERROR
-        #     # Since there is only one error message, keep just the
-        #     # first error event.
-        #     error_event = next(
-        #         filter(
-        #             lambda event: event["name"] == "error",
-        #             run["events"],
-        #         )
-        #     )
-        #     events.append(
-        #         SpanException(
-        #             message=error,
-        #             timestamp=error_event["time"],
-        #         )
-        #     )
-        # span_kind = (
-        #     SpanKind.AGENT
-        #     if "agent" in run["name"].lower()
-        #     else _langchain_run_type_to_span_kind(run["run_type"])
-        # )
-        # span = self.create_span(
-        #     name=run["name"],
-        #     span_kind=span_kind,
-        #     parent_id=None if parent is None else parent.context.span_id,
-        #     trace_id=None if parent is None else parent.context.trace_id,
-        #     start_time=run["start_time"],
-        #     end_time=run["end_time"],
-        #     status_code=status_code,
-        #     attributes=attributes,
-        #     events=events,
-        # )
-        print(f"span_kind type: {type(span_kind)}")
-        with self.tracer.start_as_current_span(run["name"]) as span:
+        # for item in run.items():
+        #     print(item)
+        span_name = run["name"] if run["name"] is not None and run["name"] != "" else span_kind
+        with self.tracer.start_as_current_span(span_name) as span:
             print(f"span type: {type(span)}")
             print(f"span: {span}")
             span.set_attribute(
@@ -406,10 +335,10 @@ class OpenInferenceTracer(BaseTracer):  # type: ignore
                 str(span_kind),
             )
             span.set_attribute(SpanAttributes.TRACELOOP_ENTITY_NAME, run["name"])
-        
-        for child_run in run["child_runs"]:
-            # self._convert_run_to_spans(child_run, span)
-            self._convert_run_to_spans(child_run)
+       
+            for child_run in run["child_runs"]:
+                # self._convert_run_to_spans(child_run, span)
+                self._convert_run_to_spans(child_run)
 
     def _persist_run(self, run: Run) -> None:
         # Note that this relies on `.dict()` from pydantic for the
