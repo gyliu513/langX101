@@ -308,7 +308,7 @@ def _extract_llm_parms(instance, span):
                     _set_span_attribute(span, f"{SpanAttributes.LLM_PROMPTS}.0.user", msg.prompt.template)
     return
         
-class OpenInferenceTracer(BaseTracer):  
+class OpenInferenceTracer(BaseTracer):  # type: ignore 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self.tracer = None
@@ -326,10 +326,10 @@ class OpenInferenceTracer(BaseTracer):
         )
         # for item in run.items():
         #     print(item)
-        span_name = run["name"] if run["name"] is not None and run["name"] != "" else span_kind
+        span_name = run["name"] if run["name"] is not None and run["name"] != "" else str(span_kind)
         with self.tracer.start_as_current_span(span_name) as span:
-            print(f"span type: {type(span)}")
-            print(f"span: {span}")
+            # print(f"span type: {type(span)}")
+            # print(f"span: {span}")
             span.set_attribute(
                 SpanAttributes.TRACELOOP_SPAN_KIND,
                 str(span_kind),
