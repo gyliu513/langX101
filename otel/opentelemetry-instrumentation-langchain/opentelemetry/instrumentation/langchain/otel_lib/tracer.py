@@ -91,6 +91,22 @@ def _prompts(run_inputs: Dict[str, Any]) -> Iterator[Tuple[str, List[str]]]:
         yield LLM_PROMPTS, run_inputs["prompts"]
 
 
+def _otel_input_messages(run_inputs: Dict[str, Any], span):
+    """get input messages if present."""
+
+    if len(run_inputs) == 0:
+        return
+    
+    msg_count=0
+    if messages := run_inputs.get("messages"):
+        for message in messages:
+            for item in message:
+                if item["id"][-1] == "SystemMessage":
+                    _set_span_attribute(span, f"{SpanAttributes.LLM_PROMPTS}.{msg_count}.system", item["kwargs"].get("content"))
+                if item["id"][-1] == "HumanMessage":
+                    _set_span_attribute(span, f"{SpanAttributes.LLM_PROMPTS}.{msg_count}.user", item["kwargs"].get("content"))
+        msg_count += 1
+                  
 def _input_messages(run_inputs: Mapping[str, Any]) -> Iterator[Tuple[str, List[Message]]]:
     """Yields chat messages if present."""
     if not hasattr(run_inputs, "get"):
@@ -209,29 +225,34 @@ def _invocation_parameters(run: Dict[str, Any]) -> Iterator[Tuple[str, str]]:
     yield LLM_INVOCATION_PARAMETERS, json.dumps(run_extra.get("invocation_params", {}))
 
 
-def _model_name(run_extra: Dict[str, Any]) -> Iterator[Tuple[str, str]]:
-    """Yields model name if present."""
+def _params(run_extra: Dict[str, Any], span):
+    """set parameters if present."""
     if not (invocation_params := run_extra.get("invocation_params")):
         return
-    for key in ["model_name", "model"]:
-        if name := invocation_params.get(key):
-            yield LLM_MODEL_NAME, name
-            return
+        
+    if param := invocation_params.get("model", None):
+        _set_span_attribute(span, SpanAttributes.LLM_REQUEST_MODEL, param)
+    if param := invocation_params.get("model_name", None):
+        _set_span_attribute(span, SpanAttributes.LLM_REQUEST_MODEL, param)
+    if param := str(invocation_params.get("temperature", None)):
+        _set_span_attribute(span, SpanAttributes.LLM_TEMPERATURE, float(param))
+    if param := invocation_params.get("max_tokens", None):
+        _set_span_attribute(span, SpanAttributes.LLM_REQUEST_MAX_TOKENS, param)
+    if param := invocation_params.get("top_p", None):
+        _set_span_attribute(span, SpanAttributes.LLM_TOP_P, param)
+    if param := invocation_params.get("_type", None):
+        _set_span_attribute(span, SpanAttributes.LLM_REQUEST_TYPE, param)
+        
 
-
-def _token_counts(run_outputs: Dict[str, Any]) -> Iterator[Tuple[str, int]]:
-    """Yields token count information if present."""
+def _token_counts(run_outputs: Dict[str, Any], span):
+    """get token counts if present"""
     try:
         token_usage = run_outputs["llm_output"]["token_usage"]
     except Exception:
         return
-    for attribute_name, key in [
-        (LLM_TOKEN_COUNT_PROMPT, "prompt_tokens"),
-        (LLM_TOKEN_COUNT_COMPLETION, "completion_tokens"),
-        (LLM_TOKEN_COUNT_TOTAL, "total_tokens"),
-    ]:
-        if (token_count := token_usage.get(key)) is not None:
-            yield attribute_name, token_count
+    _set_span_attribute(span, SpanAttributes.LLM_USAGE_PROMPT_TOKENS, token_usage.get("prompt_tokens"))
+    _set_span_attribute(span, SpanAttributes.LLM_USAGE_COMPLETION_TOKENS, token_usage.get("completion_tokens"))
+    _set_span_attribute(span, SpanAttributes.LLM_USAGE_TOTAL_TOKENS, token_usage.get("total_tokens"))
 
 
 def _function_calls(run_outputs: Dict[str, Any]) -> Iterator[Tuple[str, str]]:
@@ -332,6 +353,7 @@ class OpenInferenceTracer(BaseTracer):  # type: ignore
             if "agent" in run["name"].lower()
             else _langchain_run_type_to_span_kind(run["run_type"])
         )
+
         span_name = run["name"] if run["name"] is not None and run["name"] != "" else str(span_kind)
 
         # span = self.tracer.start_span(span_name, start_time=start_time)
@@ -343,6 +365,9 @@ class OpenInferenceTracer(BaseTracer):  # type: ignore
                 str(span_kind),
             )
             span.set_attribute(SpanAttributes.TRACELOOP_ENTITY_NAME, span_name)
+            _token_counts(run["outputs"], span)
+            _params(run["extra"], span)
+            _otel_input_messages(run["inputs"], span)
         
             for child_run in run["child_runs"]:
                 self._convert_run_to_spans(child_run)
