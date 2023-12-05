@@ -35,3 +35,4 @@ langchain/.env
 langchain/__pycache__/
 llmonitor/.env
 llmonitor/__pycache__/
+newrelic/.env
