@@ -1,7 +1,10 @@
 import json
 import logging
 from copy import deepcopy
-from datetime import datetime
+# from datetime import datetime
+import datetime
+from datetime import timezone
+import time
 from typing import Any, Dict, Iterable, Iterator, List, Mapping, Optional, Tuple
 from uuid import UUID
 
@@ -11,6 +14,7 @@ from langchain.load.dump import dumpd
 from langchain.schema.messages import BaseMessage
 
 from opentelemetry.semconv.ai import SpanAttributes, TraceloopSpanKindValues
+from opentelemetry import trace
 from opentelemetry.trace import get_tracer
 from opentelemetry.instrumentation.langchain.version import __version__
 
@@ -64,7 +68,7 @@ def _langchain_run_type_to_span_kind(run_type: str) -> SpanKind:
 
 
 def _serialize_json(obj: Any) -> str:
-    if isinstance(obj, datetime):
+    if isinstance(obj, datetime.datetime):
         return obj.isoformat()
     return str(obj)
 
@@ -307,7 +311,11 @@ def _extract_llm_parms(instance, span):
                 elif msg.__class__.__name__ == "HumanMessagePromptTemplate":
                     _set_span_attribute(span, f"{SpanAttributes.LLM_PROMPTS}.0.user", msg.prompt.template)
     return
-        
+
+def _get_timestamp(time_data): 
+    utc_time=time_data.replace(tzinfo=timezone.utc) 
+    return int(utc_time.timestamp()*10**9)
+            
 class OpenInferenceTracer(BaseTracer):  # type: ignore 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
@@ -324,21 +332,23 @@ class OpenInferenceTracer(BaseTracer):  # type: ignore
             if "agent" in run["name"].lower()
             else _langchain_run_type_to_span_kind(run["run_type"])
         )
-        # for item in run.items():
-        #     print(item)
         span_name = run["name"] if run["name"] is not None and run["name"] != "" else str(span_kind)
-        with self.tracer.start_as_current_span(span_name) as span:
-            # print(f"span type: {type(span)}")
-            # print(f"span: {span}")
+
+        # span = self.tracer.start_span(span_name, start_time=start_time)
+        # with trace.use_span(span, end_on_exit=False):
+        start_time=_get_timestamp(run["start_time"])
+        with self.tracer.start_as_current_span(span_name, start_time=start_time, end_on_exit=False) as span:        
             span.set_attribute(
                 SpanAttributes.TRACELOOP_SPAN_KIND,
                 str(span_kind),
             )
-            span.set_attribute(SpanAttributes.TRACELOOP_ENTITY_NAME, run["name"])
-       
+            span.set_attribute(SpanAttributes.TRACELOOP_ENTITY_NAME, span_name)
+        
             for child_run in run["child_runs"]:
-                # self._convert_run_to_spans(child_run, span)
                 self._convert_run_to_spans(child_run)
+
+        end_time=_get_timestamp(run["end_time"])
+        span.end(end_time=end_time)
 
     def _persist_run(self, run: Run) -> None:
         # Note that this relies on `.dict()` from pydantic for the
@@ -372,7 +382,7 @@ class OpenInferenceTracer(BaseTracer):  # type: ignore
 
         parent_run_id_ = str(parent_run_id) if parent_run_id else None
         execution_order = self._get_execution_order(parent_run_id_)
-        start_time = datetime.utcnow()
+        start_time = datetime.datetime.utcnow()
         if metadata:
             kwargs.update({"metadata": metadata})
         run = Run(
