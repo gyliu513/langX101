@@ -36,3 +36,5 @@ langchain/__pycache__/
 llmonitor/.env
 llmonitor/__pycache__/
 newrelic/.env
+otel/opentelemetry-instrumentation-langchain/opentelemetry/instrumentation/langchain/__pycache__/
+otel/opentelemetry-instrumentation-langchain/opentelemetry/instrumentation/langchain/otel_lib/__pycache__/
