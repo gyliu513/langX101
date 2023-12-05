@@ -234,8 +234,8 @@ def _params(run_extra: Dict[str, Any], span):
         _set_span_attribute(span, SpanAttributes.LLM_REQUEST_MODEL, param)
     if param := invocation_params.get("model_name", None):
         _set_span_attribute(span, SpanAttributes.LLM_REQUEST_MODEL, param)
-    if param := str(invocation_params.get("temperature", None)):
-        _set_span_attribute(span, SpanAttributes.LLM_TEMPERATURE, float(param))
+    # if param := str(invocation_params.get("temperature", None)):
+        # _set_span_attribute(span, SpanAttributes.LLM_TEMPERATURE, float(param))
     if param := invocation_params.get("max_tokens", None):
         _set_span_attribute(span, SpanAttributes.LLM_REQUEST_MAX_TOKENS, param)
     if param := invocation_params.get("top_p", None):
