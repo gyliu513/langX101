@@ -13,7 +13,9 @@ from langchain.callbacks.tracers.schemas import Run
 from langchain.load.dump import dumpd
 from langchain.schema.messages import BaseMessage
 
-from opentelemetry.semconv.ai import SpanAttributes, TraceloopSpanKindValues
+# need to use `opentelemetry.semconv.ai` under `opentelemetry-semantic-conventions-ai`
+# from opentelemetry.semconv.ai import SpanAttributes, TraceloopSpanKindValues
+from ai import SpanAttributes, TraceloopSpanKindValues
 from opentelemetry import trace
 from opentelemetry.trace import get_tracer
 from opentelemetry.instrumentation.langchain.version import __version__
@@ -104,7 +106,25 @@ def _otel_input_messages(run_inputs: Dict[str, Any], span):
                 if item["id"][-1] == "HumanMessage":
                     _set_span_attribute(span, f"{SpanAttributes.LLM_PROMPTS}.{msg_count}.user", item["kwargs"].get("content"))
         msg_count += 1
-                  
+    
+    if prompts := run_inputs.get("prompts"):
+        for prompt in prompts:
+            _set_span_attribute(span, f"{SpanAttributes.LLM_PROMPTS}.{msg_count}.user", prompt)
+        msg_count += 1
+    
+def _otel_output_messages(run_output: Dict[str, Any], span):
+    """get output messages if present."""
+    if len(run_output) == 0:
+        return
+    
+    msg_count = 0
+    if run_output.get("generations"):
+        for generate in run_output.get("generations"):
+            for item in generate:
+                if item.get("text"):
+                    _set_span_attribute(span, f"{SpanAttributes.LLM_COMPLETIONS}.{msg_count}", item.get("text"))
+        msg_count += 1
+
 def _input_messages(run_inputs: Mapping[str, Any]) -> Iterator[Tuple[str, List[Message]]]:
     """Yields chat messages if present."""
     if not hasattr(run_inputs, "get"):
@@ -232,9 +252,8 @@ def _params(run_extra: Dict[str, Any], span):
         _set_span_attribute(span, SpanAttributes.LLM_REQUEST_MODEL, param)
     if param := invocation_params.get("model_name", None):
         _set_span_attribute(span, SpanAttributes.LLM_REQUEST_MODEL, param)
-    param = str(invocation_params.get("temperature", None))
-    if param != 'None':
-        _set_span_attribute(span, SpanAttributes.LLM_TEMPERATURE, float(param))
+    if invocation_params.get("temperature", None) is not None:
+        _set_span_attribute(span, SpanAttributes.LLM_TEMPERATURE, float(invocation_params.get("temperature")))
     if param := invocation_params.get("max_tokens", None):
         _set_span_attribute(span, SpanAttributes.LLM_REQUEST_MAX_TOKENS, param)
     if param := invocation_params.get("top_p", None):
@@ -242,6 +261,33 @@ def _params(run_extra: Dict[str, Any], span):
     if param := invocation_params.get("_type", None):
         _set_span_attribute(span, SpanAttributes.LLM_REQUEST_TYPE, param)
         
+def _params_watson(run_extra: Dict[str, Any], span):
+    """set parameters if present."""
+    if not (invocation_params := run_extra.get("invocation_params")):
+        return
+        
+    if param := invocation_params.get("model_id", None):
+        _set_span_attribute(span, SpanAttributes.LLM_REQUEST_MODEL, param)
+    if param := invocation_params.get("_type", None):
+        _set_span_attribute(span, SpanAttributes.LLM_REQUEST_TYPE, param)
+    if param := invocation_params.get("project_id", None):
+        _set_span_attribute(span, SpanAttributes.LLM_REQUEST_PROJECT_ID, param)
+        
+    if params := invocation_params.get("params"):
+        if params.get("temperature", None) is not None:
+            _set_span_attribute(span, SpanAttributes.LLM_TEMPERATURE, float(params.get("temperature")))
+        if param := params.get("top_p", None):
+            _set_span_attribute(span, SpanAttributes.LLM_TOP_P, param)
+        if param := params.get("top_k", None):
+            _set_span_attribute(span, SpanAttributes.LLM_TOP_K, param)
+        if param := params.get("max_new_tokens", None):
+            _set_span_attribute(span, SpanAttributes.LLM_REQUEST_MAX_NEW_TOKENS, param)
+        if param := params.get("min_new_tokens", None):
+            _set_span_attribute(span, SpanAttributes.LLM_REQUEST_MIN_NEW_TOKENS, param)
+        if param := params.get("decoding_method", None):
+            _set_span_attribute(span, SpanAttributes.LLM_REQUEST_DECODING_METHOD, param)
+
+    return
 
 def _token_counts(run_outputs: Dict[str, Any], span):
     """get token counts if present"""
@@ -249,9 +295,14 @@ def _token_counts(run_outputs: Dict[str, Any], span):
         token_usage = run_outputs["llm_output"]["token_usage"]
     except Exception:
         return
-    _set_span_attribute(span, SpanAttributes.LLM_USAGE_PROMPT_TOKENS, token_usage.get("prompt_tokens"))
-    _set_span_attribute(span, SpanAttributes.LLM_USAGE_COMPLETION_TOKENS, token_usage.get("completion_tokens"))
-    _set_span_attribute(span, SpanAttributes.LLM_USAGE_TOTAL_TOKENS, token_usage.get("total_tokens"))
+    if token_usage.get("prompt_tokens") is not None:
+        _set_span_attribute(span, SpanAttributes.LLM_USAGE_PROMPT_TOKENS, token_usage.get("prompt_tokens"))
+        _set_span_attribute(span, SpanAttributes.LLM_USAGE_COMPLETION_TOKENS, token_usage.get("completion_tokens"))
+        _set_span_attribute(span, SpanAttributes.LLM_USAGE_TOTAL_TOKENS, token_usage.get("total_tokens"))
+    if token_usage.get("generated_token_count") is not None:
+        _set_span_attribute(span, SpanAttributes.LLM_USAGE_PROMPT_TOKENS, token_usage.get("input_token_count"))
+        _set_span_attribute(span, SpanAttributes.LLM_USAGE_COMPLETION_TOKENS, token_usage.get("generated_token_count"))
+        _set_span_attribute(span, SpanAttributes.LLM_USAGE_TOTAL_TOKENS, token_usage.get("input_token_count") + token_usage.get("generated_token_count"))
 
 
 def _function_calls(run_outputs: Dict[str, Any]) -> Iterator[Tuple[str, str]]:
@@ -365,8 +416,12 @@ class OpenInferenceTracer(BaseTracer):  # type: ignore
             )
             span.set_attribute(SpanAttributes.TRACELOOP_ENTITY_NAME, span_name)
             _token_counts(run["outputs"], span)
-            _params(run["extra"], span)
+            if span_name == "WatsonxLLM":
+                _params_watson(run["extra"], span)
+            else:
+                _params(run["extra"], span)
             _otel_input_messages(run["inputs"], span)
+            _otel_output_messages(run["outputs"], span)
         
             for child_run in run["child_runs"]:
                 self._convert_run_to_spans(child_run)

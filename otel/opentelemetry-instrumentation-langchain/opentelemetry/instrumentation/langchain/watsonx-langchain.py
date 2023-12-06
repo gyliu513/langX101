@@ -69,7 +69,7 @@ from ibm_watson_machine_learning.metanames import GenTextParamsMetaNames as GenP
 
 parameters = {
     GenParams.DECODING_METHOD: "sample",
-    GenParams.MAX_NEW_TOKENS: 100,
+    GenParams.MAX_NEW_TOKENS: 30,
     GenParams.MIN_NEW_TOKENS: 1,
     GenParams.TEMPERATURE: 0.5,
     GenParams.TOP_K: 50,
