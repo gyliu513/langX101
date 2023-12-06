@@ -18,8 +18,6 @@ from opentelemetry import trace
 from opentelemetry.trace import get_tracer
 from opentelemetry.instrumentation.langchain.version import __version__
 
-
-from phoenix.trace.exporter import HttpExporter
 from phoenix.trace.schemas import Span, SpanEvent, SpanException, SpanKind, SpanStatusCode
 from phoenix.trace.semantic_conventions import (
     DOCUMENT_CONTENT,
@@ -234,8 +232,9 @@ def _params(run_extra: Dict[str, Any], span):
         _set_span_attribute(span, SpanAttributes.LLM_REQUEST_MODEL, param)
     if param := invocation_params.get("model_name", None):
         _set_span_attribute(span, SpanAttributes.LLM_REQUEST_MODEL, param)
-    # if param := str(invocation_params.get("temperature", None)):
-        # _set_span_attribute(span, SpanAttributes.LLM_TEMPERATURE, float(param))
+    param = str(invocation_params.get("temperature", None))
+    if param != 'None':
+        _set_span_attribute(span, SpanAttributes.LLM_TEMPERATURE, float(param))
     if param := invocation_params.get("max_tokens", None):
         _set_span_attribute(span, SpanAttributes.LLM_REQUEST_MAX_TOKENS, param)
     if param := invocation_params.get("top_p", None):
