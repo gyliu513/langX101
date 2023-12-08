@@ -20,37 +20,59 @@ from opentelemetry import trace
 from opentelemetry.trace import get_tracer
 from opentelemetry.instrumentation.langchain.version import __version__
 
-from phoenix.trace.schemas import Span, SpanEvent, SpanException, SpanKind, SpanStatusCode
-from phoenix.trace.semantic_conventions import (
-    DOCUMENT_CONTENT,
-    DOCUMENT_METADATA,
-    INPUT_MIME_TYPE,
-    INPUT_VALUE,
-    LLM_FUNCTION_CALL,
-    LLM_INPUT_MESSAGES,
-    LLM_INVOCATION_PARAMETERS,
-    LLM_MODEL_NAME,
-    LLM_OUTPUT_MESSAGES,
-    LLM_PROMPT_TEMPLATE,
-    LLM_PROMPT_TEMPLATE_VARIABLES,
-    LLM_PROMPT_TEMPLATE_VERSION,
-    LLM_PROMPTS,
-    LLM_TOKEN_COUNT_COMPLETION,
-    LLM_TOKEN_COUNT_PROMPT,
-    LLM_TOKEN_COUNT_TOTAL,
-    MESSAGE_CONTENT,
-    MESSAGE_FUNCTION_CALL_ARGUMENTS_JSON,
-    MESSAGE_FUNCTION_CALL_NAME,
-    MESSAGE_ROLE,
-    OUTPUT_MIME_TYPE,
-    OUTPUT_VALUE,
-    RETRIEVAL_DOCUMENTS,
-    TOOL_DESCRIPTION,
-    TOOL_NAME,
-    MimeType,
-)
-from phoenix.trace.tracer import Tracer
-from phoenix.utilities.error_handling import graceful_fallback
+# from otel_lib.error_handling import graceful_fallback
+import logging
+import traceback
+from typing import Any, Callable, Iterable, Optional, Type, TypeVar, cast
+
+F = TypeVar("F", bound=Callable[..., Any])
+
+def graceful_fallback(
+    fallback_method: Callable[..., Any], exceptions: Optional[Iterable[Type[BaseException]]] = None
+) -> Callable[[F], F]:
+    """
+    Decorator that reroutes failing functions to a specified fallback method.
+
+    While it is generally not advisable to catch all exceptions, this decorator can be used to
+    gracefully degrade a function in situations when raising an error might be too disruptive.
+    Exceptions supprssed by this decorator will be logged to the root logger, and all inputs
+    to the wrapped function will be passed to the fallback method.
+
+
+    Args:
+
+    fallback_method (Callable[..., Any]): The fallback method to be called when the wrapped
+    function fails.
+
+    exceptions: An optional iterable of exceptions that should be suppressed by this decorator. If
+    unset, all exceptions will be suppressed.
+    """
+
+    exceptions = (BaseException,) if exceptions is None else tuple(exceptions)
+
+    def decorator(func: F) -> F:
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
+            try:
+                return func(*args, **kwargs)
+            except exceptions as exc:
+                msg = (
+                    f"Exception occurred in function '{func.__name__}':\n"
+                    f"-Args: {args}\n"
+                    f"-Kwargs: {kwargs}\n"
+                    f"-Exception type: {type(exc).__name__}\n"
+                    f"-Exception message: {str(exc)}\n"
+                    f"{'*' * 50}\n"
+                    f"{traceback.format_exc()}\n"
+                    f"{'*' * 50}\n"
+                    f"Rerouting to fallback method '{fallback_method.__name__}'"
+                )
+                logging.error(msg)
+            return fallback_method(*args, **kwargs)
+
+        return cast(F, wrapper)
+
+    return decorator
+
 
 logger = logging.getLogger(__name__)
 
@@ -58,13 +80,13 @@ logger = logging.getLogger(__name__)
 Message = Dict[str, Any]
 
 
-def _langchain_run_type_to_span_kind(run_type: str) -> SpanKind:
-    # TODO: LangChain is moving away from enums and to arbitrary strings
-    # for the run_type variable, so we may need to do the same
-    try:
-        return SpanKind(run_type.upper())
-    except ValueError:
-        return SpanKind.UNKNOWN
+# def _langchain_run_type_to_span_kind(run_type: str) -> SpanKind:
+#     # TODO: LangChain is moving away from enums and to arbitrary strings
+#     # for the run_type variable, so we may need to do the same
+#     try:
+#         return SpanKind(run_type.upper())
+#     except ValueError:
+#         return SpanKind.UNKNOWN
 
 
 def _serialize_json(obj: Any) -> str:
@@ -73,22 +95,10 @@ def _serialize_json(obj: Any) -> str:
     return str(obj)
 
 
-def _convert_io(obj: Optional[Dict[str, Any]]) -> Iterator[Any]:
-    if not obj:
-        return
-    if not isinstance(obj, dict):
-        raise ValueError(f"obj should be dict, but obj={obj}")
-    if len(obj) == 1 and isinstance(value := next(iter(obj.values())), str):
-        yield value
-    else:
-        yield json.dumps(obj, default=_serialize_json)
-        yield MimeType.JSON
-
-
 def _prompts(run_inputs: Dict[str, Any]) -> Iterator[Tuple[str, List[str]]]:
     """Yields prompts if present."""
     if "prompts" in run_inputs:
-        yield LLM_PROMPTS, run_inputs["prompts"]
+        yield "LLM_PROMPTS", run_inputs["prompts"]
 
 
 def _otel_input_messages(run_inputs: Dict[str, Any], span):
@@ -114,7 +124,10 @@ def _otel_input_messages(run_inputs: Dict[str, Any], span):
     
 def _otel_output_messages(run_output: Dict[str, Any], span):
     """get output messages if present."""
-    if len(run_output) == 0:
+    if run_output:
+        if len(run_output) == 0:
+            return
+    else:
         return
     
     msg_count = 0
@@ -124,93 +137,6 @@ def _otel_output_messages(run_output: Dict[str, Any], span):
                 if item.get("text"):
                     _set_span_attribute(span, f"{SpanAttributes.LLM_COMPLETIONS}.{msg_count}", item.get("text"))
         msg_count += 1
-
-def _input_messages(run_inputs: Mapping[str, Any]) -> Iterator[Tuple[str, List[Message]]]:
-    """Yields chat messages if present."""
-    if not hasattr(run_inputs, "get"):
-        return
-    # There may be more than one set of messages. We'll use just the first set.
-    if not (multiple_messages := run_inputs.get("messages")):
-        return
-    assert isinstance(
-        multiple_messages, Iterable
-    ), f"expected Iterable, found {type(multiple_messages)}"
-    # This will only get the first set of messages.
-    if not (first_messages := next(iter(multiple_messages), None)):
-        return
-    assert isinstance(first_messages, Iterable), f"expected Iterable, found {type(first_messages)}"
-    parsed_messages = []
-    for message_data in first_messages:
-        assert hasattr(message_data, "get"), f"expected Mapping, found {type(message_data)}"
-        parsed_messages.append(_parse_message_data(message_data))
-    if parsed_messages:
-        yield LLM_INPUT_MESSAGES, parsed_messages
-
-
-def _output_messages(run_outputs: Mapping[str, Any]) -> Iterator[Tuple[str, List[Message]]]:
-    """Yields chat messages if present."""
-    if not hasattr(run_outputs, "get"):
-        return
-    # There may be more than one set of generations. We'll use just the first set.
-    if not (multiple_generations := run_outputs.get("generations")):
-        return
-    assert isinstance(
-        multiple_generations, Iterable
-    ), f"expected Iterable, found {type(multiple_generations)}"
-    # This will only get the first set of generations.
-    if not (first_generations := next(iter(multiple_generations), None)):
-        return
-    assert isinstance(
-        first_generations, Iterable
-    ), f"expected Iterable, found {type(first_generations)}"
-    parsed_messages = []
-    for generation in first_generations:
-        assert hasattr(generation, "get"), f"expected Mapping, found {type(generation)}"
-        if message_data := generation.get("message"):
-            assert hasattr(message_data, "get"), f"expected Mapping, found {type(message_data)}"
-            parsed_messages.append(_parse_message_data(message_data))
-    if parsed_messages:
-        yield LLM_OUTPUT_MESSAGES, parsed_messages
-
-
-def _parse_message_data(message_data: Mapping[str, Any]) -> Message:
-    """Parses message data to grab message role, content, etc."""
-    message_class_name = message_data["id"][-1]
-    if message_class_name.startswith("HumanMessage"):
-        role = "user"
-    elif message_class_name.startswith("AIMessage"):
-        role = "assistant"
-    elif message_class_name.startswith("SystemMessage"):
-        role = "system"
-    elif message_class_name.startswith("FunctionMessage"):
-        role = "function"
-    elif message_class_name.startswith("ChatMessage"):
-        role = message_data["kwargs"]["role"]
-    else:
-        raise ValueError(f"Cannot parse message of type: {message_class_name}")
-    parsed_message_data = {MESSAGE_ROLE: role}
-    if kwargs := message_data.get("kwargs"):
-        assert hasattr(kwargs, "get"), f"expected Mapping, found {type(kwargs)}"
-        if content := kwargs.get("content"):
-            assert isinstance(content, str), f"content must be str, found {type(content)}"
-            parsed_message_data[MESSAGE_CONTENT] = content
-        if additional_kwargs := kwargs.get("additional_kwargs"):
-            assert hasattr(
-                additional_kwargs, "get"
-            ), f"expected Mapping, found {type(additional_kwargs)}"
-            if function_call := additional_kwargs.get("function_call"):
-                assert hasattr(
-                    function_call, "get"
-                ), f"expected Mapping, found {type(function_call)}"
-                if name := function_call.get("name"):
-                    assert isinstance(name, str), f"name must be str, found {type(name)}"
-                    parsed_message_data[MESSAGE_FUNCTION_CALL_NAME] = name
-                if arguments := function_call.get("arguments"):
-                    assert isinstance(
-                        arguments, str
-                    ), f"arguments must be str, found {type(arguments)}"
-                    parsed_message_data[MESSAGE_FUNCTION_CALL_ARGUMENTS_JSON] = arguments
-    return parsed_message_data
 
 
 def _prompt_template(run_serialized: Dict[str, Any]) -> Iterator[Tuple[str, Any]]:
@@ -229,18 +155,10 @@ def _prompt_template(run_serialized: Dict[str, Any]) -> Iterator[Tuple[str, Any]
             kwargs = obj.get("kwargs", {})
             if not (template := kwargs.get("template", "")):
                 continue
-            yield LLM_PROMPT_TEMPLATE, template
-            yield LLM_PROMPT_TEMPLATE_VARIABLES, kwargs.get("input_variables", [])
-            yield LLM_PROMPT_TEMPLATE_VERSION, "unknown"
+            yield "LLM_PROMPT_TEMPLATE", template
+            yield "LLM_PROMPT_TEMPLATE_VARIABLES", kwargs.get("input_variables", [])
+            yield "LLM_PROMPT_TEMPLATE_VERSION", "unknown"
             break
-
-
-def _invocation_parameters(run: Dict[str, Any]) -> Iterator[Tuple[str, str]]:
-    """Yields invocation parameters if present."""
-    if run["run_type"] != "llm":
-        return
-    run_extra = run["extra"]
-    yield LLM_INVOCATION_PARAMETERS, json.dumps(run_extra.get("invocation_params", {}))
 
 
 def _params(run_extra: Dict[str, Any], span):
@@ -291,6 +209,8 @@ def _params_watson(run_extra: Dict[str, Any], span):
 
 def _token_counts(run_outputs: Dict[str, Any], span):
     """get token counts if present"""
+    if not run_outputs:
+        return
     try:
         token_usage = run_outputs["llm_output"]["token_usage"]
     except Exception:
@@ -305,47 +225,15 @@ def _token_counts(run_outputs: Dict[str, Any], span):
         _set_span_attribute(span, SpanAttributes.LLM_USAGE_TOTAL_TOKENS, token_usage.get("input_token_count") + token_usage.get("generated_token_count"))
 
 
-def _function_calls(run_outputs: Dict[str, Any]) -> Iterator[Tuple[str, str]]:
-    """Yields function call information if present."""
-    try:
-        function_call_data = deepcopy(
-            run_outputs["generations"][0][0]["message"]["kwargs"]["additional_kwargs"][
-                "function_call"
-            ]
-        )
-        function_call_data["arguments"] = json.loads(function_call_data["arguments"])
-        yield LLM_FUNCTION_CALL, json.dumps(function_call_data)
-    except Exception:
-        pass
-
-
 def _tools(run: Dict[str, Any]) -> Iterator[Tuple[str, str]]:
     """Yields tool attributes if present."""
     if run["run_type"] != "tool":
         return
     run_serialized = run["serialized"]
     if "name" in run_serialized:
-        yield TOOL_NAME, run_serialized["name"]
+        yield "TOOL_NAME", run_serialized["name"]
     if "description" in run_serialized:
-        yield TOOL_DESCRIPTION, run_serialized["description"]
-    # TODO: tool parameters https://github.com/Arize-ai/phoenix/issues/1330
-
-
-def _retrieval_documents(
-    run: Dict[str, Any],
-) -> Iterator[Tuple[str, List[Any]]]:
-    if run["run_type"] != "retriever":
-        return
-    yield (
-        RETRIEVAL_DOCUMENTS,
-        [
-            {
-                DOCUMENT_CONTENT: document.get("page_content"),
-                DOCUMENT_METADATA: document.get("metadata") or {},
-            }
-            for document in (run.get("outputs") or {}).get("documents") or []
-        ],
-    )
+        yield "TOOL_DESCRIPTION", run_serialized["description"]
 
 
 def _chat_model_start_fallback(
@@ -395,14 +283,19 @@ class OpenInferenceTracer(BaseTracer):  # type: ignore
     def _convert_run_to_spans(
         self,
         run: Dict[str, Any],
-        parent: Optional[Span] = None,
+        # parent: Optional[Span] = None,
     ) -> None:
 
         span_kind = (
-            SpanKind.AGENT
+            "agent"
             if "agent" in run["name"].lower()
-            else _langchain_run_type_to_span_kind(run["run_type"])
+            else run["run_type"]
         )
+        # (
+        #     SpanKind.AGENT
+        #     if "agent" in run["name"].lower()
+        #     else _langchain_run_type_to_span_kind(run["run_type"])
+        # )
 
         span_name = run["name"] if run["name"] is not None and run["name"] != "" else str(span_kind)
 
@@ -420,6 +313,7 @@ class OpenInferenceTracer(BaseTracer):  # type: ignore
                 _params_watson(run["extra"], span)
             else:
                 _params(run["extra"], span)
+
             _otel_input_messages(run["inputs"], span)
             _otel_output_messages(run["outputs"], span)
         
