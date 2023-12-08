@@ -86,12 +86,27 @@ watsonx_llm = WatsonxLLM(
 )
 
 from langchain.prompts import PromptTemplate
+from langchain.agents import load_tools
+from langchain.agents import initialize_agent
+from langchain.agents import AgentType
+from langchain.llms import OpenAI
 
-template = "Generate a random question about {topic}: Question: "
-prompt = PromptTemplate.from_template(template)
 
-from langchain.chains import LLMChain
+# template = "Generate a random question about {topic}: Question: "
+# prompt = PromptTemplate.from_template(template)
 
-llm_chain = LLMChain(prompt=prompt, llm=watsonx_llm)
-llm_chain.run("dog")
+# from langchain.chains import LLMChain
 
+# llm_chain = LLMChain(prompt=prompt, llm=watsonx_llm)
+# llm_chain.run("dog")
+
+llm = OpenAI(openai_api_key=os.environ["OPENAI_API_KEY"], temperature=0.6)
+
+tools = load_tools(["serpapi", "llm-math"], llm=watsonx_llm)
+
+agent = initialize_agent(
+    tools, llm, agent=AgentType.ZERO_SHOT_REACT_DESCRIPTION, verbose=True)
+
+print(agent.agent.llm_chain.prompt.template)
+
+agent.run("My monthly salary is 10000 KES, if i work for 10 months. How much is my total salary in USD in those 10 months.")

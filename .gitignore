@@ -28,6 +28,7 @@ otel/opentelemetry-instrumentation-watsonx/opentelemetry/instrumentation/watsonx
 arize/.env
 otel/opentelemetry-instrumentation-langchain/.env
 otel/opentelemetry-instrumentation-langchain/opentelemetry/instrumentation/langchain/.env
+otel/opentelemetry-instrumentation-langchain/opentelemetry/instrumentation/langchain/ai/__pycache__/
 otel/opentelemetry-instrumentation-watsonx/build/
 otel/opentelemetry-instrumentation-watsonx/opentelemetry.egg-info/
 langchain/llm-observability.2023-11-22.private-key.pem
