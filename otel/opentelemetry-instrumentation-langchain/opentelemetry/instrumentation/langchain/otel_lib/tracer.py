@@ -186,6 +186,8 @@ def _params_watson(run_extra: Dict[str, Any], span):
         
     if param := invocation_params.get("model_id", None):
         _set_span_attribute(span, SpanAttributes.LLM_REQUEST_MODEL, param)
+    if param := invocation_params.get("model", None):
+        _set_span_attribute(span, SpanAttributes.LLM_REQUEST_MODEL, param)
     if param := invocation_params.get("_type", None):
         _set_span_attribute(span, SpanAttributes.LLM_REQUEST_TYPE, param)
     if param := invocation_params.get("project_id", None):
@@ -309,7 +311,7 @@ class OpenInferenceTracer(BaseTracer):  # type: ignore
             )
             span.set_attribute(SpanAttributes.TRACELOOP_ENTITY_NAME, span_name)
             _token_counts(run["outputs"], span)
-            if span_name == "WatsonxLLM":
+            if span_name == "WatsonxLLM" or (span_name.startswith("LangChainInterface") and span_kind.lower() == "llm"):
                 _params_watson(run["extra"], span)
             else:
                 _params(run["extra"], span)

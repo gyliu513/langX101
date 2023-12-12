@@ -62,28 +62,45 @@ import os
 load_dotenv()
 
 os.environ['OTEL_EXPORTER_OTLP_INSECURE'] = 'True'
-
 os.environ["WATSONX_APIKEY"] = os.getenv("IAM_API_KEY")
 
-from ibm_watson_machine_learning.metanames import GenTextParamsMetaNames as GenParams
+# from ibm_watson_machine_learning.metanames import GenTextParamsMetaNames as GenParams
 
-parameters = {
-    GenParams.DECODING_METHOD: "sample",
-    GenParams.MAX_NEW_TOKENS: 30,
-    GenParams.MIN_NEW_TOKENS: 1,
-    GenParams.TEMPERATURE: 0.5,
-    GenParams.TOP_K: 50,
-    GenParams.TOP_P: 1,
-}
+# parameters = {
+#     GenParams.DECODING_METHOD: "sample",
+#     GenParams.MAX_NEW_TOKENS: 30,
+#     GenParams.MIN_NEW_TOKENS: 1,
+#     GenParams.TEMPERATURE: 0.5,
+#     GenParams.TOP_K: 50,
+#     GenParams.TOP_P: 1,
+# }
 
-from langchain.llms import WatsonxLLM
+# from langchain.llms import WatsonxLLM
 
-watsonx_llm = WatsonxLLM(
-    model_id="google/flan-ul2",
-    url="https://us-south.ml.cloud.ibm.com",
-    project_id=os.getenv("PROJECT_ID"),
-    params=parameters,
+# watsonx_llm = WatsonxLLM(
+#     model_id="google/flan-ul2",
+#     url="https://us-south.ml.cloud.ibm.com",
+#     project_id=os.getenv("PROJECT_ID"),
+#     params=parameters,
+# )
+
+from genai.extensions.langchain import LangChainInterface
+from genai.schemas import GenerateParams
+from genai.credentials import Credentials
+
+load_dotenv()
+api_key = os.getenv("IBM_GENAI_KEY", None) 
+api_url = os.getenv("IBM_GENAI_API", None)
+creds = Credentials(api_key, api_endpoint=api_url)
+
+params = GenerateParams(
+    decoding_method="sample",  # "greedy"
+    max_new_tokens=20,
+    min_new_tokens=10,
+    temperature=0.7,
 )
+
+watson_langchain_model = LangChainInterface(model="google/flan-t5-xxl", params=params, credentials=creds)
 
 from langchain.prompts import PromptTemplate
 from langchain.agents import load_tools
@@ -102,10 +119,10 @@ from langchain.llms import OpenAI
 
 llm = OpenAI(openai_api_key=os.environ["OPENAI_API_KEY"], temperature=0.6)
 
-tools = load_tools(["serpapi", "llm-math"], llm=watsonx_llm)
+tools = load_tools(["serpapi", "llm-math"], llm=watson_langchain_model)
 
 agent = initialize_agent(
-    tools, llm, agent=AgentType.ZERO_SHOT_REACT_DESCRIPTION, verbose=True)
+    tools, watson_langchain_model, agent=AgentType.ZERO_SHOT_REACT_DESCRIPTION, verbose=True)
 
 print(agent.agent.llm_chain.prompt.template)
 
