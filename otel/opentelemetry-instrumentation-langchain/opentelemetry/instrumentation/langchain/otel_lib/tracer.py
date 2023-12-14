@@ -306,9 +306,6 @@ class OpenInferenceTracer(BaseTracer):  # type: ignore
             else run["run_type"]
         )
 
-        for item in run.items():
-            print(item)
-            
         span_name = run["name"] if run["name"] is not None and run["name"] != "" else span_kind
         if span_name.startswith("LangChainInterface") and span_kind.lower() == "llm":
             span_name = "WatsonGenaiLangchainLLM"   # rename Watson genai langchain extension LangChainInterface for better clarity.
