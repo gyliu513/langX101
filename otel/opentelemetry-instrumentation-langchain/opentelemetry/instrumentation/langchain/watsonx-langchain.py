@@ -85,22 +85,29 @@ os.environ["WATSONX_APIKEY"] = os.getenv("IAM_API_KEY")
 # )
 
 from genai.extensions.langchain import LangChainInterface
-from genai.schemas import GenerateParams
+from genai.schemas import GenerateParams as GenaiGenerateParams
 from genai.credentials import Credentials
 
-load_dotenv()
 api_key = os.getenv("IBM_GENAI_KEY", None) 
 api_url = os.getenv("IBM_GENAI_API", None)
 creds = Credentials(api_key, api_endpoint=api_url)
 
-params = GenerateParams(
-    decoding_method="sample",  # "greedy"
-    max_new_tokens=20,
+genai_parameters = GenaiGenerateParams(
+    decoding_method="greedy",  # Literal['greedy', 'sample']
+    max_new_tokens=50,
     min_new_tokens=10,
-    temperature=0.7,
+    top_p=1,
+    top_k=50,
+    temperature=0.1,
+    time_limit=30000,
 )
 
-watson_langchain_model = LangChainInterface(model="google/flan-t5-xxl", params=params, credentials=creds)
+watsonx_genai_llm = LangChainInterface(
+#     model="google/flan-t5-xxl", 
+    model="meta-llama/llama-2-70b", 
+    params=genai_parameters, 
+    credentials=creds
+)
 
 from langchain.prompts import PromptTemplate
 from langchain.agents import load_tools
@@ -109,21 +116,31 @@ from langchain.agents import AgentType
 from langchain.llms import OpenAI
 
 
-# template = "Generate a random question about {topic}: Question: "
-# prompt = PromptTemplate.from_template(template)
+def langchain_serpapi_math_agent():
+    openai_llm = OpenAI(openai_api_key=os.environ["OPENAI_API_KEY"], temperature=0.1)
 
-# from langchain.chains import LLMChain
+    tools = load_tools(["serpapi", "llm-math"], llm=watsonx_genai_llm)
 
-# llm_chain = LLMChain(prompt=prompt, llm=watsonx_llm)
-# llm_chain.run("dog")
+    agent = initialize_agent(
+        tools, openai_llm, agent=AgentType.ZERO_SHOT_REACT_DESCRIPTION, verbose=True)
 
-llm = OpenAI(openai_api_key=os.environ["OPENAI_API_KEY"], temperature=0.6)
+    # agent.run("My monthly salary is 10000 KES, if i work for 10 months. How much is my total salary in USD in those 10 months.")
+    agent.run("a pair of shoes sale price 300 CNY and a beautiful pocket knife price at 50 USD, how much in USD if I want them both?")
 
-tools = load_tools(["serpapi", "llm-math"], llm=watson_langchain_model)
+def langchain_chat_memory_agent():
+    from langchain.memory import ConversationBufferMemory
+    
+    memory = ConversationBufferMemory(memory_key="chat_history")
+    
+    tools = load_tools(["serpapi", "llm-math"], llm=watsonx_genai_llm)
 
-agent = initialize_agent(
-    tools, watson_langchain_model, agent=AgentType.ZERO_SHOT_REACT_DESCRIPTION, verbose=True)
+    agent = initialize_agent(tools, watsonx_genai_llm, agent=AgentType.CONVERSATIONAL_REACT_DESCRIPTION, verbose=True, memory=memory)
+    agent.run("what is the capital city of Italy?")
+    agent.run("what is the most famous dish of this city?")
+    agent.run("pls provide a receipe for this dish")
 
-print(agent.agent.llm_chain.prompt.template)
 
-agent.run("My monthly salary is 10000 KES, if i work for 10 months. How much is my total salary in USD in those 10 months.")
+
+langchain_serpapi_math_agent()
+
+# langchain_chat_memory_agent()
