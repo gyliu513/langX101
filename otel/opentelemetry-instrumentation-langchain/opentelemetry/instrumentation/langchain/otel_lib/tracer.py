@@ -168,7 +168,7 @@ def _params(run_extra: Dict[str, Any], span):
         
     if param := invocation_params.get("model", None):
         _set_span_attribute(span, SpanAttributes.LLM_REQUEST_MODEL, param)
-    if param := invocation_params.get("model_name", None):
+    elif param := invocation_params.get("model_name", None):
         _set_span_attribute(span, SpanAttributes.LLM_REQUEST_MODEL, param)
     if invocation_params.get("temperature", None) is not None:
         _set_span_attribute(span, SpanAttributes.LLM_TEMPERATURE, float(invocation_params.get("temperature")))
@@ -186,7 +186,7 @@ def _params_watson(run_extra: Dict[str, Any], span):
         
     if param := invocation_params.get("model_id", None):
         _set_span_attribute(span, SpanAttributes.LLM_REQUEST_MODEL, param)
-    if param := invocation_params.get("model", None):
+    elif param := invocation_params.get("model", None):
         _set_span_attribute(span, SpanAttributes.LLM_REQUEST_MODEL, param)
     if param := invocation_params.get("_type", None):
         _set_span_attribute(span, SpanAttributes.LLM_REQUEST_TYPE, param)
@@ -201,11 +201,24 @@ def _params_watson(run_extra: Dict[str, Any], span):
         if param := params.get("top_k", None):
             _set_span_attribute(span, SpanAttributes.LLM_TOP_K, param)
         if param := params.get("max_new_tokens", None):
-            _set_span_attribute(span, SpanAttributes.LLM_REQUEST_MAX_NEW_TOKENS, param)
+            _set_span_attribute(span, SpanAttributes.LLM_WATSON_MAX_NEW_TOKENS, param)
         if param := params.get("min_new_tokens", None):
-            _set_span_attribute(span, SpanAttributes.LLM_REQUEST_MIN_NEW_TOKENS, param)
+            _set_span_attribute(span, SpanAttributes.LLM_WATSON_MIN_NEW_TOKENS, param)
         if param := params.get("decoding_method", None):
-            _set_span_attribute(span, SpanAttributes.LLM_REQUEST_DECODING_METHOD, param)
+            _set_span_attribute(span, SpanAttributes.LLM_WATSON_DECODING_METHOD, param)            
+        if param := params.get("random_seed", None):
+            _set_span_attribute(span, SpanAttributes.LLM_WATSON_RANDOM_SEED, param)
+        if param := params.get("repetition_penalty", None):
+            _set_span_attribute(span, SpanAttributes.LLM_WATSON_REPETITION_PENALTY, param)
+        if param := params.get("time_limit", None):
+            _set_span_attribute(span, SpanAttributes.LLM_WATSON_TIME_LIMIT, param)
+        if param := params.get("truncate_input_tokens", None):
+            _set_span_attribute(span, SpanAttributes.LLM_WATSON_TRUNCATE_INPUT_TOKENS, param)
+        if param := params.get("length_penalty", None):
+            if decayFactor := param.get("decay_factor"):
+                _set_span_attribute(span, f"{SpanAttributes.LLM_WATSON_LENGTH_PENALTY}.decay_factor", decayFactor)
+            if startIndex := param.get("start_index"):
+                _set_span_attribute(span, f"{SpanAttributes.LLM_WATSON_LENGTH_PENALTY}.start_index", startIndex)
 
     return
 
@@ -227,15 +240,14 @@ def _token_counts(run_outputs: Dict[str, Any], span):
         _set_span_attribute(span, SpanAttributes.LLM_USAGE_TOTAL_TOKENS, token_usage.get("input_token_count") + token_usage.get("generated_token_count"))
 
 
-def _tools(run: Dict[str, Any]) -> Iterator[Tuple[str, str]]:
-    """Yields tool attributes if present."""
+def _tools(span, run: Dict[str, Any]):
     if run["run_type"] != "tool":
         return
     run_serialized = run["serialized"]
     if "name" in run_serialized:
-        yield "TOOL_NAME", run_serialized["name"]
+        _set_span_attribute(span, "tool.name", run_serialized["name"])
     if "description" in run_serialized:
-        yield "TOOL_DESCRIPTION", run_serialized["description"]
+        _set_span_attribute(span, "tool.description", run_serialized["description"])       
 
 
 def _chat_model_start_fallback(
@@ -293,29 +305,28 @@ class OpenInferenceTracer(BaseTracer):  # type: ignore
             if "agent" in run["name"].lower()
             else run["run_type"]
         )
-        # (
-        #     SpanKind.AGENT
-        #     if "agent" in run["name"].lower()
-        #     else _langchain_run_type_to_span_kind(run["run_type"])
-        # )
 
-        span_name = run["name"] if run["name"] is not None and run["name"] != "" else str(span_kind)
-
-        # span = self.tracer.start_span(span_name, start_time=start_time)
-        # with trace.use_span(span, end_on_exit=False):
+        for item in run.items():
+            print(item)
+            
+        span_name = run["name"] if run["name"] is not None and run["name"] != "" else span_kind
+        if span_name.startswith("LangChainInterface") and span_kind.lower() == "llm":
+            span_name = "WatsonGenaiLangchainLLM"   # rename Watson genai langchain extension LangChainInterface for better clarity.
+        
         start_time=_get_timestamp(run["start_time"])
         with self.tracer.start_as_current_span(span_name, start_time=start_time, end_on_exit=False) as span:        
             span.set_attribute(
                 SpanAttributes.TRACELOOP_SPAN_KIND,
-                str(span_kind),
+                span_kind,
             )
             span.set_attribute(SpanAttributes.TRACELOOP_ENTITY_NAME, span_name)
             _token_counts(run["outputs"], span)
-            if span_name == "WatsonxLLM" or (span_name.startswith("LangChainInterface") and span_kind.lower() == "llm"):
+            if span_name == "WatsonxLLM" or (span_name.startswith("WatsonGenaiLangchainLLM") and span_kind.lower() == "llm"):
                 _params_watson(run["extra"], span)
             else:
                 _params(run["extra"], span)
-
+                
+            _tools(span, run)
             _otel_input_messages(run["inputs"], span)
             _otel_output_messages(run["outputs"], span)
         

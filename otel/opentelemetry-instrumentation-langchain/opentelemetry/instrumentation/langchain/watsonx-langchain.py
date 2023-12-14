@@ -94,12 +94,17 @@ creds = Credentials(api_key, api_endpoint=api_url)
 
 genai_parameters = GenaiGenerateParams(
     decoding_method="greedy",  # Literal['greedy', 'sample']
-    max_new_tokens=50,
+    max_new_tokens=300,
     min_new_tokens=10,
     top_p=1,
     top_k=50,
     temperature=0.1,
     time_limit=30000,
+    # length_penalty={"decay_factor": 2.5, "start_index": 5},
+    # repetition_penalty=1.2,
+    # truncate_input_tokens=2048,
+    # random_seed=33,
+    # stop_sequences=["fail"],
 )
 
 watsonx_genai_llm = LangChainInterface(
