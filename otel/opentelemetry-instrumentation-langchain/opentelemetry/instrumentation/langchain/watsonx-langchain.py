@@ -89,7 +89,7 @@ from genai.schemas import GenerateParams as GenaiGenerateParams
 from genai.credentials import Credentials
 
 api_key = os.getenv("IBM_GENAI_KEY", None) 
-api_url = os.getenv("IBM_GENAI_API", None)
+api_url = "https://bam-api.res.ibm.com"
 creds = Credentials(api_key, api_endpoint=api_url)
 
 genai_parameters = GenaiGenerateParams(
