@@ -12,7 +12,6 @@ logger = logging.getLogger(__name__)
 
 _instruments = ("langchain >= 0.0.200",)
 
-
 from dotenv import load_dotenv, find_dotenv
 import os
 load_dotenv(find_dotenv())
@@ -56,10 +55,6 @@ tracer_provider.add_span_processor(BatchSpanProcessor(otlp_exporter))
 trace.set_tracer_provider(tracer_provider)
 
 LangChainHandlerInstrumentor().instrument(tracer_provider=tracer_provider)
-
-from dotenv import load_dotenv
-import os
-load_dotenv()
 
 os.environ['OTEL_EXPORTER_OTLP_INSECURE'] = 'True'
 os.environ["WATSONX_APIKEY"] = os.getenv("IAM_API_KEY")
