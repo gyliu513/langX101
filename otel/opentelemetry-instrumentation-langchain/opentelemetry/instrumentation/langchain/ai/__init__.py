@@ -30,6 +30,7 @@ class SpanAttributes:
     LLM_WATSON_TIME_LIMIT = "llm.watson.time_limit"
     LLM_WATSON_TRUNCATE_INPUT_TOKENS = "llm.watson.truncate_input_tokens"
     LLM_WATSON_LENGTH_PENALTY = "llm.watson.length_penalty"
+    LLM_WATSON_RETURN_OPTIONS = "llm.watson.return_options"
     
     # Vector DB
     VECTOR_DB_VENDOR = "vector_db.vendor"

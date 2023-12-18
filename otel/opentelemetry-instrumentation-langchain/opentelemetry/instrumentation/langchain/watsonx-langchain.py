@@ -59,24 +59,24 @@ LangChainHandlerInstrumentor().instrument(tracer_provider=tracer_provider)
 os.environ['OTEL_EXPORTER_OTLP_INSECURE'] = 'True'
 os.environ["WATSONX_APIKEY"] = os.getenv("IAM_API_KEY")
 
-# from ibm_watson_machine_learning.metanames import GenTextParamsMetaNames as GenParams
+# from ibm_watson_machine_learning.metanames import GenTextParamsMetaNames as WatsonMLGenParams
 
-# parameters = {
-#     GenParams.DECODING_METHOD: "sample",
-#     GenParams.MAX_NEW_TOKENS: 30,
-#     GenParams.MIN_NEW_TOKENS: 1,
-#     GenParams.TEMPERATURE: 0.5,
-#     GenParams.TOP_K: 50,
-#     GenParams.TOP_P: 1,
+# watson_ml_parameters = {
+#     WatsonMLGenParams.DECODING_METHOD: "sample",
+#     WatsonMLGenParams.MAX_NEW_TOKENS: 30,
+#     WatsonMLGenParams.MIN_NEW_TOKENS: 1,
+#     WatsonMLGenParams.TEMPERATURE: 0.5,
+#     WatsonMLGenParams.TOP_K: 50,
+#     WatsonMLGenParams.TOP_P: 1,
 # }
 
 # from langchain.llms import WatsonxLLM
 
-# watsonx_llm = WatsonxLLM(
+# watsonx_ml_llm = WatsonxLLM(
 #     model_id="google/flan-ul2",
 #     url="https://us-south.ml.cloud.ibm.com",
 #     project_id=os.getenv("PROJECT_ID"),
-#     params=parameters,
+#     params=watson_ml_parameters,
 # )
 
 from genai.extensions.langchain import LangChainInterface
@@ -92,14 +92,22 @@ genai_parameters = GenaiGenerateParams(
     max_new_tokens=300,
     min_new_tokens=10,
     top_p=1,
-    top_k=50,
-    temperature=0.1,
-    time_limit=30000,
+    # top_k=60,
+    temperature=0.2,
+    # time_limit=30000,
     # length_penalty={"decay_factor": 2.5, "start_index": 5},
     # repetition_penalty=1.2,
     # truncate_input_tokens=2048,
     # random_seed=33,
-    # stop_sequences=["fail"],
+    # stop_sequences=["fail", "stop1"],
+    # return_options={
+    #     "input_text": True, 
+    #     "generated_tokens": True, 
+    #     "input_tokens": True, 
+    #     "token_logprobs": True, 
+    #     "token_ranks": False, 
+    #     "top_n_tokens": False
+    #     },
 )
 
 watsonx_genai_llm = LangChainInterface(
@@ -114,6 +122,34 @@ from langchain.agents import load_tools
 from langchain.agents import initialize_agent
 from langchain.agents import AgentType
 from langchain.llms import OpenAI
+
+
+def langchain_watson_genai_llm_chain():
+    from langchain.schema import SystemMessage, HumanMessage
+    from langchain.prompts import ChatPromptTemplate, HumanMessagePromptTemplate
+    from langchain.chains import LLMChain, SequentialChain
+
+    # openai_llm = OpenAI(openai_api_key=os.environ["OPENAI_API_KEY"], temperature=0.1)
+    
+    first_prompt_messages = [
+        SystemMessage(content="You are a helpful tour guide"),
+        HumanMessage(content="tell me what is the most famous tourist attraction in Rome?"),
+    ]
+    first_prompt_template = ChatPromptTemplate.from_messages(first_prompt_messages)
+    first_chain = LLMChain(llm=watsonx_genai_llm, prompt=first_prompt_template, output_key="target")
+
+    second_prompt_messages = [
+        SystemMessage(content="You are a good tour guide"),
+        HumanMessagePromptTemplate.from_template(
+            "how to get to {target} from the nearest airport by public transportation?\n "
+        ),
+    ]
+    second_prompt_template = ChatPromptTemplate.from_messages(second_prompt_messages)
+    second_chain = LLMChain(llm=watsonx_genai_llm, prompt=second_prompt_template)
+
+    workflow = SequentialChain(chains=[first_chain, second_chain], input_variables=[])
+    print(workflow({}))
+    
 
 
 def langchain_serpapi_math_agent():
@@ -141,6 +177,8 @@ def langchain_chat_memory_agent():
 
 
 
-langchain_serpapi_math_agent()
+# langchain_serpapi_math_agent()
 
 # langchain_chat_memory_agent()
+
+langchain_watson_genai_llm_chain()

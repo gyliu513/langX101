@@ -166,18 +166,26 @@ def _params(run_extra: Dict[str, Any], span):
     if not (invocation_params := run_extra.get("invocation_params")):
         return
         
-    if param := invocation_params.get("model", None):
-        _set_span_attribute(span, SpanAttributes.LLM_REQUEST_MODEL, param)
-    elif param := invocation_params.get("model_name", None):
-        _set_span_attribute(span, SpanAttributes.LLM_REQUEST_MODEL, param)
+    if model := invocation_params.get("model", None):
+        _set_span_attribute(span, SpanAttributes.LLM_REQUEST_MODEL, model)
+    elif model_name := invocation_params.get("model_name", None):
+        _set_span_attribute(span, SpanAttributes.LLM_REQUEST_MODEL, model_name)
     if invocation_params.get("temperature", None) is not None:
         _set_span_attribute(span, SpanAttributes.LLM_TEMPERATURE, float(invocation_params.get("temperature")))
-    if param := invocation_params.get("max_tokens", None):
-        _set_span_attribute(span, SpanAttributes.LLM_REQUEST_MAX_TOKENS, param)
-    if param := invocation_params.get("top_p", None):
-        _set_span_attribute(span, SpanAttributes.LLM_TOP_P, param)
-    if param := invocation_params.get("_type", None):
-        _set_span_attribute(span, SpanAttributes.LLM_REQUEST_TYPE, param)
+    if max_tokens := invocation_params.get("max_tokens", None):
+        _set_span_attribute(span, SpanAttributes.LLM_REQUEST_MAX_TOKENS, max_tokens)
+    if top_p := invocation_params.get("top_p", None):
+        _set_span_attribute(span, SpanAttributes.LLM_TOP_P, top_p)
+    if _type := invocation_params.get("_type", None):
+        _set_span_attribute(span, SpanAttributes.LLM_REQUEST_TYPE, _type)
+    if stop_sequences := invocation_params.get("stop", None):
+        stop_sequences_string = ""
+        for stop_sequence in stop_sequences:
+            if stop_sequences_string == "":
+                stop_sequences_string = stop_sequence
+            else:
+                stop_sequences_string += ", " + stop_sequence
+        _set_span_attribute(span, SpanAttributes.LLM_CHAT_STOP_SEQUENCES, stop_sequences_string)     
         
 def _params_watson(run_extra: Dict[str, Any], span):
     """set parameters if present."""
@@ -214,11 +222,32 @@ def _params_watson(run_extra: Dict[str, Any], span):
             _set_span_attribute(span, SpanAttributes.LLM_WATSON_TIME_LIMIT, param)
         if param := params.get("truncate_input_tokens", None):
             _set_span_attribute(span, SpanAttributes.LLM_WATSON_TRUNCATE_INPUT_TOKENS, param)
+        if stop_sequences := params.get("stop_sequences", None):
+            stop_sequences_string = ""
+            for stop_sequence in stop_sequences:
+                if stop_sequences_string == "":
+                    stop_sequences_string = stop_sequence
+                else:
+                    stop_sequences_string += ", " + stop_sequence
+            _set_span_attribute(span, SpanAttributes.LLM_CHAT_STOP_SEQUENCES, stop_sequences_string)
         if param := params.get("length_penalty", None):
             if decayFactor := param.get("decay_factor"):
                 _set_span_attribute(span, f"{SpanAttributes.LLM_WATSON_LENGTH_PENALTY}.decay_factor", decayFactor)
             if startIndex := param.get("start_index"):
                 _set_span_attribute(span, f"{SpanAttributes.LLM_WATSON_LENGTH_PENALTY}.start_index", startIndex)
+        if param := params.get("return_options", None):
+            if input_text := param.get("input_text"):
+                _set_span_attribute(span, f"{SpanAttributes.LLM_WATSON_RETURN_OPTIONS}.input_text", input_text)
+            if generated_tokens := param.get("generated_tokens"):
+                _set_span_attribute(span, f"{SpanAttributes.LLM_WATSON_RETURN_OPTIONS}.generated_tokens", generated_tokens)
+            if input_tokens := param.get("input_tokens"):
+                _set_span_attribute(span, f"{SpanAttributes.LLM_WATSON_RETURN_OPTIONS}.input_tokens", input_tokens)
+            if token_logprobs := param.get("token_logprobs"):
+                _set_span_attribute(span, f"{SpanAttributes.LLM_WATSON_RETURN_OPTIONS}.token_logprobs", token_logprobs)
+            if token_ranks := param.get("token_ranks"):
+                _set_span_attribute(span, f"{SpanAttributes.LLM_WATSON_RETURN_OPTIONS}.token_ranks", token_ranks)
+            if top_n_tokens := param.get("top_n_tokens"):
+                _set_span_attribute(span, f"{SpanAttributes.LLM_WATSON_RETURN_OPTIONS}.top_n_tokens", top_n_tokens)
 
     return
 
