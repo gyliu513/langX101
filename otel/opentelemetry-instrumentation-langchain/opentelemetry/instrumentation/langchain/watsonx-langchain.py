@@ -88,31 +88,32 @@ api_url = "https://bam-api.res.ibm.com"
 creds = Credentials(api_key, api_endpoint=api_url)
 
 genai_parameters = GenaiGenerateParams(
-    decoding_method="greedy",  # Literal['greedy', 'sample']
+    decoding_method="sample",  # Literal['greedy', 'sample']
     max_new_tokens=300,
     min_new_tokens=10,
     top_p=1,
-    # top_k=60,
-    temperature=0.2,
-    # time_limit=30000,
+    top_k=50,
+    temperature=0.05,
+    time_limit=30000,
     # length_penalty={"decay_factor": 2.5, "start_index": 5},
     # repetition_penalty=1.2,
-    # truncate_input_tokens=2048,
+    truncate_input_tokens=2048,
     # random_seed=33,
-    # stop_sequences=["fail", "stop1"],
-    # return_options={
-    #     "input_text": True, 
-    #     "generated_tokens": True, 
-    #     "input_tokens": True, 
-    #     "token_logprobs": True, 
-    #     "token_ranks": False, 
-    #     "top_n_tokens": False
-    #     },
+    stop_sequences=["fail", "stop1"],
+    return_options={
+        "input_text": True, 
+        "generated_tokens": True, 
+        "input_tokens": True, 
+        "token_logprobs": True, 
+        "token_ranks": False, 
+        "top_n_tokens": False
+        },
 )
 
 watsonx_genai_llm = LangChainInterface(
-#     model="google/flan-t5-xxl", 
-    model="meta-llama/llama-2-70b", 
+    # model="google/flan-t5-xxl", 
+    # model="meta-llama/llama-2-70b", 
+    model = "ibm/granite-13b-chat-v1",
     params=genai_parameters, 
     credentials=creds
 )
@@ -129,17 +130,17 @@ def langchain_watson_genai_llm_chain():
     from langchain.prompts import ChatPromptTemplate, HumanMessagePromptTemplate
     from langchain.chains import LLMChain, SequentialChain
 
-    # openai_llm = OpenAI(openai_api_key=os.environ["OPENAI_API_KEY"], temperature=0.1)
+    openai_llm = OpenAI(openai_api_key=os.environ["OPENAI_API_KEY"], temperature=0.1)
     
     first_prompt_messages = [
-        SystemMessage(content="You are a helpful tour guide"),
+        SystemMessage(content="answer the question with very short answer, as short as you can."),
         HumanMessage(content="tell me what is the most famous tourist attraction in Rome?"),
     ]
     first_prompt_template = ChatPromptTemplate.from_messages(first_prompt_messages)
     first_chain = LLMChain(llm=watsonx_genai_llm, prompt=first_prompt_template, output_key="target")
 
     second_prompt_messages = [
-        SystemMessage(content="You are a good tour guide"),
+        SystemMessage(content="answer the question with very brief answer."),
         HumanMessagePromptTemplate.from_template(
             "how to get to {target} from the nearest airport by public transportation?\n "
         ),
@@ -151,7 +152,6 @@ def langchain_watson_genai_llm_chain():
     print(workflow({}))
     
 
-
 def langchain_serpapi_math_agent():
     openai_llm = OpenAI(openai_api_key=os.environ["OPENAI_API_KEY"], temperature=0.1)
 
@@ -161,7 +161,7 @@ def langchain_serpapi_math_agent():
         tools, openai_llm, agent=AgentType.ZERO_SHOT_REACT_DESCRIPTION, verbose=True)
 
     # agent.run("My monthly salary is 10000 KES, if i work for 10 months. How much is my total salary in USD in those 10 months.")
-    agent.run("a pair of shoes sale price 300 CNY and a beautiful pocket knife price at 50 USD, how much in USD if I want them both?")
+    print(agent.run("a pair of shoes sale price 300 CNY and a beautiful pocket knife price at 50 USD, how much in USD if I want them both?"))
 
 def langchain_chat_memory_agent():
     from langchain.memory import ConversationBufferMemory
@@ -171,9 +171,9 @@ def langchain_chat_memory_agent():
     tools = load_tools(["serpapi", "llm-math"], llm=watsonx_genai_llm)
 
     agent = initialize_agent(tools, watsonx_genai_llm, agent=AgentType.CONVERSATIONAL_REACT_DESCRIPTION, verbose=True, memory=memory)
-    agent.run("what is the capital city of Italy?")
-    agent.run("what is the most famous dish of this city?")
-    agent.run("pls provide a receipe for this dish")
+    print(agent.run("what is the capital city of Italy?"))
+    print(agent.run("what is the most famous dish of this city?"))
+    print(agent.run("pls provide a receipe for this dish"))
 
 
 
