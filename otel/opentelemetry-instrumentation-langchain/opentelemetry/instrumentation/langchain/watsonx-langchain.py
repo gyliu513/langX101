@@ -1,5 +1,6 @@
 """Langchain BaseHandler instrumentation"""
 import logging
+import time
 from typing import Collection
 
 from opentelemetry.trace import get_tracer
@@ -26,8 +27,6 @@ from opentelemetry.propagate import extract
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
-
-
 from opentelemetry.sdk.trace.export import (
     BatchSpanProcessor,
     ConsoleSpanExporter,
@@ -38,23 +37,47 @@ from opentelemetry.trace import (
     set_tracer_provider,
 )
 
+from opentelemetry import metrics
+from opentelemetry.sdk.metrics import MeterProvider
+from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader, ConsoleMetricExporter
+from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter
+from opentelemetry.metrics import (
+    CallbackOptions,
+    Observation,
+    get_meter_provider,
+    set_meter_provider,
+)
+
+resource=Resource.create({'service.name': os.environ["SVC_NAME"]})
+span_endpoint=os.environ["OTLP_EXPORTER"]+":4317"         # Replace with your OTLP endpoint URL
+metric_endpoint=os.environ["OTLP_EXPORTER"]+":4317"       # Replace with your Metric endpoint URL
+
 tracer_provider = TracerProvider(
-    resource=Resource.create({'service.name': os.environ["SVC_NAME"]}),
+    resource = resource,
 )
 
 # Create an OTLP Span Exporter
 otlp_exporter = OTLPSpanExporter(
-    endpoint=os.environ["OTLP_EXPORTER"]+":4317",  # Replace with your OTLP endpoint URL
+    endpoint=span_endpoint,
 )
 
 # Add the exporter to the TracerProvider
 # tracer_provider.add_span_processor(BatchSpanProcessor(ConsoleSpanExporter()))  # Add any span processors you need
 tracer_provider.add_span_processor(BatchSpanProcessor(otlp_exporter))
 
-# Register the TracerProvider
+# Register the trace provider
 trace.set_tracer_provider(tracer_provider)
 
-LangChainHandlerInstrumentor().instrument(tracer_provider=tracer_provider)
+# reader = PeriodicExportingMetricReader(
+#     OTLPMetricExporter(endpoint=metric_endpoint)
+# )
+reader = PeriodicExportingMetricReader(ConsoleMetricExporter())
+metric_provider = MeterProvider(resource=resource, metric_readers=[reader])
+# Register the metric provide
+metrics.set_meter_provider(metric_provider)
+
+
+LangChainHandlerInstrumentor().instrument(tracer_provider=tracer_provider, metric_provider=metric_provider)
 
 os.environ['OTEL_EXPORTER_OTLP_INSECURE'] = 'True'
 os.environ["WATSONX_APIKEY"] = os.getenv("IAM_API_KEY")
@@ -82,6 +105,7 @@ os.environ["WATSONX_APIKEY"] = os.getenv("IAM_API_KEY")
 from genai.extensions.langchain import LangChainInterface
 from genai.schemas import GenerateParams as GenaiGenerateParams
 from genai.credentials import Credentials
+from otel_lib.country_name import RandomCountryName
 
 api_key = os.getenv("IBM_GENAI_KEY", None) 
 api_url = "https://bam-api.res.ibm.com"
@@ -134,16 +158,16 @@ def langchain_watson_genai_llm_chain():
     
     first_prompt_messages = [
         SystemMessage(content="answer the question with very short answer, as short as you can."),
-        HumanMessage(content="tell me what is the most famous tourist attraction in Rome?"),
+        # HumanMessage(content=f"tell me what is the most famous tourist attraction in the capital city of {RandomCountryName()}?"),
+        HumanMessage(content=f"tell me what is the most famous dish in {RandomCountryName()}?"),
     ]
     first_prompt_template = ChatPromptTemplate.from_messages(first_prompt_messages)
     first_chain = LLMChain(llm=watsonx_genai_llm, prompt=first_prompt_template, output_key="target")
 
     second_prompt_messages = [
         SystemMessage(content="answer the question with very brief answer."),
-        HumanMessagePromptTemplate.from_template(
-            "how to get to {target} from the nearest airport by public transportation?\n "
-        ),
+        # HumanMessagePromptTemplate.from_template("how to get to {target} from the nearest airport by public transportation?\n "),
+        HumanMessagePromptTemplate.from_template("pls provide the recipe for dish {target}\n "),
     ]
     second_prompt_template = ChatPromptTemplate.from_messages(second_prompt_messages)
     second_chain = LLMChain(llm=watsonx_genai_llm, prompt=second_prompt_template)
@@ -171,7 +195,7 @@ def langchain_chat_memory_agent():
     tools = load_tools(["serpapi", "llm-math"], llm=watsonx_genai_llm)
 
     agent = initialize_agent(tools, watsonx_genai_llm, agent=AgentType.CONVERSATIONAL_REACT_DESCRIPTION, verbose=True, memory=memory)
-    print(agent.run("what is the capital city of Italy?"))
+    print(agent.run(f"what is the capital city of {RandomCountryName()}?"))
     print(agent.run("what is the most famous dish of this city?"))
     print(agent.run("pls provide a receipe for this dish"))
 
@@ -182,3 +206,12 @@ def langchain_chat_memory_agent():
 # langchain_chat_memory_agent()
 
 langchain_watson_genai_llm_chain()
+
+# interval = 180 
+# count = 100
+# while count > 0:
+#     count -= 1
+#     langchain_watson_genai_llm_chain()
+#     time.sleep(interval)
+
+metric_provider.force_flush()

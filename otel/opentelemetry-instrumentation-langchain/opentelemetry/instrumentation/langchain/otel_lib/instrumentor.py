@@ -3,6 +3,12 @@ from typing import Any, Optional
 from .tracer import OpenInferenceTracer
 from opentelemetry.trace import get_tracer
 from opentelemetry.instrumentation.langchain.version import __version__
+from opentelemetry.metrics import (
+    CallbackOptions,
+    Observation,
+    get_meter_provider,
+    set_meter_provider,
+)
 
 
 class LangChainHandlerInstrumentor:
@@ -25,6 +31,11 @@ class LangChainHandlerInstrumentor:
         tracer_provider = kwargs.get("tracer_provider", None)
         tracer = get_tracer(__name__, __version__, tracer_provider)
         self._handeler.tracer = tracer
+        metric_provider = kwargs.get("metric_provider", None)
+        # tracer = get_tracer(__name__, __version__, tracer_provider)
+        meter = metric_provider.get_meter(__name__, __version__)
+        self._handeler.meter = meter
+        
         source_init = BaseCallbackManager.__init__
 
         # Keep track of the source init so we can tell if the patching occurred
