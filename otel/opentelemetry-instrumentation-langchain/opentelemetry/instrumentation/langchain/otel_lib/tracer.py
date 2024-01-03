@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 import json
 import logging
 from copy import deepcopy
@@ -27,6 +28,13 @@ from typing import Any, Callable, Iterable, Optional, Type, TypeVar, cast
 
 F = TypeVar("F", bound=Callable[..., Any])
 
+@dataclass
+class LLM_metrics: 
+    llm: str
+    model: float
+    token: int = 0
+    calls: int =0
+        
 def graceful_fallback(
     fallback_method: Callable[..., Any], exceptions: Optional[Iterable[Type[BaseException]]] = None
 ) -> Callable[[F], F]:
@@ -199,7 +207,7 @@ def _params_watson(run_extra: Dict[str, Any], span):
     if param := invocation_params.get("_type", None):
         _set_span_attribute(span, SpanAttributes.LLM_REQUEST_TYPE, param)
     if param := invocation_params.get("project_id", None):
-        _set_span_attribute(span, SpanAttributes.LLM_REQUEST_PROJECT_ID, param)
+        _set_span_attribute(span, SpanAttributes.LLM_WATSON_PROJECT_ID, param)
         
     if params := invocation_params.get("params"):
         if params.get("temperature", None) is not None:
@@ -322,10 +330,12 @@ class OpenInferenceTracer(BaseTracer):  # type: ignore
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self.tracer = None
+        self.meter = None
 
     def _convert_run_to_spans(
         self,
         run: Dict[str, Any],
+        modelmetrics: [],
         # parent: Optional[Span] = None,
     ) -> None:
 
@@ -335,10 +345,13 @@ class OpenInferenceTracer(BaseTracer):  # type: ignore
             else run["run_type"]
         )
 
+        # for item in run.items():
+        #     print(item)
+            
         span_name = run["name"] if run["name"] is not None and run["name"] != "" else span_kind
         if span_name.startswith("LangChainInterface") and span_kind.lower() == "llm":
             span_name = "WatsonGenaiLangchainLLM"   # rename Watson genai langchain extension LangChainInterface for better clarity.
-        
+
         start_time=_get_timestamp(run["start_time"])
         with self.tracer.start_as_current_span(span_name, start_time=start_time, end_on_exit=False) as span:        
             span.set_attribute(
@@ -355,9 +368,13 @@ class OpenInferenceTracer(BaseTracer):  # type: ignore
             _tools(span, run)
             _otel_input_messages(run["inputs"], span)
             _otel_output_messages(run["outputs"], span)
+
+            updown_counter = self.meter.create_up_down_counter(f"{span_name}_updown_counter")
+            updown_counter.add(1)
+            updown_counter.add(-5)
         
             for child_run in run["child_runs"]:
-                self._convert_run_to_spans(child_run)
+                self._convert_run_to_spans(child_run, modelmetrics)
 
         end_time=_get_timestamp(run["end_time"])
         span.end(end_time=end_time)
@@ -365,8 +382,10 @@ class OpenInferenceTracer(BaseTracer):  # type: ignore
     def _persist_run(self, run: Run) -> None:
         # Note that this relies on `.dict()` from pydantic for the
         # serialization of objects like `langchain.schema.Document`.
+        modelmetrics = []
         try:
-            self._convert_run_to_spans(run.dict())
+            self._convert_run_to_spans(run.dict(), modelmetrics)
+            print(modelmetrics)
         except Exception:
             logger.exception("Failed to convert run to spans")
 
