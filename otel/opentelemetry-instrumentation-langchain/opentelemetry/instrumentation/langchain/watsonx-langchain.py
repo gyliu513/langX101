@@ -40,7 +40,8 @@ from opentelemetry.trace import (
 from opentelemetry import metrics
 from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader, ConsoleMetricExporter
-from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter
+from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter as OTLPMetricExporter
+from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter as OTLPMetricExporterHTTP
 from opentelemetry.metrics import (
     CallbackOptions,
     Observation,
@@ -51,6 +52,11 @@ from opentelemetry.metrics import (
 resource=Resource.create({'service.name': os.environ["SVC_NAME"]})
 span_endpoint=os.environ["OTLP_EXPORTER"]+":4317"         # Replace with your OTLP endpoint URL
 metric_endpoint=os.environ["OTLP_EXPORTER"]+":4317"       # Replace with your Metric endpoint URL
+metric_http_endpoint=os.environ["METRIC_EXPORTER_HTTP_TESTING2"]
+
+# testing metrics endpoint 
+# metric_endpoint=os.environ["METRIC_EXPORTER_TESTING"]
+# metric_endpoint=os.environ["OTEL_EXPORTER_OTLP_METRICS_ENDPOINT"]
 
 tracer_provider = TracerProvider(
     resource = resource,
@@ -68,10 +74,14 @@ tracer_provider.add_span_processor(BatchSpanProcessor(otlp_exporter))
 # Register the trace provider
 trace.set_tracer_provider(tracer_provider)
 
-# reader = PeriodicExportingMetricReader(
-#     OTLPMetricExporter(endpoint=metric_endpoint)
-# )
-reader = PeriodicExportingMetricReader(ConsoleMetricExporter())
+reader = PeriodicExportingMetricReader(
+    # OTLPMetricExporter(endpoint=metric_endpoint)
+    OTLPMetricExporterHTTP(endpoint=metric_http_endpoint)
+)
+
+# Metrics console output
+# console_reader = PeriodicExportingMetricReader(ConsoleMetricExporter())
+
 metric_provider = MeterProvider(resource=resource, metric_readers=[reader])
 # Register the metric provide
 metrics.set_meter_provider(metric_provider)
