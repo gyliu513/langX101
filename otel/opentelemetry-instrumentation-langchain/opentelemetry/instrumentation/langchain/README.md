@@ -5,6 +5,11 @@ git clone ssh://git@github.com/gyliu513/langX101
 cd langX101/otel/opentelemetry-instrumentation-langchain/opentelemetry/instrumentation/langchain/
 ```
   
+#### install required packages.  
+```console
+pip install -r requirements.txt  
+```
+
 #### update variables in the .env file.  
   
 `.env` file:   
