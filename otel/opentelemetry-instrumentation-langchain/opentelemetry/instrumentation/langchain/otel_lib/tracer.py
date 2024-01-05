@@ -30,11 +30,14 @@ F = TypeVar("F", bound=Callable[..., Any])
 
 @dataclass
 class LLM_metrics: 
-    llm: str
-    model: float
+    llm: str    # openai/ibm_watson_ai/ibm_generic_ai
+    model: str
     token: int = 0
     calls: int =0
-        
+
+WATSON_AI_TYPES={"IBM GENAI":"ibm_generic_ai", "IBM watsonx.ai":"ibm_watson_ai"}
+OPENAI_TYPE="openai"
+
 def graceful_fallback(
     fallback_method: Callable[..., Any], exceptions: Optional[Iterable[Type[BaseException]]] = None
 ) -> Callable[[F], F]:
@@ -172,20 +175,20 @@ def _prompt_template(run_serialized: Dict[str, Any]) -> Iterator[Tuple[str, Any]
 def _params(run_extra: Dict[str, Any], span):
     """set parameters if present."""
     if not (invocation_params := run_extra.get("invocation_params")):
-        return
+        return "", ""
         
-    if model := invocation_params.get("model", None):
-        _set_span_attribute(span, SpanAttributes.LLM_REQUEST_MODEL, model)
-    elif model_name := invocation_params.get("model_name", None):
-        _set_span_attribute(span, SpanAttributes.LLM_REQUEST_MODEL, model_name)
+    if ai_model := invocation_params.get("model", None):
+        _set_span_attribute(span, SpanAttributes.LLM_REQUEST_MODEL, ai_model)
+    elif ai_model := invocation_params.get("model_name", None):
+        _set_span_attribute(span, SpanAttributes.LLM_REQUEST_MODEL, ai_model)
     if invocation_params.get("temperature", None) is not None:
         _set_span_attribute(span, SpanAttributes.LLM_TEMPERATURE, float(invocation_params.get("temperature")))
     if max_tokens := invocation_params.get("max_tokens", None):
         _set_span_attribute(span, SpanAttributes.LLM_REQUEST_MAX_TOKENS, max_tokens)
     if top_p := invocation_params.get("top_p", None):
         _set_span_attribute(span, SpanAttributes.LLM_TOP_P, top_p)
-    if _type := invocation_params.get("_type", None):
-        _set_span_attribute(span, SpanAttributes.LLM_REQUEST_TYPE, _type)
+    if llm_name := invocation_params.get("_type", None):
+        _set_span_attribute(span, SpanAttributes.LLM_REQUEST_TYPE, llm_name)
     if stop_sequences := invocation_params.get("stop", None):
         stop_sequences_string = ""
         for stop_sequence in stop_sequences:
@@ -193,19 +196,22 @@ def _params(run_extra: Dict[str, Any], span):
                 stop_sequences_string = stop_sequence
             else:
                 stop_sequences_string += ", " + stop_sequence
-        _set_span_attribute(span, SpanAttributes.LLM_CHAT_STOP_SEQUENCES, stop_sequences_string)     
+        _set_span_attribute(span, SpanAttributes.LLM_CHAT_STOP_SEQUENCES, stop_sequences_string)
+    return llm_name, ai_model
         
 def _params_watson(run_extra: Dict[str, Any], span):
     """set parameters if present."""
     if not (invocation_params := run_extra.get("invocation_params")):
-        return
-        
-    if param := invocation_params.get("model_id", None):
-        _set_span_attribute(span, SpanAttributes.LLM_REQUEST_MODEL, param)
-    elif param := invocation_params.get("model", None):
-        _set_span_attribute(span, SpanAttributes.LLM_REQUEST_MODEL, param)
-    if param := invocation_params.get("_type", None):
-        _set_span_attribute(span, SpanAttributes.LLM_REQUEST_TYPE, param)
+        return "", ""
+    
+    if ai_model := invocation_params.get("model_id", None):
+        _set_span_attribute(span, SpanAttributes.LLM_REQUEST_MODEL, ai_model)
+    elif ai_model := invocation_params.get("model", None):
+        _set_span_attribute(span, SpanAttributes.LLM_REQUEST_MODEL, ai_model)
+    if ai_type := invocation_params.get("_type", None):
+        llm_name = WATSON_AI_TYPES.get(ai_type)
+        _set_span_attribute(span, SpanAttributes.LLM_REQUEST_TYPE, llm_name)
+            
     if param := invocation_params.get("project_id", None):
         _set_span_attribute(span, SpanAttributes.LLM_WATSON_PROJECT_ID, param)
         
@@ -257,10 +263,11 @@ def _params_watson(run_extra: Dict[str, Any], span):
             if top_n_tokens := param.get("top_n_tokens"):
                 _set_span_attribute(span, f"{SpanAttributes.LLM_WATSON_RETURN_OPTIONS}.top_n_tokens", top_n_tokens)
 
-    return
+    return llm_name, ai_model
 
 def _token_counts(run_outputs: Dict[str, Any], span):
     """get token counts if present"""
+    total_tokens = 0
     if not run_outputs:
         return
     try:
@@ -270,11 +277,14 @@ def _token_counts(run_outputs: Dict[str, Any], span):
     if token_usage.get("prompt_tokens") is not None:
         _set_span_attribute(span, SpanAttributes.LLM_USAGE_PROMPT_TOKENS, token_usage.get("prompt_tokens"))
         _set_span_attribute(span, SpanAttributes.LLM_USAGE_COMPLETION_TOKENS, token_usage.get("completion_tokens"))
-        _set_span_attribute(span, SpanAttributes.LLM_USAGE_TOTAL_TOKENS, token_usage.get("total_tokens"))
+        total_tokens = token_usage.get("total_tokens")
+        _set_span_attribute(span, SpanAttributes.LLM_USAGE_TOTAL_TOKENS, total_tokens)
     if token_usage.get("generated_token_count") is not None:
         _set_span_attribute(span, SpanAttributes.LLM_USAGE_PROMPT_TOKENS, token_usage.get("input_token_count"))
         _set_span_attribute(span, SpanAttributes.LLM_USAGE_COMPLETION_TOKENS, token_usage.get("generated_token_count"))
-        _set_span_attribute(span, SpanAttributes.LLM_USAGE_TOTAL_TOKENS, token_usage.get("input_token_count") + token_usage.get("generated_token_count"))
+        total_tokens = token_usage.get("input_token_count") + token_usage.get("generated_token_count")
+        _set_span_attribute(span, SpanAttributes.LLM_USAGE_TOTAL_TOKENS, total_tokens)
+    return total_tokens
 
 
 def _tools(span, run: Dict[str, Any]):
@@ -325,7 +335,10 @@ def _extract_llm_parms(instance, span):
 def _get_timestamp(time_data): 
     utc_time=time_data.replace(tzinfo=timezone.utc) 
     return int(utc_time.timestamp()*10**9)
-            
+
+def _otel_metric_collect(modelmetrics, llm_metric:LLM_metrics):
+    return modelmetrics
+
 class OpenInferenceTracer(BaseTracer):  # type: ignore 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
@@ -345,12 +358,10 @@ class OpenInferenceTracer(BaseTracer):  # type: ignore
             else run["run_type"]
         )
 
-        # for item in run.items():
-        #     print(item)
-            
         span_name = run["name"] if run["name"] is not None and run["name"] != "" else span_kind
         if span_name.startswith("LangChainInterface") and span_kind.lower() == "llm":
             span_name = "WatsonGenaiLangchainLLM"   # rename Watson genai langchain extension LangChainInterface for better clarity.
+            # llm_name = "ibm_generic_ai"
 
         start_time=_get_timestamp(run["start_time"])
         with self.tracer.start_as_current_span(span_name, start_time=start_time, end_on_exit=False) as span:        
@@ -359,19 +370,26 @@ class OpenInferenceTracer(BaseTracer):  # type: ignore
                 span_kind,
             )
             span.set_attribute(SpanAttributes.TRACELOOP_ENTITY_NAME, span_name)
-            _token_counts(run["outputs"], span)
-            if span_name == "WatsonxLLM" or (span_name.startswith("WatsonGenaiLangchainLLM") and span_kind.lower() == "llm"):
-                _params_watson(run["extra"], span)
-            else:
-                _params(run["extra"], span)
-                
             _tools(span, run)
-            _otel_input_messages(run["inputs"], span)
-            _otel_output_messages(run["outputs"], span)
 
-            updown_counter = self.meter.create_up_down_counter(f"{span_name}_updown_counter")
-            updown_counter.add(1)
-            updown_counter.add(-5)
+            if span_kind.lower() == "llm":
+                total_tokens = _token_counts(run["outputs"], span)
+                if span_name == "WatsonxLLM" or (span_name.startswith("WatsonGenaiLangchainLLM")):
+                    llm_name, model_name = _params_watson(run["extra"], span)
+                else:
+                    llm_name, model_name = _params(run["extra"], span)
+
+                llm_metric = LLM_metrics(llm=llm_name, model=model_name)
+                
+                _otel_input_messages(run["inputs"], span)
+                _otel_output_messages(run["outputs"], span)
+                modelmetrics = _otel_metric_collect(modelmetrics, llm_metric)
+                # updown_counter = self.meter.create_up_down_counter(f"{span_name}_updown_counter")
+                # updown_counter.add(1)
+                # updown_counter.add(-5)
+                if total_tokens != 0:
+                    test_token_counter = self.meter.create_up_down_counter(f"{llm_name}_{model_name}_{span_name}_tk")
+                    test_token_counter.add(total_tokens)
         
             for child_run in run["child_runs"]:
                 self._convert_run_to_spans(child_run, modelmetrics)
