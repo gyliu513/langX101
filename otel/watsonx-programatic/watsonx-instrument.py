@@ -1,5 +1,5 @@
 ###################################################################
-#####################This is the test program######################
+#############This is the OTEL instrumentation program##############
 ###################################################################
 
 from dotenv import load_dotenv
@@ -8,13 +8,11 @@ load_dotenv()
 
 os.environ['OTEL_EXPORTER_OTLP_INSECURE'] = 'True'
 
+'''
+Can we generate the code automatically for end user?
+'''
+
 import sys
-
-# Append the path of the external package to sys.path
-sys.path.append('/Users/gyliu/go/src/github.com/gyliu513/langX101/otel/opentelemetry-instrumentation-watsonx')
-sys.path.append('/Users/gyliu/go/src/github.com/gyliu513/langX101/otel/opentelemetry-semantic-conventions-ai')
-
-from ibm_watson_machine_learning.foundation_models import Model
 
 from opentelemetry import trace
 from opentelemetry.instrumentation.wsgi import collect_request_attributes
@@ -52,6 +50,12 @@ tracer_provider.add_span_processor(BatchSpanProcessor(otlp_exporter))
 trace.set_tracer_provider(tracer_provider)
 
 WatsonxInstrumentor().instrument(tracer_provider=tracer_provider)
+
+###################################################################
+#####################This is the test program######################
+###################################################################
+
+from ibm_watson_machine_learning.foundation_models import Model
 
 def get_credentials(api_key):
     return {
