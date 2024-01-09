@@ -33,7 +33,8 @@ class LLM_metrics:
     llm: str    # openai/ibm_watson_ai/ibm_generic_ai
     model: str
     token: int = 0
-    calls: int =0
+    calls: int = 1
+    duration: int = 0
 
 WATSON_AI_TYPES={"IBM GENAI":"ibm_generic_ai", "IBM watsonx.ai":"ibm_watson_ai"}
 OPENAI_TYPE="openai"
@@ -336,7 +337,19 @@ def _get_timestamp(time_data):
     utc_time=time_data.replace(tzinfo=timezone.utc) 
     return int(utc_time.timestamp()*10**9)
 
-def _otel_metric_collect(modelmetrics, llm_metric:LLM_metrics):
+def _otel_metric_collect(modelmetrics:List[LLM_metrics], llm_metric:LLM_metrics):
+    found = False
+    for index in range(len(modelmetrics)):
+        if modelmetrics[index].llm == llm_metric.llm and modelmetrics[index].model == llm_metric.model:
+            found = True
+            break
+    if not found:
+        modelmetrics.append(llm_metric)
+        return modelmetrics
+    
+    modelmetrics[index].token  += llm_metric.token
+    modelmetrics[index].duration += llm_metric.duration
+    modelmetrics[index].calls  += 1
     return modelmetrics
 
 class OpenInferenceTracer(BaseTracer):  # type: ignore 
@@ -379,7 +392,11 @@ class OpenInferenceTracer(BaseTracer):  # type: ignore
                 else:
                     llm_name, model_name = _params(run["extra"], span)
 
-                llm_metric = LLM_metrics(llm=llm_name, model=model_name)
+                llm_metric = LLM_metrics(llm=llm_name, 
+                                         model=model_name, 
+                                         token=total_tokens, 
+                                         duration=(_get_timestamp(run["end_time"]) - start_time)
+                                         )
                 
                 _otel_input_messages(run["inputs"], span)
                 _otel_output_messages(run["outputs"], span)
@@ -387,9 +404,9 @@ class OpenInferenceTracer(BaseTracer):  # type: ignore
                 # updown_counter = self.meter.create_up_down_counter(f"{span_name}_updown_counter")
                 # updown_counter.add(1)
                 # updown_counter.add(-5)
-                if total_tokens != 0:
-                    test_token_counter = self.meter.create_up_down_counter(f"{llm_name}_{model_name}_{span_name}_tk")
-                    test_token_counter.add(total_tokens)
+                # if total_tokens != 0:
+                #     test_token_counter = self.meter.create_up_down_counter(f"{llm_name}_{model_name}_{span_name}_tk")
+                #     test_token_counter.add(total_tokens)
         
             for child_run in run["child_runs"]:
                 self._convert_run_to_spans(child_run, modelmetrics)
@@ -403,7 +420,13 @@ class OpenInferenceTracer(BaseTracer):  # type: ignore
         modelmetrics = []
         try:
             self._convert_run_to_spans(run.dict(), modelmetrics)
-            print(modelmetrics)
+            for modelmetric in modelmetrics:
+                token_counter = self.meter.create_up_down_counter(f"{modelmetric.llm}_{modelmetric.model}_token")
+                call_counter = self.meter.create_up_down_counter(f"{modelmetric.llm}_{modelmetric.model}_calls")
+                duration_counter = self.meter.create_up_down_counter(f"{modelmetric.llm}_{modelmetric.model}_duration")
+                token_counter.add(modelmetric.token)
+                call_counter.add(modelmetric.calls)
+                duration_counter.add(modelmetric.duration)
         except Exception:
             logger.exception("Failed to convert run to spans")
 
