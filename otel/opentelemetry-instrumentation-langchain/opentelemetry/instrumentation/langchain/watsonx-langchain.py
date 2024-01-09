@@ -49,10 +49,10 @@ from opentelemetry.metrics import (
     set_meter_provider,
 )
 
-resource=Resource.create({'service.name': os.environ["SVC_NAME"]})
+resource=Resource.create({'service.name': os.environ["SVC_NAME"], 'service.instance.id': os.environ["SVC_INSTANCE_ID"], 'INSTANA_PLUGIN': "llmonitor",  'llm.platform': "watsonx"})
 span_endpoint=os.environ["OTLP_EXPORTER"]+":4317"         # Replace with your OTLP endpoint URL
 metric_endpoint=os.environ["OTLP_EXPORTER"]+":4317"       # Replace with your Metric endpoint URL
-metric_http_endpoint=os.environ["METRIC_EXPORTER_HTTP_TESTING2"]
+#metric_http_endpoint=os.environ["METRIC_EXPORTER_HTTP_TESTING2"]
 
 # testing metrics endpoint 
 # metric_endpoint=os.environ["METRIC_EXPORTER_TESTING"]
@@ -75,8 +75,8 @@ tracer_provider.add_span_processor(BatchSpanProcessor(otlp_exporter))
 trace.set_tracer_provider(tracer_provider)
 
 reader = PeriodicExportingMetricReader(
-    # OTLPMetricExporter(endpoint=metric_endpoint)
-    OTLPMetricExporterHTTP(endpoint=metric_http_endpoint)
+    OTLPMetricExporter(endpoint=metric_endpoint)
+    #OTLPMetricExporterHTTP(endpoint=metric_http_endpoint)
 )
 
 # Metrics console output
@@ -164,7 +164,7 @@ def langchain_watson_genai_llm_chain():
     from langchain.prompts import ChatPromptTemplate, HumanMessagePromptTemplate
     from langchain.chains import LLMChain, SequentialChain
 
-    openai_llm = OpenAI(openai_api_key=os.environ["OPENAI_API_KEY"], temperature=0.1)
+    # openai_llm = OpenAI(openai_api_key=os.environ["OPENAI_API_KEY"], temperature=0.1)
     
     first_prompt_messages = [
         SystemMessage(content="answer the question with very short answer, as short as you can."),
