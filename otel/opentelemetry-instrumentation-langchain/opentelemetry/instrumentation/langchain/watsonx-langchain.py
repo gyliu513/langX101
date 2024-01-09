@@ -1,9 +1,7 @@
 """Langchain BaseHandler instrumentation"""
 """
 prep env:
-use pip to install:
-    traceloop-sdk
-    opente
+    pip install -r requirements.txt
 """
 import logging
 import time
