@@ -424,9 +424,9 @@ class OpenInferenceTracer(BaseTracer):  # type: ignore
                 token_counter = self.meter.create_up_down_counter(f"llm.request.token")
                 call_counter = self.meter.create_up_down_counter(f"llm.request.count")
                 duration_counter = self.meter.create_up_down_counter(f"llm.response.duration.avg")
-                token_counter.add(modelmetric.token, {"model_id": modelmetric.model, "user_id": "user1"})
-                call_counter.add(modelmetric.calls, {"model_id": modelmetric.model, "user_id": "user1"})
-                duration_counter.add(modelmetric.duration, {"model_id": modelmetric.model, "user_id": "user1"})
+                token_counter.add(modelmetric.token, {"model_id": modelmetric.model, "modelmetric_llm": {modelmetric.llm}})
+                call_counter.add(modelmetric.calls, {"model_id": modelmetric.model, "modelmetric_llm": {modelmetric.llm}})
+                duration_counter.add(modelmetric.duration, {"model_id": modelmetric.model, "modelmetric_llm": {modelmetric.llm}})
         except Exception:
             logger.exception("Failed to convert run to spans")
 
