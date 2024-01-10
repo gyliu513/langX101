@@ -53,7 +53,7 @@ from opentelemetry.metrics import (
     set_meter_provider,
 )
 
-resource=Resource.create({'service.name': os.environ["SVC_NAME"]})
+resource=Resource.create({'service.name': os.environ["SVC_NAME"], 'service.instance.id': os.environ["SVC_INSTANCE_ID"], 'INSTANA_PLUGIN': "llmonitor",  'llm.platform': os.environ["LLM_PLATFORM"]})
 span_endpoint=os.environ["OTLP_EXPORTER"]+":4317"         # Replace with your OTLP endpoint URL
 metric_endpoint=os.environ["OTLP_EXPORTER"]+":4317"       # Replace with your Metric endpoint URL
 metric_http_endpoint=os.environ["METRIC_EXPORTER_HTTP_MY_TESTING"]

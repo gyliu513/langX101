@@ -21,6 +21,10 @@ SVC_NAME="YOUR_SERVICE_NAME"
 OTLP_EXPORTER="OTLP_EXPORT_HOST_PORT"
 METRIC_EXPORTER_HTTP_TESTING2="http://mymetric_export_url:8000/v1/metrics"
 OTEL_EXPORTER_OTLP_INSECURE="true"
+
+### Resource Attributes, see Semantic Conventions for Watsonx AI Metrics
+SVC_INSTANCE_ID="SVC_ADRESS:SVC_PORT@SVC_NAME"
+LLM_PLATFORM="watsonx"
 ```
 
 #### Run watson genai with langchain
