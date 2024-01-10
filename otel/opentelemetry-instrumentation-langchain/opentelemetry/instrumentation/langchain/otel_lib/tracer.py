@@ -405,8 +405,8 @@ class OpenInferenceTracer(BaseTracer):  # type: ignore
                 # updown_counter.add(1)
                 # updown_counter.add(-5)
                 # if total_tokens != 0:
-                #     test_token_counter = self.meter.create_up_down_counter(f"llm.request.token")
-                #     test_token_counter.add(total_tokens, {"model_id": model_name, "user_id": span_name})
+                #     test_token_counter = self.meter.create_up_down_counter(f"{llm_name}_{model_name}_{span_name}_tk")
+                #     test_token_counter.add(total_tokens)
         
             for child_run in run["child_runs"]:
                 self._convert_run_to_spans(child_run, modelmetrics)

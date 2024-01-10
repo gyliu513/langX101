@@ -79,8 +79,8 @@ tracer_provider.add_span_processor(BatchSpanProcessor(otlp_exporter))
 trace.set_tracer_provider(tracer_provider)
 
 reader = PeriodicExportingMetricReader(
-    OTLPMetricExporter(endpoint=metric_endpoint)
-    #OTLPMetricExporterHTTP(endpoint=metric_http_endpoint)
+    # OTLPMetricExporter(endpoint=metric_endpoint)
+    OTLPMetricExporterHTTP(endpoint=metric_http_endpoint)
 )
 
 # Metrics console output
@@ -109,12 +109,12 @@ watson_ml_parameters = {
 
 from langchain.llms import WatsonxLLM
 
-# watsonx_ml_llm = WatsonxLLM(
-#     model_id="google/flan-ul2",
-#     url="https://us-south.ml.cloud.ibm.com",
-#     project_id=os.getenv("PROJECT_ID"),
-#     params=watson_ml_parameters,
-# )
+watsonx_ml_llm = WatsonxLLM(
+    model_id="google/flan-ul2",
+    url="https://us-south.ml.cloud.ibm.com",
+    project_id=os.getenv("PROJECT_ID"),
+    params=watson_ml_parameters,
+)
 
 from genai.extensions.langchain import LangChainInterface
 from genai.schemas import GenerateParams as GenaiGenerateParams
