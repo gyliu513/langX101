@@ -1,4 +1,8 @@
 """Langchain BaseHandler instrumentation"""
+"""
+prep env:
+    pip install -r requirements.txt
+"""
 import logging
 import time
 from typing import Collection
@@ -49,10 +53,10 @@ from opentelemetry.metrics import (
     set_meter_provider,
 )
 
-resource=Resource.create({'service.name': os.environ["SVC_NAME"], 'service.instance.id': os.environ["SVC_INSTANCE_ID"], 'INSTANA_PLUGIN': "llmonitor",  'llm.platform': "watsonx"})
+resource=Resource.create({'service.name': os.environ["SVC_NAME"], 'service.instance.id': os.environ["SVC_INSTANCE_ID"], 'INSTANA_PLUGIN': "llmonitor",  'llm.platform': os.environ["LLM_PLATFORM"]})
 span_endpoint=os.environ["OTLP_EXPORTER"]+":4317"         # Replace with your OTLP endpoint URL
 metric_endpoint=os.environ["OTLP_EXPORTER"]+":4317"       # Replace with your Metric endpoint URL
-#metric_http_endpoint=os.environ["METRIC_EXPORTER_HTTP_TESTING2"]
+metric_http_endpoint=os.environ["METRIC_EXPORTER_HTTP_MY_TESTING"]
 
 # testing metrics endpoint 
 # metric_endpoint=os.environ["METRIC_EXPORTER_TESTING"]
@@ -80,9 +84,9 @@ reader = PeriodicExportingMetricReader(
 )
 
 # Metrics console output
-# console_reader = PeriodicExportingMetricReader(ConsoleMetricExporter())
+console_reader = PeriodicExportingMetricReader(ConsoleMetricExporter())
 
-metric_provider = MeterProvider(resource=resource, metric_readers=[reader])
+metric_provider = MeterProvider(resource=resource, metric_readers=[console_reader, reader])
 # Register the metric provide
 metrics.set_meter_provider(metric_provider)
 
@@ -92,18 +96,18 @@ LangChainHandlerInstrumentor().instrument(tracer_provider=tracer_provider, metri
 os.environ['OTEL_EXPORTER_OTLP_INSECURE'] = 'True'
 os.environ["WATSONX_APIKEY"] = os.getenv("IAM_API_KEY")
 
-# from ibm_watson_machine_learning.metanames import GenTextParamsMetaNames as WatsonMLGenParams
+from ibm_watson_machine_learning.metanames import GenTextParamsMetaNames as WatsonMLGenParams
 
-# watson_ml_parameters = {
-#     WatsonMLGenParams.DECODING_METHOD: "sample",
-#     WatsonMLGenParams.MAX_NEW_TOKENS: 30,
-#     WatsonMLGenParams.MIN_NEW_TOKENS: 1,
-#     WatsonMLGenParams.TEMPERATURE: 0.5,
-#     WatsonMLGenParams.TOP_K: 50,
-#     WatsonMLGenParams.TOP_P: 1,
-# }
+watson_ml_parameters = {
+    WatsonMLGenParams.DECODING_METHOD: "sample",
+    WatsonMLGenParams.MAX_NEW_TOKENS: 30,
+    WatsonMLGenParams.MIN_NEW_TOKENS: 1,
+    WatsonMLGenParams.TEMPERATURE: 0.5,
+    WatsonMLGenParams.TOP_K: 50,
+    WatsonMLGenParams.TOP_P: 1,
+}
 
-# from langchain.llms import WatsonxLLM
+from langchain.llms import WatsonxLLM
 
 # watsonx_ml_llm = WatsonxLLM(
 #     model_id="google/flan-ul2",
@@ -165,6 +169,7 @@ def langchain_watson_genai_llm_chain():
     from langchain.chains import LLMChain, SequentialChain
 
     # openai_llm = OpenAI(openai_api_key=os.environ["OPENAI_API_KEY"], temperature=0.1)
+    # GPT3 error: The model `text-davinci-003` has been deprecated, learn more here: https://platform.openai.com/docs/deprecations
     
     first_prompt_messages = [
         SystemMessage(content="answer the question with very short answer, as short as you can."),
