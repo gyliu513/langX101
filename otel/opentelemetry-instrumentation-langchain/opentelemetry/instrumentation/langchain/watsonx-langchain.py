@@ -4,18 +4,18 @@ prep env:
     pip install -r requirements.txt
 """
 import logging
-import time
-from typing import Collection
+# import time
+# from typing import Collection
 
-from opentelemetry.trace import get_tracer
-from opentelemetry.instrumentation.langchain.version import __version__
-from opentelemetry.semconv.ai import TraceloopSpanKindValues
+# from opentelemetry.trace import get_tracer
+# from opentelemetry.instrumentation.langchain.version import __version__
+# from opentelemetry.semconv.ai import TraceloopSpanKindValues
 from otel_lib.instrumentor import LangChainHandlerInstrumentor
 
 
-logger = logging.getLogger(__name__)
+# logger = logging.getLogger(__name__)
 
-_instruments = ("langchain >= 0.0.200",)
+# _instruments = ("langchain >= 0.0.200",)
 
 from dotenv import load_dotenv, find_dotenv
 import os
@@ -23,7 +23,7 @@ load_dotenv(find_dotenv())
 
 os.environ['OTEL_EXPORTER_OTLP_INSECURE'] = 'True'
 
-import sys
+# import sys
 
 from opentelemetry import trace
 # from opentelemetry.instrumentation.wsgi import collect_request_attributes
@@ -175,7 +175,13 @@ def langchain_watson_genai_llm_chain():
     from langchain.prompts import ChatPromptTemplate, HumanMessagePromptTemplate
     from langchain.chains import LLMChain, SequentialChain
 
-    # openai_llm = OpenAI(openai_api_key=os.environ["OPENAI_API_KEY"], temperature=0.1)
+    # openai_llm = OpenAI(
+    #     model="gpt-3.5-turbo-instruct",
+    #         # "babbage-002",
+    #         # "davinci-002",
+    #     openai_api_key=os.environ["OPENAI_API_KEY"], 
+    #     temperature=0.1
+    #     )
     # GPT3 error: The model `text-davinci-003` has been deprecated, learn more here: https://platform.openai.com/docs/deprecations
     
     first_prompt_messages = [
