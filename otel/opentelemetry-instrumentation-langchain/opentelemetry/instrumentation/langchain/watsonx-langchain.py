@@ -53,7 +53,14 @@ from opentelemetry.metrics import (
     set_meter_provider,
 )
 
-resource=Resource.create({'service.name': os.environ["SVC_NAME"], 'service.instance.id': os.environ["SVC_INSTANCE_ID"], 'INSTANA_PLUGIN': "llmonitor",  'llm.platform': os.environ["LLM_PLATFORM"]})
+resource=Resource.create(
+        {
+            'service.name': os.environ["SVC_NAME"], 
+            'service.instance.id': os.environ["SVC_INSTANCE_ID"], 
+            'INSTANA_PLUGIN': "llmonitor"
+        }
+    )
+
 span_endpoint=os.environ["OTLP_EXPORTER"]+":4317"         # Replace with your OTLP endpoint URL
 metric_endpoint=os.environ["OTLP_EXPORTER"]+":4317"       # Replace with your Metric endpoint URL
 metric_http_endpoint=os.environ["METRIC_EXPORTER_HTTP_MY_TESTING"]
@@ -79,8 +86,8 @@ tracer_provider.add_span_processor(BatchSpanProcessor(otlp_exporter))
 trace.set_tracer_provider(tracer_provider)
 
 reader = PeriodicExportingMetricReader(
-    # OTLPMetricExporter(endpoint=metric_endpoint)
-    OTLPMetricExporterHTTP(endpoint=metric_http_endpoint)
+    OTLPMetricExporter(endpoint=metric_endpoint)
+    # OTLPMetricExporterHTTP(endpoint=metric_http_endpoint)
 )
 
 # Metrics console output
@@ -96,25 +103,25 @@ LangChainHandlerInstrumentor().instrument(tracer_provider=tracer_provider, metri
 os.environ['OTEL_EXPORTER_OTLP_INSECURE'] = 'True'
 os.environ["WATSONX_APIKEY"] = os.getenv("IAM_API_KEY")
 
-from ibm_watson_machine_learning.metanames import GenTextParamsMetaNames as WatsonMLGenParams
+# from ibm_watson_machine_learning.metanames import GenTextParamsMetaNames as WatsonMLGenParams
 
-watson_ml_parameters = {
-    WatsonMLGenParams.DECODING_METHOD: "sample",
-    WatsonMLGenParams.MAX_NEW_TOKENS: 30,
-    WatsonMLGenParams.MIN_NEW_TOKENS: 1,
-    WatsonMLGenParams.TEMPERATURE: 0.5,
-    WatsonMLGenParams.TOP_K: 50,
-    WatsonMLGenParams.TOP_P: 1,
-}
+# watson_ml_parameters = {
+#     WatsonMLGenParams.DECODING_METHOD: "sample",
+#     WatsonMLGenParams.MAX_NEW_TOKENS: 30,
+#     WatsonMLGenParams.MIN_NEW_TOKENS: 1,
+#     WatsonMLGenParams.TEMPERATURE: 0.5,
+#     WatsonMLGenParams.TOP_K: 50,
+#     WatsonMLGenParams.TOP_P: 1,
+# }
 
-from langchain.llms import WatsonxLLM
+# from langchain.llms import WatsonxLLM
 
-watsonx_ml_llm = WatsonxLLM(
-    model_id="google/flan-ul2",
-    url="https://us-south.ml.cloud.ibm.com",
-    project_id=os.getenv("PROJECT_ID"),
-    params=watson_ml_parameters,
-)
+# watsonx_ml_llm = WatsonxLLM(
+#     model_id="google/flan-ul2",
+#     url="https://us-south.ml.cloud.ibm.com",
+#     project_id=os.getenv("PROJECT_ID"),
+#     params=watson_ml_parameters,
+# )
 
 from genai.extensions.langchain import LangChainInterface
 from genai.schemas import GenerateParams as GenaiGenerateParams
