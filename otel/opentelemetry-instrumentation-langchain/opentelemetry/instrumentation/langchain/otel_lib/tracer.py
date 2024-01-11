@@ -414,10 +414,10 @@ class OpenInferenceTracer(BaseTracer):  # type: ignore
         modelmetrics = []
         try:
             self._convert_run_to_spans(run.dict(), modelmetrics)
+            token_counter = self.meter.create_up_down_counter(f"llm.request.token")
+            call_counter = self.meter.create_up_down_counter(f"llm.request.count")
+            duration_counter = self.meter.create_up_down_counter(f"llm.response.duration.avg")
             for modelmetric in modelmetrics:
-                token_counter = self.meter.create_up_down_counter(f"llm.request.token")
-                call_counter = self.meter.create_up_down_counter(f"llm.request.count")
-                duration_counter = self.meter.create_up_down_counter(f"llm.response.duration.avg")
                 token_counter.add(modelmetric.token, {"model_id": modelmetric.model, "llm_platform": modelmetric.llm_platform})
                 call_counter.add(modelmetric.request_count, {"model_id": modelmetric.model, "llm_platform": modelmetric.llm_platform})
                 duration_counter.add(modelmetric.duration/modelmetric.request_count, {"model_id": modelmetric.model, "llm_platform": modelmetric.llm_platform})
