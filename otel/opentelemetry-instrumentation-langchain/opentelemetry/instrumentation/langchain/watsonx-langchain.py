@@ -1,108 +1,25 @@
-"""Langchain BaseHandler instrumentation"""
-"""
-prep env:
-    pip install -r requirements.txt
-"""
-import logging
-# import time
-# from typing import Collection
-
-# from opentelemetry.trace import get_tracer
-# from opentelemetry.instrumentation.langchain.version import __version__
-# from opentelemetry.semconv.ai import TraceloopSpanKindValues
-from otel_lib.instrumentor import LangChainHandlerInstrumentor
-
-
-# logger = logging.getLogger(__name__)
-
-# _instruments = ("langchain >= 0.0.200",)
-
+# import logging
+# import sys
 from dotenv import load_dotenv, find_dotenv
 import os
 load_dotenv(find_dotenv())
 
-os.environ['OTEL_EXPORTER_OTLP_INSECURE'] = 'True'
+""" only need 2 lines code to instrument Langchain LLM
+"""
 
-# import sys
-
-from opentelemetry import trace
-# from opentelemetry.instrumentation.wsgi import collect_request_attributes
-from opentelemetry.propagate import extract
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.resources import Resource
-from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
-from opentelemetry.sdk.trace.export import (
-    BatchSpanProcessor,
-    ConsoleSpanExporter,
-)
-from opentelemetry.trace import (
-    SpanKind,
-    get_tracer_provider,
-    set_tracer_provider,
-)
-
-from opentelemetry import metrics
-from opentelemetry.sdk.metrics import MeterProvider
-from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader, ConsoleMetricExporter
-from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter as OTLPMetricExporter
-from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter as OTLPMetricExporterHTTP
-from opentelemetry.metrics import (
-    CallbackOptions,
-    Observation,
-    get_meter_provider,
-    set_meter_provider,
-)
-
-resource=Resource.create(
-        {
-            'service.name': os.environ["SVC_NAME"], 
-            'service.instance.id': os.environ["SVC_INSTANCE_ID"], 
-            'INSTANA_PLUGIN': "llmonitor"
-        }
+from otel_lib.instrumentor import LangChainHandlerInstrumentor as SimplifiedLangChainHandlerInstrumentor
+tracer_provider, metric_provider = SimplifiedLangChainHandlerInstrumentor().instrument(
+    otlp_endpoint=os.environ["OTLP_EXPORTER"]+":4317",
+    metric_endpoint=os.environ["OTLP_EXPORTER"]+":4317",
+    service_name="my-service-0111a",
+    insecure = True,
     )
+"""=======================================================
+"""
 
-span_endpoint=os.environ["OTLP_EXPORTER"]+":4317"         # Replace with your OTLP endpoint URL
-metric_endpoint=os.environ["OTLP_EXPORTER"]+":4317"       # Replace with your Metric endpoint URL
-metric_http_endpoint=os.environ["METRIC_EXPORTER_HTTP_MY_TESTING"]
+from otel_lib.country_name import RandomCountryName
 
-# testing metrics endpoint 
-# metric_endpoint=os.environ["METRIC_EXPORTER_TESTING"]
-# metric_endpoint=os.environ["OTEL_EXPORTER_OTLP_METRICS_ENDPOINT"]
-
-tracer_provider = TracerProvider(
-    resource = resource,
-)
-
-# Create an OTLP Span Exporter
-otlp_exporter = OTLPSpanExporter(
-    endpoint=span_endpoint,
-)
-
-# Add the exporter to the TracerProvider
-# tracer_provider.add_span_processor(BatchSpanProcessor(ConsoleSpanExporter()))  # Add any span processors you need
-tracer_provider.add_span_processor(BatchSpanProcessor(otlp_exporter))
-
-# Register the trace provider
-trace.set_tracer_provider(tracer_provider)
-
-reader = PeriodicExportingMetricReader(
-    OTLPMetricExporter(endpoint=metric_endpoint)
-    # OTLPMetricExporterHTTP(endpoint=metric_http_endpoint)
-)
-
-# Metrics console output
-console_reader = PeriodicExportingMetricReader(ConsoleMetricExporter())
-
-metric_provider = MeterProvider(resource=resource, metric_readers=[console_reader, reader])
-# Register the metric provide
-metrics.set_meter_provider(metric_provider)
-
-
-LangChainHandlerInstrumentor().instrument(tracer_provider=tracer_provider, metric_provider=metric_provider)
-
-os.environ['OTEL_EXPORTER_OTLP_INSECURE'] = 'True'
-os.environ["WATSONX_APIKEY"] = os.getenv("IAM_API_KEY")
-
+# os.environ["WATSONX_APIKEY"] = os.getenv("IAM_API_KEY")
 # from ibm_watson_machine_learning.metanames import GenTextParamsMetaNames as WatsonMLGenParams
 
 # watson_ml_parameters = {
@@ -126,7 +43,6 @@ os.environ["WATSONX_APIKEY"] = os.getenv("IAM_API_KEY")
 from genai.extensions.langchain import LangChainInterface
 from genai.schemas import GenerateParams as GenaiGenerateParams
 from genai.credentials import Credentials
-from otel_lib.country_name import RandomCountryName
 
 api_key = os.getenv("IBM_GENAI_KEY", None) 
 api_url = "https://bam-api.res.ibm.com"
@@ -167,22 +83,44 @@ from langchain.prompts import PromptTemplate
 from langchain.agents import load_tools
 from langchain.agents import initialize_agent
 from langchain.agents import AgentType
-from langchain.llms import OpenAI
+
+# from langchain.llms.openai import OpenAI
+
+# openai_llm = OpenAI(
+#     model="gpt-3.5-turbo-instruct",
+#         # "babbage-002",
+#         # "davinci-002",
+#     openai_api_key=os.environ["OPENAI_API_KEY"], 
+#     temperature=0.1
+#     )
+# GPT3 error: The model `text-davinci-003` has been deprecated, learn more here: https://platform.openai.com/docs/deprecations
+
+# def langchain_serpapi_math_agent():
+#     tools = load_tools(["serpapi", "llm-math"], llm=watsonx_genai_llm)
+
+#     agent = initialize_agent(
+#         tools, openai_llm, agent=AgentType.ZERO_SHOT_REACT_DESCRIPTION, verbose=True)
+
+#     # agent.run("My monthly salary is 10000 KES, if i work for 10 months. How much is my total salary in USD in those 10 months.")
+#     print(agent.run("a pair of shoes sale price 300 CNY and a beautiful pocket knife price at 50 USD, how much in USD if I want them both?"))
+
+def langchain_chat_memory_agent():
+    from langchain.memory import ConversationBufferMemory
+    
+    memory = ConversationBufferMemory(memory_key="chat_history")
+    
+    tools = load_tools(["serpapi", "llm-math"], llm=watsonx_genai_llm)
+
+    agent = initialize_agent(tools, watsonx_genai_llm, agent=AgentType.CONVERSATIONAL_REACT_DESCRIPTION, verbose=True, memory=memory)
+    print(agent.run(f"what is the capital city of {RandomCountryName()}?"))
+    print(agent.run("what is the most famous dish of this city?"))
+    print(agent.run("pls provide a receipe for this dish"))
 
 
 def langchain_watson_genai_llm_chain():
     from langchain.schema import SystemMessage, HumanMessage
     from langchain.prompts import ChatPromptTemplate, HumanMessagePromptTemplate
     from langchain.chains import LLMChain, SequentialChain
-
-    # openai_llm = OpenAI(
-    #     model="gpt-3.5-turbo-instruct",
-    #         # "babbage-002",
-    #         # "davinci-002",
-    #     openai_api_key=os.environ["OPENAI_API_KEY"], 
-    #     temperature=0.1
-    #     )
-    # GPT3 error: The model `text-davinci-003` has been deprecated, learn more here: https://platform.openai.com/docs/deprecations
     
     first_prompt_messages = [
         SystemMessage(content="answer the question with very short answer, as short as you can."),
@@ -203,43 +141,9 @@ def langchain_watson_genai_llm_chain():
     workflow = SequentialChain(chains=[first_chain, second_chain], input_variables=[])
     print(workflow({}))
     
+# print(watsonx_genai_llm(f"what is the capital city of {RandomCountryName()}?"))
 
-def langchain_serpapi_math_agent():
-    openai_llm = OpenAI(openai_api_key=os.environ["OPENAI_API_KEY"], temperature=0.1)
-
-    tools = load_tools(["serpapi", "llm-math"], llm=watsonx_genai_llm)
-
-    agent = initialize_agent(
-        tools, openai_llm, agent=AgentType.ZERO_SHOT_REACT_DESCRIPTION, verbose=True)
-
-    # agent.run("My monthly salary is 10000 KES, if i work for 10 months. How much is my total salary in USD in those 10 months.")
-    print(agent.run("a pair of shoes sale price 300 CNY and a beautiful pocket knife price at 50 USD, how much in USD if I want them both?"))
-
-def langchain_chat_memory_agent():
-    from langchain.memory import ConversationBufferMemory
-    
-    memory = ConversationBufferMemory(memory_key="chat_history")
-    
-    tools = load_tools(["serpapi", "llm-math"], llm=watsonx_genai_llm)
-
-    agent = initialize_agent(tools, watsonx_genai_llm, agent=AgentType.CONVERSATIONAL_REACT_DESCRIPTION, verbose=True, memory=memory)
-    print(agent.run(f"what is the capital city of {RandomCountryName()}?"))
-    print(agent.run("what is the most famous dish of this city?"))
-    print(agent.run("pls provide a receipe for this dish"))
-
-
-
-# langchain_serpapi_math_agent()
-
-# langchain_chat_memory_agent()
 
 langchain_watson_genai_llm_chain()
 
-# interval = 180 
-# count = 100
-# while count > 0:
-#     count -= 1
-#     langchain_watson_genai_llm_chain()
-#     time.sleep(interval)
-
-metric_provider.force_flush()
+# metric_provider.force_flush()
