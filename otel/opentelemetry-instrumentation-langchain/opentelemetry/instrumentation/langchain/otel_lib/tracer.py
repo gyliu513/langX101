@@ -20,6 +20,7 @@ from ai import SpanAttributes, TraceloopSpanKindValues
 from opentelemetry import trace
 from opentelemetry.trace import get_tracer
 from opentelemetry.instrumentation.langchain.version import __version__
+from opentelemetry.metrics import Observation, Meter
 
 # from otel_lib.error_handling import graceful_fallback
 import logging
@@ -27,6 +28,8 @@ import traceback
 from typing import Any, Callable, Iterable, Optional, Type, TypeVar, cast
 
 F = TypeVar("F", bound=Callable[..., Any])
+
+last_total_tokens = 0
 
 @dataclass
 class LLM_metrics: 
@@ -112,7 +115,6 @@ def _prompts(run_inputs: Dict[str, Any]) -> Iterator[Tuple[str, List[str]]]:
     if "prompts" in run_inputs:
         yield "LLM_PROMPTS", run_inputs["prompts"]
 
-
 def _otel_input_messages(run_inputs: Dict[str, Any], span):
     """get input messages if present."""
 
@@ -127,12 +129,12 @@ def _otel_input_messages(run_inputs: Dict[str, Any], span):
                     _set_span_attribute(span, f"{SpanAttributes.LLM_PROMPTS}.{msg_count}.system", item["kwargs"].get("content"))
                 if item["id"][-1] == "HumanMessage":
                     _set_span_attribute(span, f"{SpanAttributes.LLM_PROMPTS}.{msg_count}.user", item["kwargs"].get("content"))
-        msg_count += 1
+            msg_count += 1
     
     if prompts := run_inputs.get("prompts"):
         for prompt in prompts:
             _set_span_attribute(span, f"{SpanAttributes.LLM_PROMPTS}.{msg_count}.user", prompt)
-        msg_count += 1
+            msg_count += 1
     
 def _otel_output_messages(run_output: Dict[str, Any], span):
     """get output messages if present."""
@@ -357,6 +359,7 @@ class OpenInferenceTracer(BaseTracer):  # type: ignore
         super().__init__(*args, **kwargs)
         self.tracer = None
         self.meter = None
+        self.metric_provider = None
 
     def _convert_run_to_spans(
         self,
@@ -365,6 +368,8 @@ class OpenInferenceTracer(BaseTracer):  # type: ignore
         # parent: Optional[Span] = None,
     ) -> None:
 
+        global last_total_tokens
+        
         span_kind = (
             "agent"
             if "agent" in run["name"].lower()
@@ -396,7 +401,24 @@ class OpenInferenceTracer(BaseTracer):  # type: ignore
                                          model=model_name, 
                                          token=total_tokens, 
                                          duration=(_get_timestamp(run["end_time"]) - start_time)
-                                         )
+                                         )                
+                                
+                if "global_token_counter" not in globals():
+                    global global_token_counter
+                    global_token_counter = self.meter.create_up_down_counter(f"llm.request.token")
+                    
+                # if duration_counter is None:
+                #     duration_counter = self.meter.create_up_down_counter(f"llm.response.duration")
+
+                if last_total_tokens == 0:
+                    global_token_counter.add(total_tokens, {"model_id": model_name, "llm_platform": llm_name})
+                else:
+                    global_token_counter.add(total_tokens - last_total_tokens, {"model_id": model_name, "llm_platform": llm_name})
+                self.metric_provider.force_flush()
+                last_total_tokens = total_tokens
+                    
+                # duration_counter.add(_get_timestamp(run["end_time"]) - start_time, {"model_id": model_name, "llm_platform": llm_name})
+                
                 
                 _otel_input_messages(run["inputs"], span)
                 _otel_output_messages(run["outputs"], span)
@@ -414,13 +436,15 @@ class OpenInferenceTracer(BaseTracer):  # type: ignore
         modelmetrics = []
         try:
             self._convert_run_to_spans(run.dict(), modelmetrics)
-            token_avg_counter = self.meter.create_up_down_counter(f"llm.request.token.avg")
-            call_counter = self.meter.create_up_down_counter(f"llm.request.count")
-            duration_avg_counter = self.meter.create_up_down_counter(f"llm.response.duration.avg")
-            for modelmetric in modelmetrics:
-                token_avg_counter.add(int(modelmetric.token/modelmetric.request_count), {"model_id": modelmetric.model, "llm_platform": modelmetric.llm_platform})
-                call_counter.add(modelmetric.request_count, {"model_id": modelmetric.model, "llm_platform": modelmetric.llm_platform})
-                duration_avg_counter.add(int(modelmetric.duration/modelmetric.request_count), {"model_id": modelmetric.model, "llm_platform": modelmetric.llm_platform})
+
+            ## Disable sending aggregated metrics for now.
+            # token_avg_counter = self.meter.create_up_down_counter(f"llm.request.token.avg")
+            # call_counter = self.meter.create_up_down_counter(f"llm.request.count")
+            # duration_avg_counter = self.meter.create_up_down_counter(f"llm.response.duration.avg")
+            # for modelmetric in modelmetrics:
+            #     token_avg_counter.add(int(modelmetric.token/modelmetric.request_count), {"model_id": modelmetric.model, "llm_platform": modelmetric.llm_platform})
+            #     call_counter.add(modelmetric.request_count, {"model_id": modelmetric.model, "llm_platform": modelmetric.llm_platform})
+            #     duration_avg_counter.add(int(modelmetric.duration/modelmetric.request_count), {"model_id": modelmetric.model, "llm_platform": modelmetric.llm_platform})
         except Exception:
             logger.exception("Failed to convert run to spans")
 

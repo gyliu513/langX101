@@ -4,12 +4,12 @@ from typing import Any, Optional
 from .tracer import OpenInferenceTracer
 from opentelemetry.trace import get_tracer
 from opentelemetry.instrumentation.langchain.version import __version__
-from opentelemetry.metrics import (
-    CallbackOptions,
-    Observation,
-    get_meter_provider,
-    set_meter_provider,
-)
+# from opentelemetry.metrics import (
+#     CallbackOptions,
+#     Observation,
+#     get_meter_provider,
+#     set_meter_provider,
+# )
 
 from opentelemetry import trace
 from opentelemetry.sdk.trace import TracerProvider
@@ -21,7 +21,7 @@ from opentelemetry.sdk.trace.export import (
 )
 
 from opentelemetry import metrics
-from opentelemetry.sdk.metrics import MeterProvider
+from opentelemetry.sdk.metrics import MeterProvider, Meter
 from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader, ConsoleMetricExporter
 from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter as OTLPMetricExporter
 from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter as OTLPMetricExporterHTTP
@@ -65,6 +65,7 @@ class LangChainHandlerInstrumentor:
         # tracer = get_tracer(__name__, __version__, tracer_provider)
         meter = metric_provider.get_meter(__name__, __version__)
         self._handeler.meter = meter
+        self._handeler.metric_provider = metric_provider
         
         source_init = BaseCallbackManager.__init__
 
@@ -103,15 +104,12 @@ class LangChainHandlerInstrumentor:
         else:
             os.environ['OTEL_EXPORTER_OTLP_INSECURE'] = 'False'
         
-        metric_http_endpoint=os.environ["METRIC_EXPORTER_HTTP_MY_TESTING"]
-        tracer_provider = TracerProvider(
-            resource = resource,
-        )
-
-
         # Create an OTLP Span Exporter
         otlp_exporter = OTLPSpanExporter(
             endpoint=otlp_endpoint,
+        )
+        tracer_provider = TracerProvider(
+            resource = resource,
         )
 
         # Add the exporter to the TracerProvider
@@ -121,9 +119,12 @@ class LangChainHandlerInstrumentor:
         # Register the trace provider
         trace.set_tracer_provider(tracer_provider)
 
+        # HTTP metric exporter for test only
+        metric_http_endpoint=os.environ["METRIC_EXPORTER_HTTP_MY_TESTING"]
         reader = PeriodicExportingMetricReader(
-            # OTLPMetricExporter(endpoint=metric_endpoint)
-            OTLPMetricExporterHTTP(endpoint=metric_http_endpoint)
+            OTLPMetricExporter(endpoint=metric_endpoint)
+            # HTTP metric exporter for test only
+            # OTLPMetricExporterHTTP(endpoint=metric_http_endpoint)
         )
 
         # Metrics console output
