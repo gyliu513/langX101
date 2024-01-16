@@ -18,27 +18,27 @@ tracer_provider, metric_provider = SimplifiedLangChainHandlerInstrumentor().inst
 """
 
 from otel_lib.country_name import RandomCountryName
-os.environ["WATSONX_APIKEY"] = os.getenv("IAM_API_KEY")
 
-from ibm_watson_machine_learning.metanames import GenTextParamsMetaNames as WatsonMLGenParams
+# os.environ["WATSONX_APIKEY"] = os.getenv("IAM_API_KEY")
+# from ibm_watson_machine_learning.metanames import GenTextParamsMetaNames as WatsonMLGenParams
 
-watson_ml_parameters = {
-    WatsonMLGenParams.DECODING_METHOD: "sample",
-    WatsonMLGenParams.MAX_NEW_TOKENS: 30,
-    WatsonMLGenParams.MIN_NEW_TOKENS: 1,
-    WatsonMLGenParams.TEMPERATURE: 0.5,
-    WatsonMLGenParams.TOP_K: 50,
-    WatsonMLGenParams.TOP_P: 1,
-}
+# watson_ml_parameters = {
+#     WatsonMLGenParams.DECODING_METHOD: "sample",
+#     WatsonMLGenParams.MAX_NEW_TOKENS: 30,
+#     WatsonMLGenParams.MIN_NEW_TOKENS: 1,
+#     WatsonMLGenParams.TEMPERATURE: 0.5,
+#     WatsonMLGenParams.TOP_K: 50,
+#     WatsonMLGenParams.TOP_P: 1,
+# }
 
-from langchain.llms import WatsonxLLM
+# from langchain.llms import WatsonxLLM
 
-watsonx_ml_llm = WatsonxLLM(
-    model_id="google/flan-ul2",
-    url="https://us-south.ml.cloud.ibm.com",
-    project_id=os.getenv("PROJECT_ID"),
-    params=watson_ml_parameters,
-)
+# watsonx_ml_llm = WatsonxLLM(
+#     model_id="google/flan-ul2",
+#     url="https://us-south.ml.cloud.ibm.com",
+#     project_id=os.getenv("PROJECT_ID"),
+#     params=watson_ml_parameters,
+# )
 
 from genai.extensions.langchain import LangChainInterface
 from genai.schemas import GenerateParams as GenaiGenerateParams
@@ -83,27 +83,26 @@ from langchain.prompts import PromptTemplate
 from langchain.agents import load_tools
 from langchain.agents import initialize_agent
 from langchain.agents import AgentType
-from langchain.llms.openai import OpenAI
 
-openai_llm = OpenAI(
-    model="gpt-3.5-turbo-instruct",
-        # "babbage-002",
-        # "davinci-002",
-    openai_api_key=os.environ["OPENAI_API_KEY"], 
-    temperature=0.1
-    )
-    # GPT3 error: The model `text-davinci-003` has been deprecated, learn more here: https://platform.openai.com/docs/deprecations
+# from langchain.llms.openai import OpenAI
 
-def langchain_serpapi_math_agent():
-    # openai_llm = OpenAI(openai_api_key=os.environ["OPENAI_API_KEY"], temperature=0.1)
+# openai_llm = OpenAI(
+#     model="gpt-3.5-turbo-instruct",
+#         # "babbage-002",
+#         # "davinci-002",
+#     openai_api_key=os.environ["OPENAI_API_KEY"], 
+#     temperature=0.1
+#     )
+# GPT3 error: The model `text-davinci-003` has been deprecated, learn more here: https://platform.openai.com/docs/deprecations
 
-    tools = load_tools(["serpapi", "llm-math"], llm=watsonx_genai_llm)
+# def langchain_serpapi_math_agent():
+#     tools = load_tools(["serpapi", "llm-math"], llm=watsonx_genai_llm)
 
-    agent = initialize_agent(
-        tools, openai_llm, agent=AgentType.ZERO_SHOT_REACT_DESCRIPTION, verbose=True)
+#     agent = initialize_agent(
+#         tools, openai_llm, agent=AgentType.ZERO_SHOT_REACT_DESCRIPTION, verbose=True)
 
-    # agent.run("My monthly salary is 10000 KES, if i work for 10 months. How much is my total salary in USD in those 10 months.")
-    print(agent.run("a pair of shoes sale price 300 CNY and a beautiful pocket knife price at 50 USD, how much in USD if I want them both?"))
+#     # agent.run("My monthly salary is 10000 KES, if i work for 10 months. How much is my total salary in USD in those 10 months.")
+#     print(agent.run("a pair of shoes sale price 300 CNY and a beautiful pocket knife price at 50 USD, how much in USD if I want them both?"))
 
 def langchain_chat_memory_agent():
     from langchain.memory import ConversationBufferMemory
@@ -129,7 +128,7 @@ def langchain_watson_genai_llm_chain():
         HumanMessage(content=f"tell me what is the most famous dish in {RandomCountryName()}?"),
     ]
     first_prompt_template = ChatPromptTemplate.from_messages(first_prompt_messages)
-    first_chain = LLMChain(llm=openai_llm, prompt=first_prompt_template, output_key="target")
+    first_chain = LLMChain(llm=watsonx_genai_llm, prompt=first_prompt_template, output_key="target")
 
     second_prompt_messages = [
         SystemMessage(content="answer the question with very brief answer."),
