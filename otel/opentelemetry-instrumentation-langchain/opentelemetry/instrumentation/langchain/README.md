@@ -13,10 +13,13 @@ pip install -r requirements.txt
 #### update variables in the .env file.  
   
 `.env` file:   
+  
+*Note: The `METRIC_EXPORTER_HTTP_MY_TESTING` is for dev test use only, you can just leave it as it is.*
 ```bash
 PROJECT_ID="xxxxxxxx-xxxx-xxxx"
 IBM_GENAI_KEY="xxx-xxxx-xxx"
 IBM_GENAI_API="https://bam-api.res.ibm.com"
+METRIC_EXPORTER_HTTP_MY_TESTING=""
 SVC_NAME="YOUR_SERVICE_NAME"
 OTLP_EXPORTER="OTLP_EXPORT_HOST_PORT"
 OTEL_EXPORTER_OTLP_INSECURE="true"
