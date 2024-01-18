@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 import json
 import logging
+from pprint import pprint
 from copy import deepcopy
 # from datetime import datetime
 import datetime
@@ -29,14 +30,12 @@ from typing import Any, Callable, Iterable, Optional, Type, TypeVar, cast
 
 F = TypeVar("F", bound=Callable[..., Any])
 
-last_total_tokens = 0
-
 @dataclass
 class LLM_metrics: 
     llm_platform: str    # openai/ibm_watson_ai/ibm_generic_ai
     model: str
     token: int = 0
-    request_count: int = 1
+    request_count: int = 0
     duration: int = 0
 
 WATSON_AI_TYPES={"IBM GENAI":"ibm_generic_ai", "IBM watsonx.ai":"ibm_watson_ai"}
@@ -339,13 +338,25 @@ def _get_timestamp(time_data):
     utc_time=time_data.replace(tzinfo=timezone.utc) 
     return int(utc_time.timestamp()*10**9)
 
-def _otel_metric_collect(modelmetrics:List[LLM_metrics], llm_metric:LLM_metrics):
+def _otel_llm_metric_get_model_request_count(modelmetrics:List[LLM_metrics], llm_metric:LLM_metrics) -> int:
     found = False
     for index in range(len(modelmetrics)):
         if modelmetrics[index].llm_platform == llm_metric.llm_platform and modelmetrics[index].model == llm_metric.model:
             found = True
             break
     if not found:
+        return 0
+    
+    return modelmetrics[index].request_count
+
+def _otel_llm_metric_collect(modelmetrics:List[LLM_metrics], llm_metric:LLM_metrics):
+    found = False
+    for index in range(len(modelmetrics)):
+        if modelmetrics[index].llm_platform == llm_metric.llm_platform and modelmetrics[index].model == llm_metric.model:
+            found = True
+            break
+    if not found:
+        llm_metric.request_count = 1
         modelmetrics.append(llm_metric)
         return modelmetrics
     
@@ -367,8 +378,6 @@ class OpenInferenceTracer(BaseTracer):  # type: ignore
         modelmetrics: [],
         # parent: Optional[Span] = None,
     ) -> None:
-
-        global last_total_tokens
         
         span_kind = (
             "agent"
@@ -400,29 +409,24 @@ class OpenInferenceTracer(BaseTracer):  # type: ignore
                 llm_metric = LLM_metrics(llm_platform=llm_name, 
                                          model=model_name, 
                                          token=total_tokens, 
-                                         duration=(_get_timestamp(run["end_time"]) - start_time)
-                                         )                
-                                
+                                         duration=(_get_timestamp(run["end_time"]) - start_time),
+                                         )
+                # create metric counters
                 if "global_token_counter" not in globals():
                     global global_token_counter
                     global_token_counter = self.meter.create_up_down_counter(f"llm.request.token")
-                    
-                # if duration_counter is None:
-                #     duration_counter = self.meter.create_up_down_counter(f"llm.response.duration")
+                if "global_duration_counter" not in globals():
+                    global global_duration_counter
+                    global_duration_counter = self.meter.create_up_down_counter(f"llm.response.duration")
 
-                if last_total_tokens == 0:
-                    global_token_counter.add(total_tokens, {"model_id": model_name, "llm_platform": llm_name})
-                else:
-                    global_token_counter.add(total_tokens - last_total_tokens, {"model_id": model_name, "llm_platform": llm_name})
-                self.metric_provider.force_flush()
-                last_total_tokens = total_tokens
+                # export metric data
+                llm_model_call_count = _otel_llm_metric_get_model_request_count(modelmetrics, llm_metric)
+                global_token_counter.add(total_tokens, {"model_id": model_name, "llm_platform": llm_name, "llm_call_sequence": llm_model_call_count + 1})
+                global_duration_counter.add(_get_timestamp(run["end_time"]) - start_time, {"model_id": model_name, "llm_platform": llm_name, "llm_call_sequence": llm_model_call_count + 1})
                     
-                # duration_counter.add(_get_timestamp(run["end_time"]) - start_time, {"model_id": model_name, "llm_platform": llm_name})
-                
-                
                 _otel_input_messages(run["inputs"], span)
                 _otel_output_messages(run["outputs"], span)
-                modelmetrics = _otel_metric_collect(modelmetrics, llm_metric)
+                modelmetrics = _otel_llm_metric_collect(modelmetrics, llm_metric)
         
             for child_run in run["child_runs"]:
                 self._convert_run_to_spans(child_run, modelmetrics)
@@ -431,13 +435,11 @@ class OpenInferenceTracer(BaseTracer):  # type: ignore
         span.end(end_time=end_time)
 
     def _persist_run(self, run: Run) -> None:
-        # Note that this relies on `.dict()` from pydantic for the
-        # serialization of objects like `langchain.schema.Document`.
         modelmetrics = []
         try:
             self._convert_run_to_spans(run.dict(), modelmetrics)
 
-            ## Disable sending aggregated metrics for now.
+            ## aggregated metrics Disabled.
             # token_avg_counter = self.meter.create_up_down_counter(f"llm.request.token.avg")
             # call_counter = self.meter.create_up_down_counter(f"llm.request.count")
             # duration_avg_counter = self.meter.create_up_down_counter(f"llm.response.duration.avg")

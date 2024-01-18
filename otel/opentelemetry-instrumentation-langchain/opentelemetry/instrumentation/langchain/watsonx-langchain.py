@@ -93,13 +93,13 @@ from langchain.agents import AgentType
 #     openai_api_key=os.environ["OPENAI_API_KEY"], 
 #     temperature=0.1
 #     )
-# GPT3 error: The model `text-davinci-003` has been deprecated, learn more here: https://platform.openai.com/docs/deprecations
+# # GPT3 error: The model `text-davinci-003` has been deprecated, learn more here: https://platform.openai.com/docs/deprecations
 
 # def langchain_serpapi_math_agent():
-#     tools = load_tools(["serpapi", "llm-math"], llm=watsonx_genai_llm)
+#     tools = load_tools(["serpapi", "llm-math"], llm=openai_llm)
 
 #     agent = initialize_agent(
-#         tools, openai_llm, agent=AgentType.ZERO_SHOT_REACT_DESCRIPTION, verbose=True)
+#         tools, watsonx_genai_llm, agent=AgentType.ZERO_SHOT_REACT_DESCRIPTION, verbose=True)
 
 #     # agent.run("My monthly salary is 10000 KES, if i work for 10 months. How much is my total salary in USD in those 10 months.")
 #     print(agent.run("a pair of shoes sale price 300 CNY and a beautiful pocket knife price at 50 USD, how much in USD if I want them both?"))
@@ -145,5 +145,3 @@ def langchain_watson_genai_llm_chain():
 
 
 langchain_watson_genai_llm_chain()
-
-# metric_provider.force_flush()
