@@ -17,7 +17,7 @@ from opentelemetry.sdk.resources import Resource
 from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
 from opentelemetry.sdk.trace.export import (
     BatchSpanProcessor,
-    ConsoleSpanExporter,
+    # ConsoleSpanExporter,
 )
 
 from opentelemetry import metrics
@@ -120,7 +120,7 @@ class LangChainHandlerInstrumentor:
         trace.set_tracer_provider(tracer_provider)
 
         # HTTP metric exporter for test only
-        metric_http_endpoint=os.environ["METRIC_EXPORTER_HTTP_MY_TESTING"]
+        # metric_http_endpoint=os.environ["METRIC_EXPORTER_HTTP_MY_TESTING"]
         reader = PeriodicExportingMetricReader(
             OTLPMetricExporter(endpoint=metric_endpoint)
             # HTTP metric exporter for test only
@@ -128,9 +128,9 @@ class LangChainHandlerInstrumentor:
         )
 
         # Metrics console output
-        console_reader = PeriodicExportingMetricReader(ConsoleMetricExporter())
+        # console_reader = PeriodicExportingMetricReader(ConsoleMetricExporter())
 
-        metric_provider = MeterProvider(resource=resource, metric_readers=[console_reader, reader])
+        metric_provider = MeterProvider(resource=resource, metric_readers=[reader])
         # Register the metric provide
         metrics.set_meter_provider(metric_provider)
         
