@@ -1,27 +1,59 @@
-# import logging
-# import sys
 from dotenv import load_dotenv, find_dotenv
 import os
+
+from genai.extensions.langchain import LangChainInterface
+from genai.schemas import GenerateParams as GenaiGenerateParams
+from genai.credentials import Credentials
+# from ibm_watson_machine_learning.metanames import GenTextParamsMetaNames as WatsonMLGenParams
+from ibm_watsonx_ai.metanames import GenTextParamsMetaNames
+# from ibm_watsonx_ai.foundation_models import ModelInference
+
+from langchain.llms.openai import OpenAI
+from langchain.agents import load_tools
+from langchain.agents import initialize_agent
+from langchain.agents import AgentType
+from langchain.llms import WatsonxLLM
+from langchain.memory import ConversationBufferMemory
+from langchain.schema import SystemMessage, HumanMessage
+from langchain.prompts import ChatPromptTemplate, HumanMessagePromptTemplate
+from langchain.chains import LLMChain, SequentialChain
+
+from otel_lib.country_name import RandomCountryName
+from opentelemetry.instrumentation.watsonx import WatsonxInstrumentor
+from traceloop.sdk import Traceloop
+
 load_dotenv(find_dotenv())
+
+# Traceloop.init(api_endpoint=os.environ["OTLP_EXPORTER_GRPC"],
+#                api_key=os.environ["TRACELOOP_API_KEY"],
+#                app_name=os.environ["SVC_NAME"],
+#                )
 
 """ only need 2 lines code to instrument Langchain LLM
 """
-
 from otel_lib.instrumentor import LangChainHandlerInstrumentor as SimplifiedLangChainHandlerInstrumentor
 tracer_provider, metric_provider = SimplifiedLangChainHandlerInstrumentor().instrument(
-    otlp_endpoint=os.environ["OTLP_EXPORTER"]+":4317",
-    metric_endpoint=os.environ["OTLP_EXPORTER"]+":4317",
-    service_name="my-service-0111a",
+    otlp_endpoint=os.environ["OTLP_EXPORTER_HTTP"],
+    # otlp_endpoint=os.environ["OTLP_EXPORTER_GRPC"],
+    metric_endpoint=os.environ["OTEL_METRICS_EXPORTER"],
+    service_name=os.environ["SVC_NAME"],
     insecure = True,
     )
 """=======================================================
 """
 
-from otel_lib.country_name import RandomCountryName
+os.environ["WATSONX_APIKEY"] = os.getenv("IAM_API_KEY")
 
-# os.environ["WATSONX_APIKEY"] = os.getenv("IAM_API_KEY")
-# from ibm_watson_machine_learning.metanames import GenTextParamsMetaNames as WatsonMLGenParams
 
+# watson_ml_parameters = {
+#     GenTextParamsMetaNames.DECODING_METHOD: "sample",
+#     GenTextParamsMetaNames.MAX_NEW_TOKENS: 100,
+#     GenTextParamsMetaNames.MIN_NEW_TOKENS: 1,
+#     GenTextParamsMetaNames.TEMPERATURE: 0.5,
+#     GenTextParamsMetaNames.TOP_K: 50,
+#     GenTextParamsMetaNames.TOP_P: 1,
+# }
+            
 # watson_ml_parameters = {
 #     WatsonMLGenParams.DECODING_METHOD: "sample",
 #     WatsonMLGenParams.MAX_NEW_TOKENS: 30,
@@ -31,18 +63,14 @@ from otel_lib.country_name import RandomCountryName
 #     WatsonMLGenParams.TOP_P: 1,
 # }
 
-# from langchain.llms import WatsonxLLM
 
 # watsonx_ml_llm = WatsonxLLM(
-#     model_id="google/flan-ul2",
+#     # model_id="google/flan-ul2",
+#     model_id="ibm/granite-13b-chat-v1",
 #     url="https://us-south.ml.cloud.ibm.com",
 #     project_id=os.getenv("PROJECT_ID"),
 #     params=watson_ml_parameters,
 # )
-
-from genai.extensions.langchain import LangChainInterface
-from genai.schemas import GenerateParams as GenaiGenerateParams
-from genai.credentials import Credentials
 
 api_key = os.getenv("IBM_GENAI_KEY", None) 
 api_url = "https://bam-api.res.ibm.com"
@@ -79,51 +107,37 @@ watsonx_genai_llm = LangChainInterface(
     credentials=creds
 )
 
-from langchain.prompts import PromptTemplate
-from langchain.agents import load_tools
-from langchain.agents import initialize_agent
-from langchain.agents import AgentType
 
-# from langchain.llms.openai import OpenAI
-
-# openai_llm = OpenAI(
-#     model="gpt-3.5-turbo-instruct",
-#         # "babbage-002",
-#         # "davinci-002",
-#     openai_api_key=os.environ["OPENAI_API_KEY"], 
-#     temperature=0.1
-#     )
-# # GPT3 error: The model `text-davinci-003` has been deprecated, learn more here: https://platform.openai.com/docs/deprecations
+openai_llm = OpenAI(
+    model="gpt-3.5-turbo-instruct",
+    openai_api_key=os.environ["OPENAI_API_KEY"], 
+    temperature=0.1
+    )
 
 # def langchain_serpapi_math_agent():
 #     tools = load_tools(["serpapi", "llm-math"], llm=openai_llm)
 
 #     agent = initialize_agent(
-#         tools, watsonx_genai_llm, agent=AgentType.ZERO_SHOT_REACT_DESCRIPTION, verbose=True)
+#         tools, watsonx_ml_llm, agent=AgentType.ZERO_SHOT_REACT_DESCRIPTION, verbose=True)
 
-#     # agent.run("My monthly salary is 10000 KES, if i work for 10 months. How much is my total salary in USD in those 10 months.")
 #     print(agent.run("a pair of shoes sale price 300 CNY and a beautiful pocket knife price at 50 USD, how much in USD if I want them both?"))
 
-def langchain_chat_memory_agent():
-    from langchain.memory import ConversationBufferMemory
+# def langchain_chat_memory_agent():
     
-    memory = ConversationBufferMemory(memory_key="chat_history")
+#     memory = ConversationBufferMemory(memory_key="chat_history")
     
-    tools = load_tools(["serpapi", "llm-math"], llm=watsonx_genai_llm)
+#     tools = load_tools(["serpapi", "llm-math"], llm=openai_llm)
 
-    agent = initialize_agent(tools, watsonx_genai_llm, agent=AgentType.CONVERSATIONAL_REACT_DESCRIPTION, verbose=True, memory=memory)
-    print(agent.run(f"what is the capital city of {RandomCountryName()}?"))
-    print(agent.run("what is the most famous dish of this city?"))
-    print(agent.run("pls provide a receipe for this dish"))
+#     agent = initialize_agent(tools, watsonx_ml_llm, agent=AgentType.CONVERSATIONAL_REACT_DESCRIPTION, verbose=True, memory=memory)
+#     print(agent.run(f"what is the capital city of Italy?"))
+#     print(agent.run("what is the most famous dish of this city?"))
+#     print(agent.run("pls provide a receipe for this dish"))
 
 
 def langchain_watson_genai_llm_chain():
-    from langchain.schema import SystemMessage, HumanMessage
-    from langchain.prompts import ChatPromptTemplate, HumanMessagePromptTemplate
-    from langchain.chains import LLMChain, SequentialChain
     
     first_prompt_messages = [
-        SystemMessage(content="answer the question with very short answer, as short as you can."),
+        SystemMessage(content="answer the question with very short answer."),
         # HumanMessage(content=f"tell me what is the most famous tourist attraction in the capital city of {RandomCountryName()}?"),
         HumanMessage(content=f"tell me what is the most famous dish in {RandomCountryName()}?"),
     ]
@@ -141,7 +155,5 @@ def langchain_watson_genai_llm_chain():
     workflow = SequentialChain(chains=[first_chain, second_chain], input_variables=[])
     print(workflow({}))
     
-# print(watsonx_genai_llm(f"what is the capital city of {RandomCountryName()}?"))
-
 
 langchain_watson_genai_llm_chain()

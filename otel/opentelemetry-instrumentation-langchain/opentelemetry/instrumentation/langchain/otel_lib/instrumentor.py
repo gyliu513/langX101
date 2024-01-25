@@ -14,7 +14,8 @@ from opentelemetry.instrumentation.langchain.version import __version__
 from opentelemetry import trace
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.resources import Resource
-from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter as OTLPSpanExporterGRPC
+from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter as OTLPSpanExporterHTTP
 from opentelemetry.sdk.trace.export import (
     BatchSpanProcessor,
     # ConsoleSpanExporter,
@@ -23,7 +24,7 @@ from opentelemetry.sdk.trace.export import (
 from opentelemetry import metrics
 from opentelemetry.sdk.metrics import MeterProvider, Meter
 from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader, ConsoleMetricExporter
-from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter as OTLPMetricExporter
+from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter as OTLPMetricExporterGRPC
 from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter as OTLPMetricExporterHTTP
 
 class LangChainHandlerInstrumentor:
@@ -105,9 +106,11 @@ class LangChainHandlerInstrumentor:
             os.environ['OTEL_EXPORTER_OTLP_INSECURE'] = 'False'
         
         # Create an OTLP Span Exporter
-        otlp_exporter = OTLPSpanExporter(
-            endpoint=otlp_endpoint,
-        )
+        if  otlp_endpoint.startswith("http"):
+            otlp_exporter = OTLPSpanExporterHTTP(endpoint=f"{otlp_endpoint}/v1/traces")
+        else:
+            otlp_exporter = OTLPSpanExporterGRPC(endpoint=otlp_endpoint)
+            
         tracer_provider = TracerProvider(
             resource = resource,
         )
@@ -120,12 +123,15 @@ class LangChainHandlerInstrumentor:
         trace.set_tracer_provider(tracer_provider)
 
         # HTTP metric exporter for test only
-        # metric_http_endpoint=os.environ["METRIC_EXPORTER_HTTP_MY_TESTING"]
-        reader = PeriodicExportingMetricReader(
-            OTLPMetricExporter(endpoint=metric_endpoint)
-            # HTTP metric exporter for test only
-            # OTLPMetricExporterHTTP(endpoint=metric_http_endpoint)
-        )
+        metric_endpoint=os.environ["OTEL_METRICS_EXPORTER"]
+        if  metric_endpoint.startswith("http"):
+            reader = PeriodicExportingMetricReader(
+                OTLPMetricExporterHTTP(endpoint=f"{metric_endpoint}/v1/metrics")
+            )
+        else:
+            reader = PeriodicExportingMetricReader(
+                OTLPMetricExporterGRPC(endpoint=metric_endpoint)
+            )
 
         # Metrics console output
         # console_reader = PeriodicExportingMetricReader(ConsoleMetricExporter())
