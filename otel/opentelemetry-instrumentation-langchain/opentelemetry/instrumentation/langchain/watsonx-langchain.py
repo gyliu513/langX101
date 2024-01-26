@@ -42,9 +42,7 @@ tracer_provider, metric_provider = SimplifiedLangChainHandlerInstrumentor().inst
 """=======================================================
 """
 
-os.environ["WATSONX_APIKEY"] = os.getenv("IAM_API_KEY")
-
-
+# os.environ["WATSONX_APIKEY"] = os.getenv("IAM_API_KEY")
 # watson_ml_parameters = {
 #     GenTextParamsMetaNames.DECODING_METHOD: "sample",
 #     GenTextParamsMetaNames.MAX_NEW_TOKENS: 100,
@@ -62,7 +60,6 @@ os.environ["WATSONX_APIKEY"] = os.getenv("IAM_API_KEY")
 #     WatsonMLGenParams.TOP_K: 50,
 #     WatsonMLGenParams.TOP_P: 1,
 # }
-
 
 # watsonx_ml_llm = WatsonxLLM(
 #     # model_id="google/flan-ul2",
@@ -108,11 +105,11 @@ watsonx_genai_llm = LangChainInterface(
 )
 
 
-openai_llm = OpenAI(
-    model="gpt-3.5-turbo-instruct",
-    openai_api_key=os.environ["OPENAI_API_KEY"], 
-    temperature=0.1
-    )
+# openai_llm = OpenAI(
+#     model="gpt-3.5-turbo-instruct",
+#     openai_api_key=os.environ["OPENAI_API_KEY"], 
+#     temperature=0.1
+#     )
 
 # def langchain_serpapi_math_agent():
 #     tools = load_tools(["serpapi", "llm-math"], llm=openai_llm)

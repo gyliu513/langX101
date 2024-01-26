@@ -414,7 +414,7 @@ class OpenInferenceTracer(BaseTracer):  # type: ignore
                 # create metric counters
                 if "global_token_counter" not in globals():
                     global global_token_counter
-                    global_token_counter = self.meter.create_up_down_counter(f"llm.request.token")
+                    global_token_counter = self.meter.create_up_down_counter(f"llm.usage.total_tokens")
                 if "global_duration_counter" not in globals():
                     global global_duration_counter
                     global_duration_counter = self.meter.create_up_down_counter(f"llm.response.duration")
@@ -441,12 +441,12 @@ class OpenInferenceTracer(BaseTracer):  # type: ignore
 
             ## aggregated metrics Disabled.
             # token_avg_counter = self.meter.create_up_down_counter(f"llm.request.token.avg")
-            # call_counter = self.meter.create_up_down_counter(f"llm.request.count")
+            call_counter = self.meter.create_up_down_counter(f"llm.request.count")
             # duration_avg_counter = self.meter.create_up_down_counter(f"llm.response.duration.avg")
-            # for modelmetric in modelmetrics:
-            #     token_avg_counter.add(int(modelmetric.token/modelmetric.request_count), {"model_id": modelmetric.model, "llm_platform": modelmetric.llm_platform})
-            #     call_counter.add(modelmetric.request_count, {"model_id": modelmetric.model, "llm_platform": modelmetric.llm_platform})
-            #     duration_avg_counter.add(int(modelmetric.duration/modelmetric.request_count), {"model_id": modelmetric.model, "llm_platform": modelmetric.llm_platform})
+            for modelmetric in modelmetrics:
+                # token_avg_counter.add(int(modelmetric.token/modelmetric.request_count), {"model_id": modelmetric.model, "llm_platform": modelmetric.llm_platform})
+                call_counter.add(modelmetric.request_count, {"model_id": modelmetric.model, "llm_platform": modelmetric.llm_platform})
+                # duration_avg_counter.add(int(modelmetric.duration/modelmetric.request_count), {"model_id": modelmetric.model, "llm_platform": modelmetric.llm_platform})
         except Exception:
             logger.exception("Failed to convert run to spans")
 
