@@ -123,7 +123,7 @@ class LangChainHandlerInstrumentor:
         trace.set_tracer_provider(tracer_provider)
 
         # HTTP metric exporter for test only
-        metric_endpoint=os.environ["OTEL_METRICS_EXPORTER"]
+        # metric_endpoint=os.environ["OTEL_METRICS_EXPORTER"]
         if  metric_endpoint.startswith("http"):
             reader = PeriodicExportingMetricReader(
                 OTLPMetricExporterHTTP(endpoint=f"{metric_endpoint}/v1/metrics")
