@@ -16,6 +16,12 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter as OTLPSpanExporterGRPC
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter as OTLPSpanExporterHTTP
+from opentelemetry._logs import set_logger_provider
+from opentelemetry.exporter.otlp.proto.grpc._log_exporter import OTLPLogExporter as OTLPLogExporterGRPC
+from opentelemetry.exporter.otlp.proto.http._log_exporter import OTLPLogExporter as OTLPLogExporterHTTP
+from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
+from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
+
 from opentelemetry.sdk.trace.export import (
     BatchSpanProcessor,
     # ConsoleSpanExporter,
@@ -36,7 +42,7 @@ class LangChainHandlerInstrumentor:
     def __init__(self, handeler: Optional[OpenInferenceTracer] = None) -> None:
         self._handeler = handeler if handeler is not None else OpenInferenceTracer()
 
-    def instrument(self, *args, **kwargs) -> (TracerProvider, MeterProvider):
+    def instrument(self, *args, **kwargs) -> (TracerProvider, MeterProvider, LoggerProvider):
         try:
             from langchain.callbacks.base import BaseCallbackManager
         except ImportError:
@@ -47,15 +53,17 @@ class LangChainHandlerInstrumentor:
 
         otlp_endpoint = kwargs.get("otlp_endpoint", None)
         metric_endpoint = kwargs.get("metric_endpoint", None)
+        log_endpoint = kwargs.get("log_endpoint", None)
         service_name = kwargs.get("service_name", None)
         insecure = kwargs.get("insecure", None)
         if otlp_endpoint is None:
             return None, None
         # 
         # otlp_endpoint:str, metric_endpoint:str, service_name:str, insecure:bool
-        tracer_provider, metric_provider = self.otel_init(
+        tracer_provider, metric_provider ,LoggerProvider = self.otel_init(
             otlp_endpoint=otlp_endpoint, 
             metric_endpoint=metric_endpoint,
+            log_endpoint=log_endpoint,
             service_name=service_name,
             insecure=insecure,
         )
@@ -83,9 +91,17 @@ class LangChainHandlerInstrumentor:
 
         BaseCallbackManager.__init__ = patched_init
         
-        return tracer_provider, metric_provider
+        return tracer_provider, metric_provider, LoggerProvider
         
-    def otel_init(self, otlp_endpoint:str, metric_endpoint:str, service_name:str, insecure:bool) -> (TracerProvider, MeterProvider):
+    def otel_init(
+        self, 
+        otlp_endpoint:str, 
+        metric_endpoint:str, 
+        log_endpoint:str, 
+        service_name:str, 
+        insecure:bool
+        ) -> (TracerProvider, MeterProvider, LoggerProvider):
+        
         resource=Resource.create(
                 {
                     'service.name': service_name, 
@@ -139,5 +155,18 @@ class LangChainHandlerInstrumentor:
         metric_provider = MeterProvider(resource=resource, metric_readers=[reader])
         # Register the metric provide
         metrics.set_meter_provider(metric_provider)
-        
-        return tracer_provider, metric_provider
+
+        # create log exporter
+        if log_endpoint is not None:
+            if  log_endpoint.startswith("http"):
+                log_exporter = OTLPLogExporterHTTP(endpoint=f"{log_endpoint}/v1/logs")
+            else:
+                log_exporter = OTLPLogExporterGRPC(endpoint=log_endpoint)
+
+            logger_provider = LoggerProvider(resource=resource)
+            logger_provider.add_log_record_processor(BatchLogRecordProcessor(log_exporter))
+            set_logger_provider(logger_provider)
+        else:
+            logger_provider = None
+
+        return tracer_provider, metric_provider, logger_provider
