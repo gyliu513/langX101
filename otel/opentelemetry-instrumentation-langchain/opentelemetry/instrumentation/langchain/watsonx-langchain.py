@@ -1,3 +1,4 @@
+import logging
 from dotenv import load_dotenv, find_dotenv
 import os
 
@@ -24,23 +25,30 @@ from traceloop.sdk import Traceloop
 
 load_dotenv(find_dotenv())
 
-# Traceloop.init(api_endpoint=os.environ["OTLP_EXPORTER_GRPC"],
-#                api_key=os.environ["TRACELOOP_API_KEY"],
+# Traceloop.init(api_endpoint=os.environ["OTLP_EXPORTER_HTTP"],
+#             #    api_key=os.environ["TRACELOOP_API_KEY"],
 #                app_name=os.environ["SVC_NAME"],
 #                )
 
 """ only need 2 lines code to instrument Langchain LLM
 """
 from otel_lib.instrumentor import LangChainHandlerInstrumentor as SimplifiedLangChainHandlerInstrumentor
-tracer_provider, metric_provider = SimplifiedLangChainHandlerInstrumentor().instrument(
+from opentelemetry.sdk._logs import LoggingHandler
+tracer_provider, metric_provider, logger_provider = SimplifiedLangChainHandlerInstrumentor().instrument(
     otlp_endpoint=os.environ["OTLP_EXPORTER_HTTP"],
     # otlp_endpoint=os.environ["OTLP_EXPORTER_GRPC"],
     metric_endpoint=os.environ["OTEL_METRICS_EXPORTER"],
+    log_endpoint=os.environ["OTEL_LOG_EXPORTER"],
     service_name=os.environ["SVC_NAME"],
     insecure = True,
     )
 """=======================================================
 """
+handler = LoggingHandler(level=logging.DEBUG,logger_provider=logger_provider)
+# Create different namespaced loggers
+logger = logging.getLogger("mylog_test")
+logger.addHandler(handler)
+logger.setLevel(logging.DEBUG)
 
 # os.environ["WATSONX_APIKEY"] = os.getenv("IAM_API_KEY")
 # watson_ml_parameters = {
@@ -140,7 +148,8 @@ def langchain_watson_genai_llm_chain():
     ]
     first_prompt_template = ChatPromptTemplate.from_messages(first_prompt_messages)
     first_chain = LLMChain(llm=watsonx_genai_llm, prompt=first_prompt_template, output_key="target")
-
+    logger.info("first chain set", extra={"action": "set llm chain", "chain name": "first chain"})
+    
     second_prompt_messages = [
         SystemMessage(content="answer the question with very brief answer."),
         # HumanMessagePromptTemplate.from_template("how to get to {target} from the nearest airport by public transportation?\n "),
@@ -148,6 +157,7 @@ def langchain_watson_genai_llm_chain():
     ]
     second_prompt_template = ChatPromptTemplate.from_messages(second_prompt_messages)
     second_chain = LLMChain(llm=watsonx_genai_llm, prompt=second_prompt_template)
+    logger.info("second chain set", extra={"action": "set llm chain", "chain name": "second chain"})
 
     workflow = SequentialChain(chains=[first_chain, second_chain], input_variables=[])
     print(workflow({}))

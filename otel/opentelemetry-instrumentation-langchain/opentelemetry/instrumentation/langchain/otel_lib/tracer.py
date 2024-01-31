@@ -406,6 +406,8 @@ class OpenInferenceTracer(BaseTracer):  # type: ignore
                 else:
                     llm_name, model_name = _params(run["extra"], span)
 
+                span.add_event(f"llm call from platform~~moduel: {llm_name}~~{model_name}")
+
                 llm_metric = LLM_metrics(llm_platform=llm_name, 
                                          model=model_name, 
                                          token=total_tokens, 
@@ -423,7 +425,9 @@ class OpenInferenceTracer(BaseTracer):  # type: ignore
                 llm_model_call_count = _otel_llm_metric_get_model_request_count(modelmetrics, llm_metric)
                 global_token_counter.add(total_tokens, {"model_id": model_name, "llm_platform": llm_name, "llm_call_sequence": llm_model_call_count + 1})
                 global_duration_counter.add(_get_timestamp(run["end_time"]) - start_time, {"model_id": model_name, "llm_platform": llm_name, "llm_call_sequence": llm_model_call_count + 1})
-                    
+                
+                span.add_event(f"llm call metrics sent for platform~~moduel: {llm_name}~~{model_name}")
+                
                 _otel_input_messages(run["inputs"], span)
                 _otel_output_messages(run["outputs"], span)
                 modelmetrics = _otel_llm_metric_collect(modelmetrics, llm_metric)
