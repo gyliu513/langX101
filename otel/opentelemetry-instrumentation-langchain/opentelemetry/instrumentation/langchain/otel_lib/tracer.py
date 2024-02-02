@@ -267,15 +267,15 @@ def _params_watson(run_extra: Dict[str, Any], span):
 
     return llm_name, ai_model
 
-def _token_counts(run_outputs: Dict[str, Any], span):
+def _token_counts(run_outputs: Dict[str, Any], span) -> int:
     """get token counts if present"""
     total_tokens = 0
     if not run_outputs:
-        return
+        return total_tokens
     try:
         token_usage = run_outputs["llm_output"]["token_usage"]
     except Exception:
-        return
+        return total_tokens
     if token_usage.get("prompt_tokens") is not None:
         _set_span_attribute(span, SpanAttributes.LLM_USAGE_PROMPT_TOKENS, token_usage.get("prompt_tokens"))
         _set_span_attribute(span, SpanAttributes.LLM_USAGE_COMPLETION_TOKENS, token_usage.get("completion_tokens"))
@@ -423,8 +423,15 @@ class OpenInferenceTracer(BaseTracer):  # type: ignore
 
                 # export metric data
                 llm_model_call_count = _otel_llm_metric_get_model_request_count(modelmetrics, llm_metric)
-                global_token_counter.add(total_tokens, {"model_id": model_name, "llm_platform": llm_name, "llm_call_sequence": llm_model_call_count + 1})
-                global_duration_counter.add(_get_timestamp(run["end_time"]) - start_time, {"model_id": model_name, "llm_platform": llm_name, "llm_call_sequence": llm_model_call_count + 1})
+                if total_tokens != 0:
+                    global_token_counter.add(
+                        total_tokens, 
+                        {"model_id": model_name, "llm_platform": llm_name, "llm_call_sequence": llm_model_call_count + 1}
+                        )
+                global_duration_counter.add(
+                    _get_timestamp(run["end_time"]) - start_time, 
+                    {"model_id": model_name, "llm_platform": llm_name, "llm_call_sequence": llm_model_call_count + 1}
+                    )
                 
                 span.add_event(f"llm call metrics sent for platform~~moduel: {llm_name}~~{model_name}")
                 
