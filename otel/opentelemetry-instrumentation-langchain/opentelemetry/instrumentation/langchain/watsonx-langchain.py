@@ -1,6 +1,11 @@
+from dotenv import load_dotenv
+load_dotenv()
+
 import logging
 from dotenv import load_dotenv, find_dotenv
 import os
+
+
 
 from genai.extensions.langchain import LangChainInterface
 from genai.schemas import GenerateParams as GenaiGenerateParams
@@ -35,10 +40,10 @@ load_dotenv(find_dotenv())
 from otel_lib.instrumentor import LangChainHandlerInstrumentor as SimplifiedLangChainHandlerInstrumentor
 from opentelemetry.sdk._logs import LoggingHandler
 tracer_provider, metric_provider, logger_provider = SimplifiedLangChainHandlerInstrumentor().instrument(
-    otlp_endpoint=os.environ["OTLP_EXPORTER_HTTP"],
+    otlp_endpoint=os.environ["OTLP_EXPORTER"],
     # otlp_endpoint=os.environ["OTLP_EXPORTER_GRPC"],
-    metric_endpoint=os.environ["OTEL_METRICS_EXPORTER"],
-    log_endpoint=os.environ["OTEL_LOG_EXPORTER"],
+    # metric_endpoint=os.environ["OTEL_METRICS_EXPORTER"],
+    # log_endpoint=os.environ["OTEL_LOG_EXPORTER"],
     service_name=os.environ["SVC_NAME"],
     insecure = True,
     )
