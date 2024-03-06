@@ -62,7 +62,7 @@ Traceloop.init(api_endpoint=os.environ["OTLP_EXPORTER_HTTP"],
 
 
 tracer_provider = TracerProvider(
-    resource=Resource.create({'service.name': 'my-service-openai-1'}),
+    resource=Resource.create({'service.name': 'my-milvus-1'}),
 )
 
 # Create an OTLP Span Exporter
@@ -85,10 +85,9 @@ WatsonxInstrumentor().instrument(tracer_provider=tracer_provider)
     # Close child span, set parent as current
 # Close parent span, set default span as current
             
-# tracer_provider.add_span_processor(
-#     SimpleSpanProcessor(otlp_exporter)
-
-# )
+tracer_provider.add_span_processor(
+    SimpleSpanProcessor(otlp_exporter)
+)
 
 loader = TextLoader("langchain/state_of_the_union.txt")
 documents = loader.load()
@@ -165,14 +164,17 @@ model = Model(
     project_id=project_id
 )
 
-from ibm_watson_machine_learning.foundation_models.extensions.langchain import WatsonxLLM
+# from ibm_watson_machine_learning.foundation_models.extensions.langchain import WatsonxLLM
+from ibm_watsonx_ai.foundation_models.extensions.langchain.llm import WatsonxLLM
 
 flan_ul2_llm = WatsonxLLM(model=model)
 
 from langchain.chains import RetrievalQA
 
-qa = RetrievalQA.from_chain_type(llm=flan_ul2_llm, chain_type="stuff", retriever=docsearch.as_retriever())
-query = "mobile policy"
-qa.invoke(query)
+with tracer.start_as_current_span("mobile policy"):
+
+    qa = RetrievalQA.from_chain_type(llm=flan_ul2_llm, chain_type="stuff", retriever=docsearch.as_retriever())
+    query = "mobile policy"
+    qa.invoke(query)
 
 
