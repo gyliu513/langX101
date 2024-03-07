@@ -2,7 +2,7 @@ import os, logging
 from dotenv import load_dotenv
 
 from langchain_community.document_loaders import TextLoader
-from langchain_community.vectorstores import Milvus
+from langchain_community.vectorstores import Chroma
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_text_splitters import CharacterTextSplitter
 from langchain.chains import RetrievalQA
@@ -24,8 +24,8 @@ from ibm_watsonx_ai.foundation_models import Model
 
 from opentelemetry.sdk.trace.export import (
     SimpleSpanProcessor,
-
 )
+
 
 
 FORMAT = '%(asctime)s - %(filename)s:%(lineno)s - %(levelname)s: %(message)s'
@@ -54,19 +54,19 @@ load_dotenv()
 # """
 
 Traceloop.init(api_endpoint=os.environ["OTLP_EXPORTER_HTTP"],
-               app_name=os.environ["SVC_NAME"],
+               app_name=os.environ["CHROMA_SVC"],
                )
 
 tracer_provider = TracerProvider(
-    resource=Resource.create({'service.name': os.environ["SVC_NAME"]}),
+    resource=Resource.create({'service.name': os.environ["CHROMA_SVC"]}),
 )
 
 # Create an OTLP Span Exporter
 otlp_exporter = OTLPSpanExporter(
-    endpoint=os.environ["OTLP_EXPORTER_HTTP"],  # Replace with your OTLP endpoint URL
+    endpoint=os.environ["OTLP_EXPORTER_HTTP"],  
     insecure=True,
 )
-# trace.set_tracer_provider(tracer_provider)
+
 tracer =trace.get_tracer(__name__)
 
 WatsonxInstrumentor().instrument(tracer_provider=tracer_provider)
@@ -82,18 +82,17 @@ with tracer.start_as_current_span("sentence embedding"):
     text_splitter = CharacterTextSplitter(chunk_size=1000, chunk_overlap=0)
     docs = text_splitter.split_documents(documents)
 
-    # print(f'len of docs = {len(docs)}')
-    # print(f'docs[10] = {docs[10].page_content}')
-
     embeddings = HuggingFaceEmbeddings(
         model_name = 'sentence-transformers/all-mpnet-base-v2'
     )
 
-    vector_db = Milvus.from_documents(
+    # # create the open-source embedding function
+    # embedding_function = SentenceTransformerEmbeddings(model_name="all-MiniLM-L6-v2")
+
+
+    vector_db = Chroma.from_documents(
         docs,
         embeddings,
-        connection_args={"host": "127.0.0.1", "port": "19530"},
-        collection_name="LangChainCollection",
     )
 
     query = "What did the president say about Ketanji Brown Jackson"
@@ -101,9 +100,20 @@ with tracer.start_as_current_span("sentence embedding"):
 
     print(docs[0].page_content)
 
-
 ####################################
 
+
+# RuntimeError: Your system has an unsupported version of sqlite3. Chroma requires sqlite3 >= 3.35.0.
+# Please visit https://docs.trychroma.com/troubleshooting#sqlite to learn how to upgrade.
+
+# https://docs.trychroma.com/troubleshooting#sqlite
+# https://gist.github.com/defulmere/8b9695e415a44271061cc8e272f3c300
+# 
+# __import__('pysqlite3')
+# import sys
+# sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
+# 
+# in file /root/jupyter/virtualenv/slack-dev-3.10/lib/python3.10/site-packages/chromadb/__init__.py
 
     filename = "watsonx/companyPolicies.txt"
 
@@ -113,9 +123,8 @@ with tracer.start_as_current_span("sentence embedding"):
     texts = text_splitter.split_documents(documents)
     print(len(texts))
 
-
     embeddings = HuggingFaceEmbeddings()
-    docsearch = Milvus.from_documents(texts, embeddings)
+    docsearch = Chroma.from_documents(texts, embeddings)
     print('documents ingested')
 
 
@@ -125,8 +134,6 @@ with tracer.start_as_current_span("sentence embedding"):
         GenParams.MIN_NEW_TOKENS: 130,
         GenParams.MAX_NEW_TOKENS: 200
     }
-
-    logger.debug(f'model_id = {model_id}')
 
     api_key = os.getenv("WATSONX_APIKEY", None)
     api_endpoint = os.getenv("WATSONX_ENDPOINT", None)

@@ -2,7 +2,7 @@ import os, logging
 from dotenv import load_dotenv
 
 from langchain_community.document_loaders import TextLoader
-from langchain_community.vectorstores import Milvus
+from langchain_community.vectorstores import Weaviate
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_text_splitters import CharacterTextSplitter
 from langchain.chains import RetrievalQA
@@ -24,7 +24,6 @@ from ibm_watsonx_ai.foundation_models import Model
 
 from opentelemetry.sdk.trace.export import (
     SimpleSpanProcessor,
-
 )
 
 
@@ -53,20 +52,21 @@ load_dotenv()
 # """=======================================================
 # """
 
+
 Traceloop.init(api_endpoint=os.environ["OTLP_EXPORTER_HTTP"],
-               app_name=os.environ["SVC_NAME"],
+               app_name=os.environ["WEAVIATE_SVC"],
                )
 
 tracer_provider = TracerProvider(
-    resource=Resource.create({'service.name': os.environ["SVC_NAME"]}),
+    resource=Resource.create({'service.name': os.environ["WEAVIATE_SVC"]}),
 )
 
 # Create an OTLP Span Exporter
 otlp_exporter = OTLPSpanExporter(
-    endpoint=os.environ["OTLP_EXPORTER_HTTP"],  # Replace with your OTLP endpoint URL
+    endpoint=os.environ["OTLP_EXPORTER_HTTP"],  
     insecure=True,
 )
-# trace.set_tracer_provider(tracer_provider)
+
 tracer =trace.get_tracer(__name__)
 
 WatsonxInstrumentor().instrument(tracer_provider=tracer_provider)
@@ -82,18 +82,16 @@ with tracer.start_as_current_span("sentence embedding"):
     text_splitter = CharacterTextSplitter(chunk_size=1000, chunk_overlap=0)
     docs = text_splitter.split_documents(documents)
 
-    # print(f'len of docs = {len(docs)}')
-    # print(f'docs[10] = {docs[10].page_content}')
-
     embeddings = HuggingFaceEmbeddings(
         model_name = 'sentence-transformers/all-mpnet-base-v2'
     )
 
-    vector_db = Milvus.from_documents(
+    WEAVIATE_URL = os.getenv("WEAVIATE_URL", None)
+
+    vector_db = Weaviate.from_documents(
         docs,
         embeddings,
-        connection_args={"host": "127.0.0.1", "port": "19530"},
-        collection_name="LangChainCollection",
+        weaviate_url=WEAVIATE_URL,
     )
 
     query = "What did the president say about Ketanji Brown Jackson"
@@ -101,9 +99,7 @@ with tracer.start_as_current_span("sentence embedding"):
 
     print(docs[0].page_content)
 
-
-####################################
-
+    ##########################
 
     filename = "watsonx/companyPolicies.txt"
 
@@ -113,9 +109,9 @@ with tracer.start_as_current_span("sentence embedding"):
     texts = text_splitter.split_documents(documents)
     print(len(texts))
 
-
     embeddings = HuggingFaceEmbeddings()
-    docsearch = Milvus.from_documents(texts, embeddings)
+    
+    docsearch = Weaviate.from_documents(texts, embeddings)
     print('documents ingested')
 
 
@@ -125,7 +121,6 @@ with tracer.start_as_current_span("sentence embedding"):
         GenParams.MIN_NEW_TOKENS: 130,
         GenParams.MAX_NEW_TOKENS: 200
     }
-
     logger.debug(f'model_id = {model_id}')
 
     api_key = os.getenv("WATSONX_APIKEY", None)

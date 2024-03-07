@@ -41,5 +41,8 @@ opentelemetry-semantic-conventions
 opentelemetry-semantic-conventions-ai
 opentelemetry-util-http
 traceloop-sdk
-
 opentelemetry-instrumentation-watsonx
+weaviate-client==3.26.2
+chromadb
+pysqlite3
+pysqlite3-binary
