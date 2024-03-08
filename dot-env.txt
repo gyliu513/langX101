@@ -1,0 +1,14 @@
+WATSONX_ENDPOINT="https://us-south.ml.cloud.ibm.com"
+WATSONX_APIKEY=
+WATSONX_PROJECT_ID=
+
+LangChain_API_KEY=
+Huggingface_Token=
+
+OTLP_EXPORTER_HTTP=
+OTEL_METRICS_EXPORTER=
+
+
+SVC_NAME=bam_issue_2
+
+PYTHONPATH=/root/jupyter/langX101/otel/opentelemetry-instrumentation-langchain/opentelemetry/instrumentation/langchain

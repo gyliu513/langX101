@@ -1,0 +1,107 @@
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+  prometheus/milvus_db:
+    config:
+      scrape_configs:
+        - job_name: 'milvus_db'
+          scrape_interval: 5s
+          static_configs:
+            - targets: ['9.112.252.135:9091']
+  prometheus/weaviate_db:
+    config:
+      scrape_configs:
+        - job_name: 'weaviate_db'
+          scrape_interval: 5s
+          static_configs:
+            - targets: ['9.112.252.135:9099']
+processors:
+  batch:
+  metricstransform/rename:
+    transforms:
+      - include: milvus_msgstream_op_count
+        action: update
+        new_name: vectordb.request.count
+      - include: prometheus_http_requests
+        action: update
+        new_name: vectordb.request.count
+      - include: milvus_msgstream_request_latency
+        action: update
+        new_name: vectordb.request.latency
+      - include: prometheus_http_request_duration_seconds
+        action: update
+        new_name: vectordb.request.latency
+      - include: process_cpu_seconds 
+        action: update
+        new_name: vectordb.process.cpu.seconds
+      - include: process_max_fds
+        action: update
+        new_name: vectordb.process.max_fds
+      - include: process_open_fds
+        action: update
+        new_name: vectordb.process.open_fds
+      - include: process_resident_memory_bytes
+        action: update
+        new_name: vectordb.process.resident_memory_bytes
+      - include: process_start_time_seconds
+        action: update
+        new_name: vectordb.process.start_time_seconds
+      - include: process_virtual_memory_bytes
+        action: update
+        new_name: vectordb.process.virtual_memory_bytes
+      - include: process_virtual_memory_max_bytes
+        action: update
+        new_name: vectordb.process.virtual_memory_max_bytes
+      - include: go_memstats_heap_idle_bytes
+        action: update
+        new_name: vectordb.memstats.heap_idle_bytes
+      - include: go_memstats_alloc_bytes
+        action: update
+        new_name: vectordb.memstats.alloc_bytes
+  resource/milvus:
+    attributes:
+      - key: server.address
+        from_attribute: net.host.name
+        action: insert
+      - key: server.port
+        from_attribute: net.host.port
+        action: insert
+      - key: db.instance.name
+        from_attribute: service.instance.id
+        action: insert
+      - key: service.instance.id
+        value: 9.112.252.135:9091
+        action: insert
+  resource/weaviate:
+    attributes:
+      - key: server.address
+        from_attribute: net.host.name
+        action: insert
+      - key: server.port
+        from_attribute: net.host.port
+        action: insert
+      - key: db.instance.name
+        from_attribute: service.instance.id
+        action: insert
+      - key: service.instance.id
+        value: 9.112.252.135:9099
+        action: insert
+exporters:
+  otlp/instana:
+    endpoint: 9.30.117.124:4317
+    tls:
+      insecure: true
+service:
+  pipelines:
+    traces/milvus:
+      receivers: [otlp]
+      processors: [batch, resource/milvus]
+      exporters: [otlp/instana]
+    metrics:
+      receivers: [prometheus/milvus_db]
+      processors: [batch, metricstransform/rename, resource/milvus]
+      exporters: [otlp/instana]
