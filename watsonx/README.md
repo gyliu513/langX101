@@ -184,7 +184,7 @@
 ## Setup vector DB
 
 ### Weaviate
-- `docker-compose.yaml`
+- [weaviate/docker-compose.yaml](weaviate/docker-compose.yaml)
     ```yaml
     version: '3.4'
     services:
@@ -234,55 +234,55 @@
 
     ```
 ### Milvus
-- docker-compose.yaml
-  ```yaml
+- [milvus/docker-compose.yaml](milvus/docker-compose.yaml)
+    ```yaml
     version: '3.5'
     services:
-    etcd:
+      etcd:
         container_name: milvus-etcd
         image: quay.io/coreos/etcd:v3.5.5
         environment:
-        - ETCD_AUTO_COMPACTION_MODE=revision
-        - ETCD_AUTO_COMPACTION_RETENTION=1000
-        - ETCD_QUOTA_BACKEND_BYTES=4294967296
-        - ETCD_SNAPSHOT_COUNT=50000
+          - ETCD_AUTO_COMPACTION_MODE=revision
+          - ETCD_AUTO_COMPACTION_RETENTION=1000
+          - ETCD_QUOTA_BACKEND_BYTES=4294967296
+          - ETCD_SNAPSHOT_COUNT=50000
         volumes:
-        - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes/etcd:/etcd
+          - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes/etcd:/etcd
         command: etcd -advertise-client-urls=http://127.0.0.1:2379 -listen-client-urls http://0.0.0.0:2379 --data-dir /etcd
-
-    minio:
+    
+      minio:
         container_name: milvus-minio
         image: minio/minio:RELEASE.2023-03-20T20-16-18Z
         environment:
-        MINIO_ACCESS_KEY: minioadmin
-        MINIO_SECRET_KEY: minioadmin
+          MINIO_ACCESS_KEY: minioadmin
+          MINIO_SECRET_KEY: minioadmin
         volumes:
-        - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes/minio:/minio_data
+          - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes/minio:/minio_data
         command: minio server /minio_data
         healthcheck:
-        test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
-        interval: 30s
-        timeout: 20s
-        retries: 3
-
-    standalone:
+          test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+          interval: 30s
+          timeout: 20s
+          retries: 3
+    
+      standalone:
         container_name: milvus-standalone
         image: milvusdb/milvus:v2.3.3
         command: ["milvus", "run", "standalone"]
         environment:
-        ETCD_ENDPOINTS: etcd:2379
-        MINIO_ADDRESS: minio:9000
+          ETCD_ENDPOINTS: etcd:2379
+          MINIO_ADDRESS: minio:9000
         volumes:
-        - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes/milvus:/var/lib/milvus
+          - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes/milvus:/var/lib/milvus
         ports:
-        - "19530:19530"
-        - "9091:9091"
+          - "19530:19530"
+          - "9091:9091"
         depends_on:
-        - "etcd"
-        - "minio"
-
+          - "etcd"
+          - "minio"
+    
     networks:
-    default:
+      default:
         name: milvus
     ```
 - Configure OpenTelemetry in `config/milvus.yaml`
@@ -300,12 +300,23 @@
     secure: false
     ```
 ### Chroma Workaround
-
-- https://docs.trychroma.com/troubleshooting#sqlite
-- https://gist.github.com/defulmere/8b9695e415a44271061cc8e272f3c300
-- add this snippet in `python3.10/site-packages/chromadb/__init__.py`
-    ```text
-     __import__('pysqlite3')
-     import sys
-     sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
-    ``` 
+- sqlite problem
+    - https://docs.trychroma.com/troubleshooting#sqlite
+    - https://gist.github.com/defulmere/8b9695e415a44271061cc8e272f3c300
+    - add this snippet in `python3.10/site-packages/chromadb/__init__.py`
+        ```text
+        __import__('pysqlite3')
+        import sys
+        sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
+        ``` 
+- persistent problem
+    - https://github.com/chroma-core/chroma/issues/931
+    - https://github.com/imartinez/privateGPT/issues/1012
+    - comment out this incorrect comment
+      ```
+        File "/root/jupyter/virtualenv/slack-dev-3.10/lib/python3.10/site-packages/chromadb/segment/impl/manager/local.py", line 85, in __init__
+        -->    // PersistentLocalHnswSegment.get_file_handle_count()
+        File "/root/jupyter/virtualenv/slack-dev-3.10/lib/python3.10/site-packages/chromadb/segment/impl/vector/local_persistent_hnsw.py", line 445, in get_file_handle_count
+            hnswlib_count = hnswlib.Index.file_handle_count
+        AttributeError: type object 'hnswlib.Index' has no attribute 'file_handle_count'
+        ```
