@@ -1,15 +1,22 @@
 from dotenv import load_dotenv
-import os
 load_dotenv()
 
-from langfuse.openai import openai
+from langfuse.decorators import observe
+from langfuse.openai import openai # OpenAI integration
 
-completion = openai.ChatCompletion.create(
-  name="test-chat-openai",
-  model="gpt-3.5-turbo",
-  messages=[
-      {"role": "system", "content": "You are a very accurate calculator. You output only the result of the calculation."},
-      {"role": "user", "content": "1 + 1 = "}],
-  temperature=0,
-  metadata={"someMetadataKey": "someValue"},
-)
+@observe()
+def story():
+    return openai.chat.completions.create(
+        model="gpt-3.5-turbo",
+        max_tokens=100,
+        messages=[
+          {"role": "system", "content": "You are a great storyteller."},
+          {"role": "user", "content": "Once upon a time in a galaxy far, far away..."}
+        ],
+    ).choices[0].message.content
+
+@observe()
+def main():
+    return story()
+
+main()
