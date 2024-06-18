@@ -2,4 +2,4 @@
 
 This is a repo for testing GenAI Observability Tools!
 
-A test for code review bot.
+A test for codexxxxx review bot.
