@@ -1,5 +1,6 @@
 from dotenv import load_dotenv
 load_dotenv()
+import os
 
 from graphqlclient import GraphQLClient
 
@@ -7,7 +8,7 @@ from graphqlclient import GraphQLClient
 client = GraphQLClient('https://api.github.com/graphql')
 
 # 设置你的 GitHub 个人访问令牌
-client.inject_token('Bearer xxx')
+client.inject_token('Bearer ' + os.getenv("GITHUB_API_TOKEN"))
 
 # 定义一个 GraphQL 查询
 query = '''
@@ -15,6 +16,12 @@ query = '''
   viewer {
     login
     name
+  }
+  rateLimit {
+    limit
+    cost
+    remaining
+    resetAt
   }
 }
 '''
