@@ -1,3 +1,11 @@
+'''
+Put following parameter to a .env file
+
+TRACELOOP_API_KEY=
+AWS_ACCESS_KEY_ID=
+AWS_SECRET_ACCESS_KEY=
+'''
+
 from dotenv import load_dotenv
 load_dotenv()
 

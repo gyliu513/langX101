@@ -8,6 +8,16 @@ AWS_SECRET_ACCESS_KEY=
 /Users/gyliu/.aws
 '''
 
+'''
+AWS Bedrock Pricing https://aws.amazon.com/bedrock/pricing/
+
+| **Amazon Titan Models**            | **Price per 1,000 Input Tokens** | **Price per 1,000 Output Tokens** |
+|------------------------------------|----------------------------------|-----------------------------------|
+| Amazon Titan Text Premier          | $0.0005                          | $0.0015                           |
+| Amazon Titan Text Lite             | $0.00015                         | $0.0002                           |
+| Amazon Titan Text Express          | $0.0002	                        | $0.0006                           |
+'''
+
 from dotenv import load_dotenv
 load_dotenv()
 
