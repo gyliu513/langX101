@@ -1,6 +1,8 @@
 # This code is Apache 2 licensed:
 # https://www.apache.org/licenses/LICENSE-2.0
 
+# Blog for react notes https://gyliu513.github.io/jekyll/update/2024/09/10/quick-notes-for-react-agent.html
+
 from dotenv import load_dotenv
 load_dotenv()
 
