@@ -4,29 +4,51 @@
 from dotenv import load_dotenv
 load_dotenv()
 
-from openai import OpenAI
+import boto3
+import json
+
 import re
 import httpx
 
 class ChatBot:
     def __init__(self, system=""):
-        self.client = OpenAI()
+        self.client = boto3.client(service_name="bedrock-runtime", region_name="us-west-2")
         self.system = system
-        self.messages = []
+        self.messages = ""
         if self.system:
-            self.messages.append({"role": "system", "content": system})
-    
+            # self.messages.append({"role": "system", "content": system})
+            self.messages = f"system: {system}\n"
+
     def __call__(self, message):
-        self.messages.append({"role": "user", "content": message})
-        print(self.messages)
+        self.messages = f"{self.messages}user: {message}\n"
+        print("before call >>>>>>", self.messages)
         result = self.execute()
-        self.messages.append({"role": "assistant", "content": result})
-        print("after call >>>>>> ", self.messages)
+        self.messages = f"{self.messages}assistant: {result}\n"
+        print("after call >>>>>>", self.messages)
+
         return result
     
     def execute(self):
-        completion = self.client.chat.completions.create(model="gpt-3.5-turbo", messages=self.messages)
-        return completion.choices[0].message.content
+        body = json.dumps({
+            "inputText": self.messages, 
+            "textGenerationConfig":{  
+                "maxTokenCount":70,
+                "stopSequences":[], #define phrases that signal the model to conclude text generation.
+                "temperature":0, #Temperature controls randomness; higher values increase diversity, lower values boost predictability.
+                "topP":0.9 # Top P is a text generation technique, sampling from the most probable tokens in a distribution.
+            }
+        })
+
+        response = self.client.invoke_model(
+            body=body,
+            modelId="amazon.titan-text-express-v1",
+            accept="application/json", 
+            contentType="application/json"
+        )
+
+        response_body = json.loads(response.get('body').read())
+        outputText = response_body.get('results')[0].get('outputText')
+        return outputText
 
 prompt = """
 You run in a loop of Thought, Action, PAUSE, Observation.
@@ -64,7 +86,7 @@ Answer: The capital of Hebei is Shijiazhuang
 
 action_re = re.compile('^Action: (\w+): (.*)$')
 
-def query(question, max_turns=5):
+def query(question, max_turns=3):
     i = 0
     bot = ChatBot(prompt)
     next_prompt = question
