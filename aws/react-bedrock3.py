@@ -4,6 +4,7 @@
 from dotenv import load_dotenv
 load_dotenv()
 
+import os
 import boto3
 import json
 
@@ -11,6 +12,7 @@ from botocore.exceptions import ClientError
 
 import re
 import httpx
+import requests
 
 class ChatBot:
     def __init__(self, system=""):
@@ -68,10 +70,20 @@ e.g. calculate: 4 * 7 / 3
 Runs a calculation and returns the number - uses Python so be sure to use floating point syntax if necessary
 
 wikipedia:
-e.g. wikipedia: LLM
+e.g. wikipedia: Hebei
 Returns a summary from searching Wikipedia
 
-Example session:
+google:
+e.g. google: China
+Returns the information of China from searching google
+
+news:
+e.g. news: China
+Returns the latest of news about the China from NEWSDATA.IO. Use it when trying to get the realtime information!
+
+Always look things up on google if you have the opportunity to do so.
+
+Example session 1:
 
 Question: What is the capital of Hebei?
 Thought: I should look up Hebei on Wikipedia
@@ -85,6 +97,37 @@ Observation: Hebei is a province in China. The capital is Shijiazhuang.
 You then output:
 
 Answer: The capital of Hebei is Shijiazhuang
+
+Example session 2:
+
+Question: What is the capital of China?
+Thought: I should look up China on Wikipedia
+Action: wikipedia: China
+PAUSE
+
+You will be called again with this:
+
+Observation: China, officially the People's Republic of China (PRC), is a country in East Asia. With a population exceeding 1.4 billion, it is the world's second-most
+
+Thought: I didn't get the Capital of China from wikipedia, Let me try it with google
+Action: google: China
+PAUSE
+
+You will be called again with this:
+
+Observation: officially the People's Republic of China (PRC), is a country in East Asia. With a population exceeding 1.4 billion, it is the world's second-most ...
+
+Thought: I still didn't get the Capital of China, it seems like I got a lot of extra information instead
+Action: google: capital of China
+PAUSE
+
+You will be called again with this:
+
+Observation: Beijing, previously romanized as Peking, is the capital of China. With more than 22 million residents, Beijing is the world's most populous national capital ...; The modern day capital of China is Beijing (literally "Northern Capital"), which first served as China's capital city in 1261, when the Mongol ruler Kublai ...; Beijing, city, province-level shi (municipality), and capital of the People's Republic of China. Few cities in the world have served for so long as the ...
+
+Thought: Okay, I finally got the capital of China!
+
+Answer: The capital of China is Beijing
 """.strip()
 
 
@@ -125,9 +168,29 @@ def wikipedia(q):
 def calculate(what):
     return eval(what)
 
+def google(query):
+    headers = {
+        'X-API-KEY': os.environ['SERPER_API_KEY'],
+        'Content-Type': 'application/json',
+    }
+    payload = {
+        'q': query,
+        'num': 5  # Number of search results to return
+    }
+    response = requests.post("https://google.serper.dev/search", json=payload, headers=headers)
+    if response.status_code == 200:
+        # for idx, result in enumerate(results.get('organic', []), start=1):
+        rets = []
+        for idx, result in enumerate(response.json().get('organic', []), start=1):
+            rets.append(result.get('snippet'))
+        return "; ".join(rets)
+    else:
+        response.raise_for_status()
+
 known_actions = {
     "wikipedia": wikipedia,
     "calculate": calculate,
+    "google": google,
 }
 
-query("What is the captical of Hebei")
+query("What is the captical of France")
