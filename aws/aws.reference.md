@@ -1,0 +1,2 @@
+- Use System Prompts with Anthropic Claude on Amazon Bedrock
+  - https://community.aws/content/2dJmYpKlFNh6NOeC71GIZWZkfST/system-prompts-with-anthropic-claude-on-amazon-aws-bedrock
