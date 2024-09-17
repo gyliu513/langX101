@@ -44,11 +44,14 @@ native_request = {
     "max_tokens": 512,
     "temperature": 0.5,
     "messages": [
-        
         {
             "role": "user",
             "content": [{"type": "text", "text": "Tell me about AWS Bedrock"}],
-        }
+        },
+        {
+            "role": "assistant",
+            "content": [{"type": "text", "text": "Bedrock is an AI Platform"}],
+        },
         
     ],
 }
