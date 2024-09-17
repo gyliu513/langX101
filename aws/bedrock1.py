@@ -15,7 +15,7 @@ import json
 from traceloop.sdk import Traceloop
 from traceloop.sdk.decorators import task, workflow
 
-Traceloop.init(app_name="joke_generation_service")
+# Traceloop.init(app_name="joke_generation_service")
 bedrock_runtime = boto3.client(service_name="bedrock-runtime", region_name="us-west-2")
 
 
