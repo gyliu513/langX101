@@ -14,6 +14,11 @@ import re
 import httpx
 import requests
 
+from traceloop.sdk import Traceloop
+from traceloop.sdk.decorators import task, workflow
+
+Traceloop.init(app_name="chat_bot_service")
+
 class ChatBot:
     def __init__(self, system=""):
         self.client = boto3.client(service_name="bedrock-runtime", region_name="us-west-2")
@@ -133,6 +138,7 @@ Answer: The capital of China is Beijing
 
 action_re = re.compile('^Action: (\w+): (.*)$')
 
+@workflow(name="chat_bot_query")
 def query(question, max_turns=3):
     i = 0
     bot = ChatBot(prompt)
@@ -156,6 +162,7 @@ def query(question, max_turns=3):
             return
 
 
+@task(name="chat_bot_wiki")
 def wikipedia(q):
     return httpx.get("https://en.wikipedia.org/w/api.php", params={
         "action": "query",
@@ -165,9 +172,11 @@ def wikipedia(q):
     }).json()["query"]["search"][0]["snippet"]
 
 
+@task(name="chat_bot_calculate")
 def calculate(what):
     return eval(what)
 
+@task(name="chat_bot_google")
 def google(query):
     headers = {
         'X-API-KEY': os.environ['SERPER_API_KEY'],
