@@ -52,7 +52,7 @@ class ChatBot:
 
         except (ClientError, Exception) as e:
             print(f"ERROR: Can't invoke '{model_id}'. Reason: {e}")
-            exit(1)
+            return None
 
         # Decode the response body.
         model_response = json.loads(response["body"].read())
@@ -142,6 +142,8 @@ action_re = re.compile('^Action: (\w+): (.*)$')
 def query(question, max_turns=3):
     i = 0
     bot = ChatBot(prompt)
+    if bot == None:
+        return
     next_prompt = question
     while i < max_turns:
         i += 1
