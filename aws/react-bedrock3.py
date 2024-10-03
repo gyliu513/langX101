@@ -142,7 +142,8 @@ action_re = re.compile('^Action: (\w+): (.*)$')
 def query(question, max_turns=3):
     i = 0
     bot = ChatBot(prompt)
-    if bot == None:
+    if bot is None:
+        print("Error: ChatBot initialization failed")
         return
     next_prompt = question
     while i < max_turns:
