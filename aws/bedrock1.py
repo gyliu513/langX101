@@ -16,7 +16,7 @@ from traceloop.sdk import Traceloop
 from traceloop.sdk.decorators import task, workflow
 
 # Traceloop.init(app_name="joke_generation_service")
-bedrock_runtime = boto3.client(service_name="bedrock-runtime", region_name="us-west-2")
+bedrock_runtime = boto3.client(service_name="bedrock-runtime", region_name="us-east-1")
 
 
 @task(name="gyliu_joke_creation")
