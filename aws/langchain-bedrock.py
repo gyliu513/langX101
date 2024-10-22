@@ -31,7 +31,7 @@ from langchain_aws import BedrockLLM
 llm = BedrockLLM(
     credentials_profile_name="bedrock-admin",
     model_id="amazon.titan-text-express-v1",
-    region_name="us-west-2",
+    region_name="us-east-1",
 )
 
 print(llm.invoke(input="What is the recipe of mayonnaise?"))
