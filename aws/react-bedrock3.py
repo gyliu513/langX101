@@ -21,7 +21,7 @@ Traceloop.init(app_name="chat_bot_service")
 
 class ChatBot:
     def __init__(self, system=""):
-        self.client = boto3.client(service_name="bedrock-runtime", region_name="us-west-2")
+        self.client = boto3.client(service_name="bedrock-runtime", region_name="us-east-1")
         self.system = system
         self.messages = []
     def __call__(self, message):
@@ -45,7 +45,6 @@ class ChatBot:
 
         model_id = "anthropic.claude-v2"
         
-
         try:
             # Invoke the model with the request.
             response = self.client.invoke_model(modelId=model_id, body=request)
@@ -150,7 +149,9 @@ def query(question, max_turns=3):
         i += 1
         result = bot(next_prompt)
         # print(result)
-        actions = [action_re.match(a) for a in result.split('\n') if action_re.match(a)]
+        actions = None
+        if result != None:
+            actions = [action_re.match(a) for a in result.split('\n') if action_re.match(a)]
         if actions:
             # There is an action to run
             action, action_input = actions[0].groups()
