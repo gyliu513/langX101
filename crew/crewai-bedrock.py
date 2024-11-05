@@ -4,7 +4,7 @@ load_dotenv()
 from traceloop.sdk import Traceloop
 from traceloop.sdk.decorators import task, workflow
 
-Traceloop.init(app_name="crew_agent")
+Traceloop.init(app_name="crew_agent_bedrock")
 
 import os
 from crewai import Agent, Task, Crew, Process
