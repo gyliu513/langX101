@@ -4,14 +4,13 @@ load_dotenv()
 from traceloop.sdk import Traceloop
 from traceloop.sdk.decorators import task, workflow
 
-Traceloop.init(app_name="crew_agent_bedrock_1")
+from opentelemetry.sdk.trace.export import ConsoleSpanExporter
+from opentelemetry.sdk._logs.export import ConsoleLogExporter
+Traceloop.init(app_name="crewai_bedrock_agent_1", exporter=ConsoleSpanExporter())
 
 import os
 from crewai import Agent, Task, Crew, Process, LLM
 from crewai_tools import SerperDevTool
-
-import boto3
-
 
 search_tool = SerperDevTool()
 

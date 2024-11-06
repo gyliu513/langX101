@@ -17,7 +17,9 @@ import requests
 from traceloop.sdk import Traceloop
 from traceloop.sdk.decorators import task, workflow
 
-Traceloop.init(app_name="chat_bot_service")
+from opentelemetry.sdk.trace.export import ConsoleSpanExporter
+from opentelemetry.sdk._logs.export import ConsoleLogExporter
+Traceloop.init(app_name="bedrock_chat_bot_service", exporter=ConsoleSpanExporter())
 
 class ChatBot:
     def __init__(self, system=""):
