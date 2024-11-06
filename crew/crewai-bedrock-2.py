@@ -1,24 +1,12 @@
 from dotenv import load_dotenv
 load_dotenv()
 
-from traceloop.sdk import Traceloop
-from traceloop.sdk.decorators import task, workflow
-
-Traceloop.init(app_name="crew_agent_bedrock_1")
-
-import os
 from crewai import Agent, Task, Crew, Process, LLM
 from crewai_tools import SerperDevTool
-
-import boto3
-
 
 search_tool = SerperDevTool()
 
 llm = LLM(
-    # credentials_profile_name="bedrock-admin",
-    # model_id="amazon.titan-text-express-v1",
-    # model_id="amazon.titan-embed-text-v2:0",
     # model="bedrock/anthropic.claude-v2",
     model="bedrock/amazon.titan-text-express-v1",
 )
@@ -70,17 +58,6 @@ crew = Crew(
   process = Process.sequential
 )
 
-'''
-# Instantiate your crew with a sequential process
-crew = Crew(
-  agents=[researcher, writer],
-  tasks=[task1, task2],
-  verbose=True,
-  process = Process.sequential
-)
-'''
-
-@workflow(name="crew_ai_kickoff")
 def crew_kickoff():
     # Get your crew to work!
     return crew.kickoff()
