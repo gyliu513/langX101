@@ -3,6 +3,7 @@ load_dotenv()
 
 from traceloop.sdk import Traceloop
 from traceloop.sdk.decorators import task, workflow
+from pydantic import BaseModel
 
 Traceloop.init(app_name="crew_agent_openai")
 
@@ -16,10 +17,19 @@ coding_agent = Agent(
     allow_code_execution=True
 )
 
+class JsonOutput(BaseModel):
+    agent: str
+    expected_output: str
+    total_tokens: int
+    prompt_tokens: int
+    completion_tokens: int
+    successful_requests: int
+
 # Create a task that requires code execution
 data_analysis_task = Task(
     description="Analyze the given dataset and calculate the average age of participants. Ages: {ages}",
     agent=coding_agent,
+    output_json=JsonOutput,
     expected_output="The average age calculated from the dataset"
 )
 
