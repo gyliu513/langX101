@@ -5,7 +5,7 @@ from traceloop.sdk import Traceloop
 from traceloop.sdk.decorators import task, workflow
 from pydantic import BaseModel
 
-Traceloop.init(app_name="crew_agent_openai")
+Traceloop.init(app_name="crew_agent_openai_1")
 
 from crewai import Crew, Agent, Task
 

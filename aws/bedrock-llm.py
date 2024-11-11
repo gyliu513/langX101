@@ -1,12 +1,13 @@
 # This code is Apache 2 licensed:
 # https://www.apache.org/licenses/LICENSE-2.0
 
-from dotenv import load_dotenv
-load_dotenv()
+#from dotenv import load_dotenv
+#load_dotenv()
 
 import os
 import boto3
 import json
+import logging
 
 from botocore.exceptions import ClientError
 
@@ -14,12 +15,15 @@ import re
 import httpx
 import requests
 
+from opentelemetry.sdk.trace.export import ConsoleSpanExporter
+from opentelemetry.sdk._logs.export import ConsoleLogExporter
 from traceloop.sdk import Traceloop
 from traceloop.sdk.decorators import task, workflow
 
-from opentelemetry.sdk.trace.export import ConsoleSpanExporter
-from opentelemetry.sdk._logs.export import ConsoleLogExporter
-Traceloop.init(app_name="bedrock_chat_bot_service", exporter=ConsoleSpanExporter())
+
+Traceloop.init(app_name="bedrock_chat_service")
+
+logger = logging.getLogger(__name__)
 
 class ChatBot:
     def __init__(self, system=""):
@@ -31,7 +35,7 @@ class ChatBot:
         result = self.execute()
         self.messages.append({"role": "assistant", "content": result})
         return result
-    
+
     def execute(self):
         native_request = {
             "system": self.system,
@@ -46,13 +50,14 @@ class ChatBot:
         request = json.dumps(native_request)
 
         model_id = "anthropic.claude-v2"
-        
+
+
         try:
             # Invoke the model with the request.
             response = self.client.invoke_model(modelId=model_id, body=request)
 
         except (ClientError, Exception) as e:
-            print(f"ERROR: Can't invoke '{model_id}'. Reason: {e}")
+            logger.debug(f"ERROR: Can't invoke '{model_id}'. Reason: {e}")
             return None
 
         # Decode the response body.
@@ -139,37 +144,42 @@ Answer: The capital of China is Beijing
 
 action_re = re.compile('^Action: (\w+): (.*)$')
 
-@workflow(name="chat_bot_query")
+@workflow(name="bedrock_chat_query")
 def query(question, max_turns=3):
+    logger.info(f"Query Bedrock for question: {question} ...")
     i = 0
     bot = ChatBot(prompt)
-    if bot is None:
-        print("Error: ChatBot initialization failed")
-        return
     next_prompt = question
     while i < max_turns:
         i += 1
         result = bot(next_prompt)
-        # print(result)
-        actions = None
-        if result != None:
-            actions = [action_re.match(a) for a in result.split('\n') if action_re.match(a)]
+        if result == None:
+          print("return None !!!")
+          return
+
+        print(result)
+        actions = [action_re.match(a) for a in result.split('\n') if action_re.match(a)]
         if actions:
             # There is an action to run
             action, action_input = actions[0].groups()
             if action not in known_actions:
-                raise Exception("Unknown action: {}: {}".format(action, action_input))
-            print(" -- running {} {}".format(action, action_input))
+                continue
+                #raise Exception("Unknown action: {}: {}".format(action, action_input))
+            logger.info(" -- running {} {}".format(action, action_input))
             observation = known_actions[action](action_input)
-            print("Observation:", observation)
+            # logger.info("Observation:", observation)
             next_prompt = "Observation: {}".format(observation)
         else:
-            print(result)
+            logger.info("query return")
+            logger.info(result)
             return
+
+    logger.info("The question has been answered!")
 
 
 @task(name="chat_bot_wiki")
 def wikipedia(q):
+    logger.warning("call wikipedia https://en.wikipedia.org/w/api.php ...")
     return httpx.get("https://en.wikipedia.org/w/api.php", params={
         "action": "query",
         "list": "search",
@@ -180,6 +190,7 @@ def wikipedia(q):
 
 @task(name="chat_bot_calculate")
 def calculate(what):
+    logger.warning(f"call calculate eval({what}) ...")
     return eval(what)
 
 @task(name="chat_bot_google")
@@ -205,7 +216,10 @@ def google(query):
 known_actions = {
     "wikipedia": wikipedia,
     "calculate": calculate,
-    "google": google,
+    #"google": google,
 }
 
-query("What is the captical of France")
+try:
+  query("What is the captical of France")
+except Exception as error:
+  logger.debug("Traceloop: exception - " + error)

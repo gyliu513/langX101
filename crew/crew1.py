@@ -5,24 +5,6 @@ import os
 from crewai import Agent, Task, Crew, Process
 from crewai_tools import SerperDevTool
 
-# You can choose to use a local model through Ollama for example. See https://docs.crewai.com/how-to/LLM-Connections/ for more information.
-
-# os.environ["OPENAI_API_BASE"] = 'http://localhost:11434/v1'
-# os.environ["OPENAI_MODEL_NAME"] ='openhermes'  # Adjust based on available model
-# os.environ["OPENAI_API_KEY"] ='sk-111111111111111111111111111111111111111111111111'
-
-# You can pass an optional llm attribute specifying what model you wanna use.
-# It can be a local model through Ollama / LM Studio or a remote
-# model like OpenAI, Mistral, Antrophic or others (https://docs.crewai.com/how-to/LLM-Connections/)
-# If you don't specify a model, the default is OpenAI gpt-4o
-#
-# import os
-# os.environ['OPENAI_MODEL_NAME'] = 'gpt-3.5-turbo'
-#
-# OR
-#
-# from langchain_openai import ChatOpenAI
-
 search_tool = SerperDevTool()
 
 # Define your agents with roles and goals

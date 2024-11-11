@@ -4,58 +4,23 @@ load_dotenv()
 from traceloop.sdk import Traceloop
 from traceloop.sdk.decorators import task, workflow
 
-Traceloop.init(app_name="crew_agent_bedrock")
+from opentelemetry.sdk.trace.export import ConsoleSpanExporter
+from opentelemetry.sdk._logs.export import ConsoleLogExporter
+Traceloop.init(app_name="crewai_bedrock_agent_1", exporter=ConsoleSpanExporter())
 
 import os
-from crewai import Agent, Task, Crew, Process
+from crewai import Agent, Task, Crew, Process, LLM
 from crewai_tools import SerperDevTool
-
-import boto3
-
-# You can choose to use a local model through Ollama for example. See https://docs.crewai.com/how-to/LLM-Connections/ for more information.
-
-# os.environ["OPENAI_API_BASE"] = 'http://localhost:11434/v1'
-# os.environ["OPENAI_MODEL_NAME"] ='openhermes'  # Adjust based on available model
-# os.environ["OPENAI_API_KEY"] ='sk-111111111111111111111111111111111111111111111111'
-
-# You can pass an optional llm attribute specifying what model you wanna use.
-# It can be a local model through Ollama / LM Studio or a remote
-# model like OpenAI, Mistral, Antrophic or others (https://docs.crewai.com/how-to/LLM-Connections/)
-# If you don't specify a model, the default is OpenAI gpt-4o
-#
-# import os
-# os.environ['OPENAI_MODEL_NAME'] = 'gpt-3.5-turbo'
-#
-# OR
-#
-# from langchain_openai import ChatOpenAI
 
 search_tool = SerperDevTool()
 
-# meta.llama3-70b-instruct-v1:0
-# meta.llama3-8b-instruct-v1:0
-
-'''
-from langchain_community.llms import Bedrock
-
-llm = Bedrock(
-	credentials_profile_name="default", model_id="meta.llama3-70b-instruct-v1:0"
-	)
-'''
-
-from langchain_aws import BedrockLLM
-
-llm = BedrockLLM(
-    credentials_profile_name="bedrock-admin",
+llm = LLM(
+    # credentials_profile_name="bedrock-admin",
     # model_id="amazon.titan-text-express-v1",
-    model_id="amazon.titan-embed-text-v2:0",
-    region_name="us-east-1",
+    # model_id="amazon.titan-embed-text-v2:0",
+    # model="bedrock/anthropic.claude-v2",
+    model="bedrock/amazon.titan-text-express-v1",
 )
-
-
-# client = boto3.client(service_name="bedrock-runtime", region_name="us-west-1")
-# llm=Bedrock(model_id="meta.llama3-70b-instruct-v1:0",client=client,region_name='us-east-1',
-#             model_kwargs={'max_gen_len':512})
 
 # Define your agents with roles and goals
 researcher = Agent(
@@ -67,8 +32,6 @@ researcher = Agent(
   verbose=True,
   llm=llm,
   allow_delegation=False,
-  # You can pass an optional llm attribute specifying what model you wanna use.
-  # llm=ChatOpenAI(model_name="gpt-3.5", temperature=0.7),
   tools=[search_tool]
 )
 writer = Agent(
