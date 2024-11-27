@@ -19,28 +19,9 @@ from langchain_community.tools import DuckDuckGoSearchRun
 search_tool = DuckDuckGoSearchRun()
 scrape_tool = ScrapeWebsiteTool()
 
-model_id = "meta-llama/llama-3-70b-instruct"
-parameters = {
-    "decoding_method": "sample",
-    "max_new_tokens": 1000,
-    "temperature": 0.7,
-    "top_k": 50,
-    "top_p": 1,
-    "repetition_penalty": 1
-}
-
 api_key = os.getenv("WATSONX_API_KEY")
 project_id = os.getenv("WATSONX_PROJECT_ID")
 url = os.getenv("WATSONX_URL")
-
-credentials = Credentials(url=url, api_key=api_key)
-
-ibm_model = Model(
-    model_id=model_id,
-    params=parameters,
-    credentials=credentials,
-    project_id=project_id
-)
 
 WATSONX_MODEL_ID = "watsonx/ibm/granite-13b-chat-v2"
     
@@ -92,7 +73,8 @@ report_writer = Agent(
 data_collector_task = Task(
     description='Collect stock data for {company_name} from their company website {company_website} and yahoo finance site {yahoo_finance} for the past month',
     expected_output="A comprehensive dataset containing daily stock prices, trading volumes, and any significant news or events affecting these stocks over the past month.",
-    agent=data_collector
+    agent=data_collector,
+    output_json=JsonOutput
 )
 
 financial_analyst_task = Task(
@@ -110,6 +92,7 @@ report_writer_task = Task(
 )
 
 # Create the crew
+'''
 financial_crew = Crew(
     agents=[
         data_collector, 
@@ -120,6 +103,17 @@ financial_crew = Crew(
         data_collector_task, 
         financial_analyst_task, 
         report_writer_task
+    ],
+    process=Process.sequential
+)
+'''
+
+financial_crew = Crew(
+    agents=[
+        data_collector,
+    ],
+    tasks=[
+        data_collector_task,
     ],
     process=Process.sequential
 )
