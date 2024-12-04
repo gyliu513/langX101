@@ -27,7 +27,7 @@ Each step in an AI Agent workflow is treated as a span.
 AI Agent spans MUST follow the overall [guidelines for span names](https://github.com/open-telemetry/opentelemetry-specification/tree/v1.39.0/specification/trace/api.md#span). The **span name** SHOULD be `{ai_agent.operation.name} {ai_agent.agent.type}`.
 Semantic conventions for individual AI Agent systems and frameworks MAY specify different span name format.
 
-- ai_agent.operation.name: The operation being performed (e.g., `task.execution`, `interaction`).
+- ai_agent.operation.name: The operation being performed (e.g., `workflow.kickoff`,`agent.execution`, `task.execution`, `agent.interaction`).
 - ai_agent.agent.type: The type of agent performing the operation (e.g., `CrewAI`, `LangGraph`, `AutoGen`).
 
 ## AI Agent attributes
@@ -105,3 +105,43 @@ For spans capturing interactions between agents:
 In this example, a `Research Assistant` agent (`agent-01`) of type `LangGraph` engages in a `message_exchange` interaction with another agent (`agent-02`). The interaction is part of `session-12345` and completes successfully.
 
 For a practical implementation of multi-agent collaboration using LangGraph, you can refer to the [Multi-Agent Collaboration Example](https://github.com/langchain-ai/langgraph/blob/main/examples/multi_agent/multi-agent-collaboration.ipynb) provided by LangGraph.
+
+## Others
+
+### Workflow
+- ai_agent.workflow.name
+- ai_agent.workflow.start_time
+- ai_agent.workflow.end_time
+- ai_agent.workflow.end_state
+- ai_agent.workflow.end_reason
+- ai_agent.workflow.tags
+- ai_agent.workflow.host_env
+- ai_agent.workflow.system
+
+### Event
+
+### Tools
+
+### Agent
+
+- ai_agent.agent.name
+- ai_agent.agent.workflow_name
+- ai_agent.agent.name
+- ai_agent.agent.llm_id
+
+### Task
+
+- ai_agent.task.name
+- ai_agent.task.agent_name
+- ai_agent.task.description
+- ai_agent.task.name
+- ai_agent.task.priority
+- ai_agent.task.state
+- ai_agent.task.duration
+
+### Interaction
+
+- ai_agent.interaction.type
+- ai_agent.interaction.source
+- ai_agent.interaction.target
+- ai_agent.interaction.status
