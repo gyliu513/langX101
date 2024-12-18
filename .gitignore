@@ -40,3 +40,4 @@ newrelic/.env
 otel/opentelemetry-instrumentation-langchain/opentelemetry/instrumentation/langchain/__pycache__/
 otel/opentelemetry-instrumentation-langchain/opentelemetry/instrumentation/langchain/otel_lib/__pycache__/
 __pycache__
+logs/
