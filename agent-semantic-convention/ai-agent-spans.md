@@ -61,7 +61,6 @@ Semantic conventions for individual AI Agent systems and frameworks MAY specify 
 | `ai_agent.workflow.end_reason` | string | Reason for the workflow's end, if applicable.             | `Completed all tasks`             | Recommended       | ![Experimental](https://img.shields.io/badge/-experimental-blue)    |
 | `ai_agent.workflow.system`     | string | System or environment where the workflow is executed.     | `CrewAI`, `LangGraph`, `AutoGen`  | Recommended       | ![Experimental](https://img.shields.io/badge/-experimental-blue)    |
 
-
 ### Agent Attributes
 
 | Attribute                      | Type   | Description                                | Example                          | Requirement Level | Stability    |
@@ -80,7 +79,6 @@ Semantic conventions for individual AI Agent systems and frameworks MAY specify 
 | `ai_agent.tool.name`     | string | Name of the tool utilized by the agent.      | `Web Scraper`     | Required          | ![Experimental](https://img.shields.io/badge/-experimental-blue)    |
 | `ai_agent.tool.function` | string | Specific function or capability of the tool. | `Data Extraction` | Recommended       | ![Experimental](https://img.shields.io/badge/-experimental-blue)    |
 | `ai_agent.tool.output`   | object | Output produced by the tool.                 | `{"data": [...]}` | Required          | ![Experimental](https://img.shields.io/badge/-experimental-blue)    |
-
 
 ### Task Attributes
 
@@ -102,7 +100,6 @@ Semantic conventions for individual AI Agent systems and frameworks MAY specify 
 | `ai_agent.interaction.source` | string | Identifier of the source agent initiating the interaction.         | `Agent A`          | Required          | ![Experimental](https://img.shields.io/badge/-experimental-blue)    |
 | `ai_agent.interaction.target` | string | Identifier of the target agent receiving the interaction.          | `Agent B`          | Required          | ![Experimental](https://img.shields.io/badge/-experimental-blue)    |
 | `ai_agent.interaction.status` | string | Outcome of the interaction (e.g., `success`, `failure`).           | `success`          | Required          | ![Experimental](https://img.shields.io/badge/-experimental-blue)    |
-
 
 ## Examples
 
@@ -184,4 +181,5 @@ Description: This workflow aims to analyze market trends by collecting and analy
   - ai_agent.tool.name: DataAnalyzerTool
   - ai_agent.tool.function: Data Analysis
   - ai_agent.tool.output: {"identified_trends": 2, "duration": "1.5h"}
-  - This simplified workflow demonstrates how two agents collaborate to perform data collection and analysis tasks, utilizing specific tools to achieve the objectives of the Market Analysis Pipeline.
+
+This simplified workflow demonstrates how two agents collaborate to perform data collection and analysis tasks, utilizing specific tools to achieve the objectives of the Market Analysis Pipeline.
