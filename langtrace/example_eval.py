@@ -23,6 +23,12 @@ def example_eval():
         return None
 
 
+# https://github.com/Scale3-Labs/langtrace-python-sdk/issues/434
+
+'''
+export INSPECT_LOG_FORMAT=json
+export OPENAI_API_KEY="sk-..."
+'''
 
 '''
 inspect eval example_eval.py --model openai/gpt-3.5-turbo --log-dir langtracefs://cm4lrz7tq00075jmgkdtlq6w4
