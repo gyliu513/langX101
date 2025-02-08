@@ -36,7 +36,7 @@ class ChatBot:
         # Convert the native request to JSON.
         request = json.dumps(native_request)
 
-        model_id = "anthropic.claude-v2"
+        model_id = "anthropic.claude-v2:0"
         
 
         try:
