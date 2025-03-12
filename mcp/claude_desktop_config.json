@@ -12,13 +12,24 @@
         ]
       },
       "weather": {
-              "command": "/Users/gyliu513/.local/bin/uv",
-              "args": [
-                  "--directory",
-                  "/Users/gyliu513/github.com/gyliu513/langX101/mcp/weather",
-                  "run",
-                  "weather.py"
-              ]
-          }
-    }
+        "command": "/Users/gyliu513/.local/bin/uv",
+        "args": [
+            "--directory",
+            "/Users/gyliu513/github.com/gyliu513/langX101/mcp/weather",
+            "run",
+            "weather.py"
+        ]
+      },
+     "memory": {
+       "command": "npx",
+       "args": ["-y", "@modelcontextprotocol/server-memory"]
+     },
+     "github": {
+       "command": "npx",
+       "args": ["-y", "@modelcontextprotocol/server-github"],
+       "env": {
+         "GITHUB_PERSONAL_ACCESS_TOKEN": "<YOUR ACCESS TOKEN>"
+       }
+     }
   }
+}
