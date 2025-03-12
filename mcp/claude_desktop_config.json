@@ -1,0 +1,24 @@
+// open ~/Library/Application\ Support/Claude/
+
+{
+    "mcpServers": {
+      "filesystem": {
+        "command": "npx",
+        "args": [
+          "-y",
+          "@modelcontextprotocol/server-filesystem",
+          "/Users/gyliu513/Desktop",
+          "/Users/gyliu513/Downloads"
+        ]
+      },
+      "weather": {
+              "command": "/Users/gyliu513/.local/bin/uv",
+              "args": [
+                  "--directory",
+                  "/Users/gyliu513/github.com/gyliu513/langX101/mcp/weather",
+                  "run",
+                  "weather.py"
+              ]
+          }
+    }
+  }
