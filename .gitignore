@@ -41,3 +41,4 @@ otel/opentelemetry-instrumentation-langchain/opentelemetry/instrumentation/langc
 otel/opentelemetry-instrumentation-langchain/opentelemetry/instrumentation/langchain/otel_lib/__pycache__/
 __pycache__
 logs/
+node_modules
