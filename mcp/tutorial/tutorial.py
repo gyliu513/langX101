@@ -1,8 +1,18 @@
 # server.py
-from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp import FastMCP, Image, Context
+from PIL import Image as PILImage
 
 # Create an MCP server
 mcp = FastMCP("Demo")
+
+@mcp.tool()
+async def long_task(files: list[str], ctx: Context) -> str:
+    """Process multiple files with progress tracking"""
+    for i, file in enumerate(files):
+        ctx.info(f"Processing {file}")
+        await ctx.report_progress(i, len(files))
+        data, mime_type = await ctx.read_resource(f"file://{file}")
+    return "Processing complete"
 
 # Add an addition tool
 @mcp.tool()
@@ -32,6 +42,18 @@ def get_config() -> str:
 def get_user_profile(user_id: str) -> str:
     """Dynamic user data"""
     return f"Profile data for user {user_id}"
+
+
+@mcp.prompt()
+def review_code(code: str) -> str:
+    return f"Please review this code:\n\n{code}"
+
+@mcp.tool()
+def create_thumbnail(image_path: str) -> Image:
+    """Create a thumbnail from an image"""
+    img = PILImage.open(image_path)
+    img.thumbnail((100, 100))
+    return Image(data=img.tobytes(), format="png")
 
 import os
 import sys
@@ -91,3 +113,7 @@ def query_instana_events(params=None):
     except requests.exceptions.RequestException as err:
         print(f"Error: {err}")
     return None
+
+
+if __name__ == "__main__":
+    mcp.run()
