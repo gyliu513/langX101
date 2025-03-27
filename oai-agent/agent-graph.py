@@ -1,3 +1,9 @@
+'''
+pip install "openai-agents[viz]"
+pip install --upgrade "openai-agents[viz]"
+pip show openai-agents
+brew install graphviz
+'''
 from agents import Agent, function_tool
 from agents.extensions.visualization import draw_graph
 
