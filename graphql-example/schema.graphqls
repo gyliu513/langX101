@@ -1,0 +1,23 @@
+# schema.graphql
+
+# Define a User type
+type User {
+  id: ID!
+  name: String!
+  email: String!
+  age: Int
+}
+
+# Queries for fetching data
+type Query {
+  getUser(id: ID!): User
+  listUsers: [User]
+}
+
+# Mutations for modifying data
+type Mutation {
+  createUser(name: String!, email: String!, age: Int): User
+  updateUser(id: ID!, name: String, email: String, age: Int): User
+  deleteUser(id: ID!): Boolean
+}
+
