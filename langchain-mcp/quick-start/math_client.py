@@ -30,7 +30,7 @@ async def main():
 
     server_params = StdioServerParameters(
         command="python",
-        args=["/Users/gyliu513/github.com/gyliu513/langX101/langchain-mcp/math_server.py"],
+        args=["/Users/gyliu513/github.com/gyliu513/langX101/langchain-mcp/quick-start/math_server.py"],
     )
 
     async with stdio_client(server_params) as (read, write):
