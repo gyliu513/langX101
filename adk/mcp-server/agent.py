@@ -54,7 +54,7 @@ async def async_main():
 
   # TODO: Change the query to be relevant to YOUR specified folder.
   # e.g., "list files in the 'documents' subfolder" or "read the file 'notes.txt'"
-  query = "list files in the adk folder"
+  query = "load web page https://gyliu513.medium.com/"
   print(f"User Query: '{query}'")
   content = types.Content(role='user', parts=[types.Part(text=query)])
 
