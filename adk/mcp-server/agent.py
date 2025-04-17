@@ -14,8 +14,8 @@ load_dotenv()
 
 # --- Step 1: Import Tools from MCP Server ---
 async def get_tools_async():
-  """Gets tools from the File System MCP Server."""
-  print("Attempting to connect to MCP Filesystem server...")
+  """Gets tools from the Load Web Page MCP Server."""
+  print("Attempting to connect to Load Web Page MCP Server...")
   tools, exit_stack = await MCPToolset.from_server(
       # Use StdioServerParameters for local process communication
       connection_params=StdioServerParameters(
@@ -36,8 +36,8 @@ async def get_agent_async():
   print(f"Fetched {len(tools)} tools from MCP server.")
   root_agent = LlmAgent(
       model='gemini-2.0-flash', # Adjust model name if needed based on availability
-      name='filesystem_assistant',
-      instruction='Help user interact with the local filesystem using available tools.',
+      name='load_web_page_assistant',
+      instruction='Help user to load some web pages using available tools.',
       tools=tools, # Provide the MCP tools to the ADK agent
   )
   return root_agent, exit_stack
@@ -49,7 +49,7 @@ async def async_main():
   artifacts_service = InMemoryArtifactService()
 
   session = session_service.create_session(
-      state={}, app_name='mcp_filesystem_app', user_id='user_fs'
+      state={}, app_name='mcp_load_web_page_app', user_id='user_fs'
   )
 
   # TODO: Change the query to be relevant to YOUR specified folder.
@@ -61,7 +61,7 @@ async def async_main():
   root_agent, exit_stack = await get_agent_async()
 
   runner = Runner(
-      app_name='mcp_filesystem_app',
+      app_name='mcp_load_web_page_app',
       agent=root_agent,
       artifact_service=artifacts_service, # Optional
       session_service=session_service,
