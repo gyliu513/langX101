@@ -14,82 +14,55 @@ import (
 // main initializes and starts the MCP calculator server with various arithmetic operations
 func main() {
 	// Create MCP server
+	// Create a new MCP server
 	s := server.NewMCPServer(
-		"Calculator",
+		"Calculator Demo",
 		"1.0.0",
+		server.WithResourceCapabilities(true, true),
+		server.WithLogging(),
 	)
 
-	// Add addition tool
-	add := mcp.NewTool("add",
-		mcp.WithDescription("Add two numbers"),
-		mcp.WithNumber("a",
+	// Add a calculator tool
+	calculatorTool := mcp.NewTool("calculate",
+		mcp.WithDescription("Perform basic arithmetic operations"),
+		mcp.WithString("operation",
+			mcp.Required(),
+			mcp.Description("The operation to perform (add, subtract, multiply, divide)"),
+			mcp.Enum("add", "subtract", "multiply", "divide"),
+		),
+		mcp.WithNumber("x",
 			mcp.Required(),
 			mcp.Description("First number"),
 		),
-		mcp.WithNumber("b",
+		mcp.WithNumber("y",
 			mcp.Required(),
 			mcp.Description("Second number"),
 		),
 	)
 
-	// Add subtraction tool
-	subtract := mcp.NewTool("subtract",
-		mcp.WithDescription("Subtract second number from first number"),
-		mcp.WithNumber("a",
-			mcp.Required(),
-			mcp.Description("First number"),
-		),
-		mcp.WithNumber("b",
-			mcp.Required(),
-			mcp.Description("Second number"),
-		),
-	)
+	// Add the calculator handler
+	s.AddTool(calculatorTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		op := request.Params.Arguments["operation"].(string)
+		x := request.Params.Arguments["x"].(float64)
+		y := request.Params.Arguments["y"].(float64)
 
-	// Add multiplication tool
-	multiply := mcp.NewTool("multiply",
-		mcp.WithDescription("Multiply two numbers"),
-		mcp.WithNumber("a",
-			mcp.Required(),
-			mcp.Description("First number"),
-		),
-		mcp.WithNumber("b",
-			mcp.Required(),
-			mcp.Description("Second number"),
-		),
-	)
+		var result float64
+		switch op {
+		case "add":
+			result = x + y
+		case "subtract":
+			result = x - y
+		case "multiply":
+			result = x * y
+		case "divide":
+			if y == 0 {
+				return nil, errors.New("Cannot divide by zero")
+			}
+			result = x / y
+		}
 
-	// Add division tool
-	divide := mcp.NewTool("divide",
-		mcp.WithDescription("Divide first number by second number"),
-		mcp.WithNumber("a",
-			mcp.Required(),
-			mcp.Description("Numerator"),
-		),
-		mcp.WithNumber("b",
-			mcp.Required(),
-			mcp.Description("Denominator"),
-		),
-	)
-
-	// Add percentage tool
-	percentage := mcp.NewTool("percentage",
-		mcp.WithDescription("Calculate what percentage the first number is of the second number"),
-		mcp.WithNumber("a",
-			mcp.Required(),
-			mcp.Description("Part value"),
-		),
-		mcp.WithNumber("b",
-			mcp.Required(),
-			mcp.Description("Total value"),
-		),
-	)
-
-	// Add tool handlers
-	s.AddTool(add, addHandler)
-	s.AddTool(subtract, subtractHandler)
-	s.AddTool(multiply, multiplyHandler)
-	s.AddTool(divide, divideHandler)
-	s.AddTool(percentage, percentageHandler)
+		return mcp.NewToolResultText(fmt.Sprintf("%.2f", result)), nil
+	})
 
 	// Start the HTTP server using SSE
 	port := 8080
