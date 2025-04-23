@@ -18,7 +18,7 @@ func main() {
 	s := server.NewMCPServer(
 		"Calculator Demo",
 		"1.0.0",
-		server.WithResourceCapabilities(true, true),
+		// server.WithResourceCapabilities(true, true),
 		server.WithLogging(),
 	)
 
@@ -42,6 +42,7 @@ func main() {
 
 	// Add the calculator handler
 	s.AddTool(calculatorTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		log.Printf("📥 Tool called with request: %+v\n", request)
 		op := request.Params.Arguments["operation"].(string)
 		x := request.Params.Arguments["x"].(float64)
 		y := request.Params.Arguments["y"].(float64)
@@ -78,8 +79,17 @@ func main() {
 	// Create a mux to handle different routes
 	mux := http.NewServeMux()
 
+	// Print all HTTP request header
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		log.Println("🔍 Incoming request:", r.Method, r.URL.Path)
+		log.Println("🔍 Headers:", r.Header)
+
+		// Handover to sseServer
+		sseServer.ServeHTTP(w, r)
+	})
+
 	// Register the SSE server handler
-	mux.Handle("/", sseServer)
+	// mux.Handle("/", sseServer)
 
 	// Create an HTTP server
 	httpServer := &http.Server{
