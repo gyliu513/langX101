@@ -38,11 +38,17 @@ async def main():
     builder.add_edge("tools", "call_model")
     graph = builder.compile()
 
+
     math_response = await graph.ainvoke({"messages": "what's (3 + 5) x 12?"})
     print("Math response:", math_response)
 
     weather_response = await graph.ainvoke({"messages": "what is the weather in nyc?"})
     print("Weather response:", weather_response)
 
-# ⬇️ 启动整个异步主函数
+    # Save the graph structure as an image
+    png_bytes = graph.get_graph().draw_mermaid_png()
+    with open("/Users/gyliu513/gyliu513/langX101/langchain-mcp/multi-mcp/langgraph_structure.png", "wb") as f:
+        f.write(png_bytes)
+    print("Graph image saved to langgraph_structure.png")
+
 asyncio.run(main())
