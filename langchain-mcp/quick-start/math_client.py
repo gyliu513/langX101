@@ -38,6 +38,9 @@ async def main():
             await session.initialize()
 
             tools = await load_mcp_tools(session)
+            print("Available Tools:")
+            for tool in tools:
+                print(f"- {tool.name}: {tool.description}")
 
             agent = create_react_agent(model, tools)
             agent_response = await agent.ainvoke({"messages": "what's (3 + 5) x 12?"})
