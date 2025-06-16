@@ -1,0 +1,56 @@
+{
+  "name": "HelloWorldAgent",
+  "description": "A simple agent that greets users",
+  "version": "1.0.0",
+  "api": {
+    "type": "rest",
+    "url": "http://localhost:8000/api/hello",
+    "auth": {
+      "type": "none"
+    }
+  },
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "message": {
+        "type": "string",
+        "description": "The message to greet"
+      }
+    },
+    "required": ["message"]
+  },
+  "output_schema": {
+    "type": "object",
+    "properties": {
+      "greeting": {
+        "type": "string",
+        "description": "The greeting response"
+      }
+    }
+  },
+  "capabilities": [
+    {
+      "name": "greet",
+      "description": "Greets a user with a friendly message",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "The name to greet"
+          }
+        },
+        "required": ["name"]
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "greeting": {
+            "type": "string",
+            "description": "The greeting message"
+          }
+        }
+      }
+    }
+  ]
+}
