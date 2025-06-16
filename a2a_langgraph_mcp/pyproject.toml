@@ -1,0 +1,55 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hello_agents"
+version = "0.1.0"
+authors = [
+    {name = "Example Author", email = "author@example.com"},
+]
+description = "A simple multi-agent framework based on A2A, MCP, and LangGraph"
+readme = "README.md"
+requires-python = ">=3.9"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "fastapi>=0.95.0",
+    "uvicorn>=0.21.1",
+    "httpx>=0.24.0",
+    "pydantic>=2.0.0",
+    "networkx>=3.0",
+    "langchain-core>=0.1.0",
+    "langchain-google-genai>=0.1.0",
+    "langgraph>=0.0.15",
+    "google-generativeai>=0.3.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "black",
+    "isort",
+    "mypy",
+    "pytest",
+]
+
+[project.urls]
+"Homepage" = "https://github.com/yourusername/hello_agents"
+"Bug Tracker" = "https://github.com/yourusername/hello_agents/issues"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.black]
+line-length = 88
+target-version = ["py39"]
+
+[tool.isort]
+profile = "black"
+line_length = 88

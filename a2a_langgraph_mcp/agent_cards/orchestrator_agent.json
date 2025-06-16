@@ -1,0 +1,56 @@
+{
+  "name": "OrchestratorAgent",
+  "description": "Coordinates tasks between multiple agents",
+  "version": "1.0.0",
+  "api": {
+    "type": "rest",
+    "url": "http://localhost:8000/api/orchestrator",
+    "auth": {
+      "type": "none"
+    }
+  },
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "query": {
+        "type": "string",
+        "description": "The user query to process"
+      }
+    },
+    "required": ["query"]
+  },
+  "output_schema": {
+    "type": "object",
+    "properties": {
+      "result": {
+        "type": "string",
+        "description": "The orchestrated result"
+      }
+    }
+  },
+  "capabilities": [
+    {
+      "name": "orchestrate",
+      "description": "Orchestrates a workflow of multiple agents to complete a task",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "The query to process"
+          }
+        },
+        "required": ["query"]
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "result": {
+            "type": "string",
+            "description": "The orchestrated result"
+          }
+        }
+      }
+    }
+  ]
+}
