@@ -42,3 +42,5 @@ otel/opentelemetry-instrumentation-langchain/opentelemetry/instrumentation/langc
 __pycache__
 logs/
 node_modules
+.venv
+uv.lock
