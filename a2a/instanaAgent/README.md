@@ -1,51 +1,6 @@
 # Instana Agent - Monitoring & Observability Operations
 
-This agent allows you to interact with Instana monitoring platform via natural language using LangGraph and the Instana MCP server. It supports HTTP MCP transport mode for reliable communication with the mcp-instana server running in HTTP mode. **The agent integrates seamlessly with the [intelligent orchestrator system](../orchestrator/README.md) for automatic routing**.
-
-## 🚀 **Smart Orchestrator Integration**
-
-The Instana Agent integrates with the intelligent orchestrator for automatic routing:
-
-### Direct Instana Operations
-```
-"Show me the latest alerts from Instana" → Instana Agent (100% confidence)
-"Get Kubernetes events for the last 24 hours" → Instana Agent (100% confidence)
-"Check application performance metrics" → Instana Agent (89% confidence)
-```
-
-### Skill-Based Routing
-```
-"application monitoring" → Instana Agent (99% confidence)
-"infrastructure monitoring" → Instana Agent (95% confidence)
-"performance analysis and troubleshooting" → Instana Agent (92% confidence)
-```
-
-## 🏗️ System Integration
-
-This agent integrates seamlessly with the orchestrator system:
-
-```mermaid
-graph TD
-    A[User Request] --> B[🤖 Smart Orchestrator]
-    B --> C[A2A Card Resolver]
-    C --> D[Skill Analysis]
-    D --> E{Confidence Scoring}
-    E -->|High Score| F[📊 Instana Agent - Port 8001]
-    E -->|Low Score| G[Other Agents]
-    
-    F --> H[LangGraph Agent]
-    H --> I[Instana MCP Server]
-    I --> J[Instana API]
-    J --> K[Instana Platform]
-    
-    subgraph "Agent Capabilities"
-        F
-        H
-        I
-        J
-        K
-    end
-```
+This agent allows you to interact with Instana monitoring platform via natural language using LangGraph and the Instana MCP server. It supports HTTP MCP transport mode for reliable communication with the mcp-instana server running in HTTP mode.
 
 ## ✨ Key Features
 
@@ -61,11 +16,11 @@ graph TD
 - **Error Handling**: Intelligent error detection and resolution suggestions
 - **Streaming Updates**: Real-time progress updates during operations
 
-### 🔗 Orchestrator Integration
-- **Automatic Routing**: Intelligent routing based on monitoring/observability keywords
-- **Skill Discovery**: Capabilities automatically discovered by orchestrator
-- **Confidence Scoring**: High-confidence routing for Instana operations
-- **Dynamic Registration**: Can be registered/unregistered at runtime
+### 🔗 MCP Integration
+- **HTTP Transport**: Reliable HTTP-based communication with MCP server
+- **Tool Discovery**: Automatically discovers available Instana tools
+- **Session Management**: Proper connection lifecycle management
+- **Error Recovery**: Robust error handling and recovery mechanisms
 
 ## 🎯 Supported Operations
 
@@ -87,44 +42,6 @@ graph TD
 - **Trend Analysis**: "Show performance trends over time"
 - **Capacity Planning**: "Analyze resource utilization patterns"
 
-## 📊 Agent Card (A2A Integration)
-
-### Orchestrator Recognition
-
-The orchestrator recognizes this agent with the following capabilities:
-
-```python
-Instana Agent Card:
-- agent_id: "instana"
-- name: "Instana Agent"
-- description: "Handles Instana monitoring and observability operations via MCP protocol"
-- endpoint: "http://localhost:8001"
-- skills: [
-    "monitoring",                   # Application monitoring and APM
-    "infrastructure_monitoring",    # Infrastructure monitoring
-    "event_analysis",              # Event analysis and troubleshooting
-    "alert_management",            # Alert configuration and management
-    "performance_analysis",        # Performance analysis and optimization
-    "kubernetes_monitoring"        # Kubernetes monitoring
-  ]
-- keywords: ["instana", "monitoring", "apm", "observability", "alerts", 
-            "events", "performance", "infrastructure", "kubernetes"]
-```
-
-### Routing Examples
-
-```bash
-# High-confidence Instana routing (90%+)
-"Show me the latest alerts from Instana" → Instana Agent (100%)
-"Get Kubernetes events for the last 24 hours" → Instana Agent (99%)
-"Analyze application performance issues" → Instana Agent (95%)
-
-# Skill-based routing
-"application monitoring" → Instana Agent (99%)
-"infrastructure monitoring" → Instana Agent (95%)
-"performance analysis and troubleshooting" → Instana Agent (92%)
-```
-
 ## 🚀 Quick Start
 
 ### Prerequisites
@@ -136,18 +53,19 @@ Before running the agent, you need:
 3. **MCP Instana Server**: The mcp-instana server running in HTTP mode at `http://127.0.0.1:8000/mcp`
 4. **Google API Key**: For the Gemini model used by the agent
 
-### Option 1: Via Orchestrator (Recommended)
+### Setup and Run
 
-Run as part of the intelligent orchestration system:
-
+**Step 1: Start the MCP Server**
 ```bash
-# Terminal 1: Start MCP Instana Server
 cd ../mcp-instana
 export INSTANA_BASE_URL="https://your-instana-instance.instana.io"
 export INSTANA_API_TOKEN="your-instana-api-token"
-python src/mcp_server.py --host 127.0.0.1 --port 8000
+python src/mcp_server.py --transport http --mcp-host localhost --mcp-port 8000 --debug
 
-# Terminal 2: Start Instana Agent
+```
+
+**Step 2: Start the Instana Agent**
+```bash
 cd instanaAgent
 export INSTANA_BASE_URL="https://your-instana-instance.instana.io"
 export INSTANA_API_TOKEN="your-instana-api-token"
@@ -155,75 +73,31 @@ export GOOGLE_API_KEY="your-google-api-key"
 export MCP_SERVER_URL="http://127.0.0.1:8000/mcp"  # Optional, defaults to this
 uv sync
 uv run -m app
-
-# Terminal 2: Start Orchestrator
-cd ../orchestrator
-export GOOGLE_API_KEY="your-google-api-key"
-uv run -m app
-
-# Terminal 3: Test routing
-cd ../orchestrator
-export GOOGLE_API_KEY="your-google-api-key"
-uv run -m app -m "Show me the latest alerts from Instana" -v
-uv run -m app -m "Get Kubernetes events for the last 24 hours" -v
-
-# Using client
-cd ../orchestrator_client
-export GOOGLE_API_KEY="your-google-api-key"
-uv run . --agent http://localhost:8000
-# > "Show me the latest alerts from Instana"
 ```
 
-### Option 2: Direct Agent Connection
-
-Connect directly to the Instana agent:
-
+**Step 3: Test the Agent**
 ```bash
-# First, start the MCP server
-cd ../mcp-instana
-export INSTANA_BASE_URL="https://your-instana-instance.instana.io"
-export INSTANA_API_TOKEN="your-instana-api-token"
-python src/mcp_server.py --host 127.0.0.1 --port 8000 &
-
-# Then start the agent
-cd instanaAgent
-export INSTANA_BASE_URL="https://your-instana-instance.instana.io"
-export INSTANA_API_TOKEN="your-instana-api-token"
-export GOOGLE_API_KEY="your-google-api-key"
-export MCP_SERVER_URL="http://127.0.0.1:8000/mcp"
-
-# Install dependencies and run
-uv sync
-uv run -m app
-
-# Test directly
-curl -X POST http://localhost:8001 \
+curl -X POST http://localhost:8005 \
   -H "Content-Type: application/json" \
   -d '{"method": "message/send", "params": {"message": {"parts": [{"text": "Show me recent events"}]}}}'
 ```
 
 ## 🧪 Testing & Validation
 
-### Comprehensive Test Suite
+### Test the Setup
 
 ```bash
-# Run agent-specific tests
-cd instanaAgent
-uv run -m app
-
-# Test orchestrator routing
-cd ../orchestrator
-export GOOGLE_API_KEY="your-google-api-key"
-uv run -m app -m "Show me the latest alerts from Instana" -v
-uv run -m app -m "Get Kubernetes events for the last 24 hours" -v
-
-# Test direct agent communication
-curl -X POST http://localhost:8001 \
+# Test the agent directly
+curl -X POST http://localhost:8005 \
   -H "Content-Type: application/json" \
-  -d '{"method": "message/send", "params": {"message": {"parts": [{"text": "Show me recent alerts"}]}}}'
+  -d '{"method": "message/send", "params": {"message": {"parts": [{"text": "Show me the latest alerts from Instana"}]}}}'
+
+curl -X POST http://localhost:8005 \
+  -H "Content-Type: application/json" \
+  -d '{"method": "message/send", "params": {"message": {"parts": [{"text": "Get Kubernetes events for the last 24 hours"}]}}}'
 ```
 
-### Expected Test Results
+### Expected Results
 
 **Instana Operations**:
 ```
@@ -257,7 +131,7 @@ class InstanaAgent:
                 return tools
 ```
 
-### A2A Protocol Implementation
+### Agent Architecture
 
 ```python
 from a2a.server.agent_execution import AgentExecutor
@@ -267,7 +141,7 @@ class InstanaAgentExecutor(AgentExecutor):
         self.agent = InstanaAgent()
     
     async def execute(self, context: RequestContext, event_queue: EventQueue):
-        # Handle A2A protocol requests
+        # Handle agent requests and stream responses
 ```
 
 ## 🔍 Available Tools
@@ -296,11 +170,12 @@ The agent provides access to comprehensive Instana monitoring tools:
 
 1. **MCP Server Connection Failed**
    ```bash
-   # Check if mcp-instana is in the correct path
-   ls ../mcp-instana/src/mcp_server.py
+   # Check if MCP server is running
+   curl http://127.0.0.1:8000/health
    
-   # Check Python virtual environment
-   ls ../mcp-instana/.mcp-instana/bin/python
+   # Start the MCP server if needed
+   cd ../mcp-instana
+   python src/mcp_server.py --host 127.0.0.1 --port 8000
    ```
 
 2. **Instana API Authentication**
@@ -320,6 +195,15 @@ The agent provides access to comprehensive Instana monitoring tools:
    uv sync --force
    ```
 
+4. **Port Conflicts**
+   ```bash
+   # Check if port 8005 is available
+   lsof -i :8005
+   
+   # Use a different port if needed
+   uv run -m app --port 8006
+   ```
+
 ## 📚 Environment Variables
 
 Required environment variables:
@@ -332,6 +216,51 @@ GOOGLE_API_KEY="your-google-api-key"
 
 # Optional
 MCP_SERVER_URL="http://127.0.0.1:8000/mcp"  # MCP server endpoint (defaults to this)
+```
+
+## 🔗 Integration Examples
+
+### Claude Desktop Integration
+
+Configure Claude Desktop to use the MCP server directly:
+
+```json
+{
+  "mcpServers": {
+    "Instana Tools": {
+      "command": "npx",
+      "args": ["mcp-remote", "http://127.0.0.1:8000/mcp"],
+      "env": {
+        "INSTANA_BASE_URL": "<INSTANA_BASE_URL>",
+        "INSTANA_API_TOKEN": "<INSTANA_API_TOKEN>"
+      }
+    }
+  }
+}
+```
+
+### Custom Client Integration
+
+```python
+import httpx
+
+async def query_instana_agent(question: str):
+    async with httpx.AsyncClient() as client:
+        response = await client.post(
+            "http://localhost:8005",
+            json={
+                "method": "message/send",
+                "params": {
+                    "message": {
+                        "parts": [{"text": question}]
+                    }
+                }
+            }
+        )
+        return response.json()
+
+# Example usage
+result = await query_instana_agent("Show me recent alerts")
 ```
 
 ## 🤝 Contributing
