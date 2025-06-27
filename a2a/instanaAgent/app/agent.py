@@ -11,7 +11,7 @@ from pydantic import BaseModel
 
 from langchain_mcp_adapters.tools import load_mcp_tools
 from mcp import ClientSession
-from mcp.client.sse import sse_client
+from mcp.client.streamable_http import streamablehttp_client
 
 memory = MemorySaver()
 
@@ -73,12 +73,12 @@ class InstanaAgent:
         try:
             # Use HTTP connection to MCP server
             async with asyncio.timeout(15):
-                async with sse_client(mcp_server_url) as (read_stream, write_stream):
-                    self.mcp_session = ClientSession(read_stream, write_stream)
-                    await self.mcp_session.initialize()
-                    tools = await load_mcp_tools(self.mcp_session)
-                    print(f"Successfully initialized Instana MCP HTTP connection with {len(tools)} tools")
-                    return tools
+                async with streamablehttp_client(mcp_server_url) as (read_stream, write_stream, _):
+                    async with ClientSession(read_stream, write_stream) as session:
+                        await session.initialize()
+                        tools = await load_mcp_tools(session)
+                        print(f"Successfully initialized Instana MCP HTTP connection with {len(tools)} tools")
+                        return tools
                     
         except Exception as e:
             print(f"Instana MCP HTTP connection failed: {str(e)}")
