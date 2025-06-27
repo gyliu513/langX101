@@ -241,7 +241,7 @@ The agent uses the mcp-instana MCP server for monitoring operations via HTTP:
 
 ```python
 from mcp import ClientSession
-from mcp.client.sse import sse_client
+from mcp.client.streamable_http import streamablehttp_client
 from langchain_mcp_adapters.tools import load_mcp_tools
 
 class InstanaAgent:
@@ -250,11 +250,11 @@ class InstanaAgent:
         mcp_server_url = os.getenv("MCP_SERVER_URL", "http://127.0.0.1:8000/mcp")
         
         # Use HTTP connection to MCP server
-        async with sse_client(mcp_server_url) as (read_stream, write_stream):
-            self.mcp_session = ClientSession(read_stream, write_stream)
-            await self.mcp_session.initialize()
-            tools = await load_mcp_tools(self.mcp_session)
-            return tools
+        async with streamablehttp_client(mcp_server_url) as (read_stream, write_stream, _):
+            async with ClientSession(read_stream, write_stream) as session:
+                await session.initialize()
+                tools = await load_mcp_tools(session)
+                return tools
 ```
 
 ### A2A Protocol Implementation
