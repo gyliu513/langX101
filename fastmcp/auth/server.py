@@ -24,24 +24,14 @@ if not os.path.exists("private.pem") or not os.path.exists("public.pem"):
     print("   openssl genpkey -algorithm RSA -out private.pem -pkeyopt rsa_keygen_bits:2048")
     print("   openssl rsa -in private.pem -pubout -out public.pem")
     sys.exit(1)
-    
-# Read the private key from the file
-with open("private.pem", "r") as private_key_file:
-    private_key_content = private_key_file.read()
 
 # Read the public key from the file
 with open("public.pem", "r") as public_key_file:
     public_key_content = public_key_file.read()
 
-# Use the actual public key for both signing and validation
-key_pair = RSAKeyPair(
-    private_key=SecretStr(private_key_content),
-    public_key=public_key_content
-)
-
 # Configure the auth provider with the public key
 auth = BearerAuthProvider(
-    public_key=key_pair.public_key,
+    public_key=public_key_content,
     issuer="http://localhost:8000",
     audience="my-mcp-server"
 )
