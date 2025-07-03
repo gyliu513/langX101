@@ -1,1 +1,1 @@
-# FastMCP Auth Package 
+# FastMCP Auth Reference Package 

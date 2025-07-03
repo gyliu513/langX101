@@ -1,16 +1,16 @@
 [project]
-name = "fastmcp-auth"
+name = "fastmcp-auth-reference"
 version = "0.1.0"
-description = "FastMCP Auth Example Server and Client"
+description = "FastMCP Auth Reference Implementation"
 requires-python = ">=3.10"
 authors = [
     {name = "FastMCP Example", email = "example@fastmcp.com"}
 ]
 
 [project.optional-dependencies]
-server = ["fastmcp"]
-client = ["fastmcp", "httpx", "requests", "asyncio", "PyJWT", "fastmcp-auth", "pydantic"]
-dev = ["fastmcp", "httpx", "requests", "asyncio", "PyJWT", "fastmcp-auth", "pydantic"]
+server = ["fastmcp", "PyJWT"]
+client = ["fastmcp", "httpx", "requests", "asyncio", "PyJWT", "pydantic"]
+dev = ["fastmcp", "httpx", "requests", "asyncio", "PyJWT", "pydantic"]
 
 [tool.uv]
 # This section can be used by uv for dependency management 
