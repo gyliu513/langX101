@@ -1,11 +1,12 @@
 # FastMCP Auth Example
 
-A simple FastMCP (Model Context Protocol) server and client example that demonstrates basic MCP functionality with a greeting tool.
+A simple FastMCP (Model Context Protocol) server and client example that demonstrates basic MCP functionality with JWT authentication and a greeting tool.
 
 ## Prerequisites
 
 - Python 3.10 or higher
 - `uv` package manager (install from https://docs.astral.sh/uv/getting-started/installation/)
+- OpenSSL (for generating RSA keys)
 
 ## Quick Start
 
@@ -26,8 +27,21 @@ This installs all required dependencies including:
 - `httpx` - HTTP client library
 - `requests` - HTTP requests library
 - `asyncio` - Async I/O support
+- `PyJWT` - JWT token handling
+- `fastmcp-auth` - FastMCP authentication utilities
+- `pydantic` - Data validation
 
-### 3. Start the Server
+### 3. Generate RSA Keys for JWT Authentication
+
+```bash
+# Generate private key
+openssl genpkey -algorithm RSA -out private.pem -pkeyopt rsa_keygen_bits:2048
+
+# Generate public key
+openssl rsa -in private.pem -pubout -out public.pem
+```
+
+### 4. Start the Server
 
 In your terminal, run:
 
@@ -42,7 +56,7 @@ Starting FastMCP server on http://localhost:8000/mcp
 
 The server is now running and listening for connections on port 8000.
 
-### 4. Test the Client
+### 5. Test the Client with JWT Authentication
 
 Open a **new terminal window** and navigate to the same directory:
 
@@ -58,7 +72,9 @@ uv run client.py
 
 You should see output like:
 ```
-🚀 Starting FastMCP client...
+🚀 Starting FastMCP client with JWT authentication...
+🔐 Generated JWT token (self-signed):
+   eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9...
 ✅ Client connected: True
 📋 Available tools: ['greet']
 🎯 Testing greet tool...
@@ -69,18 +85,23 @@ You should see output like:
 ## What's Happening
 
 1. **Server (`server.py`)**: Creates a FastMCP server with a `greet` tool that returns a friendly greeting
-2. **Client (`client.py`)**: Connects to the server, lists available tools, and tests the `greet` tool
-3. **Communication**: The client and server communicate using the Model Context Protocol (MCP) over HTTP
+2. **Client (`client.py`)**: 
+   - Generates a JWT token using RSA keys
+   - Connects to the server with JWT authentication
+   - Lists available tools and tests the `greet` tool
+3. **Authentication**: Uses JWT tokens for secure communication between client and server
 
 ## Project Structure
 
 ```
 fastmcp/auth/
 ├── server.py          # FastMCP server with greet tool
-├── client.py          # Client that tests the server
+├── client.py          # Client with JWT authentication
 ├── __main__.py        # Alternative server entry point
 ├── __init__.py        # Makes this a Python package
 ├── pyproject.toml     # Project configuration and dependencies
+├── private.pem        # RSA private key (generate this)
+├── public.pem         # RSA public key (generate this)
 └── README.md          # This file
 ```
 
@@ -90,6 +111,13 @@ fastmcp/auth/
 Make sure you've installed dependencies:
 ```bash
 uv sync --extra dev
+```
+
+### "private.pem and public.pem files not found" Error
+Generate the RSA keys:
+```bash
+openssl genpkey -algorithm RSA -out private.pem -pkeyopt rsa_keygen_bits:2048
+openssl rsa -in private.pem -pubout -out public.pem
 ```
 
 ### "Failed to connect" Error
@@ -137,19 +165,30 @@ if __name__ == "__main__":
 ```python
 from fastmcp import Client
 from fastmcp.client.transports import StreamableHttpTransport
+from fastmcp_auth import RSAKeyPair
 
-# Connects to server, lists tools, and tests the greet function
+# Generates JWT token, connects to server with authentication,
+# lists tools, and tests the greet function
 ```
+
+## JWT Authentication Flow
+
+1. **Key Generation**: RSA private/public key pair for signing tokens
+2. **Token Creation**: Client generates JWT with required scopes
+3. **Authentication**: Client sends JWT in Authorization header
+4. **Validation**: Server validates JWT and checks scopes
+5. **Access**: Server grants access to tools based on token validity
 
 ## Next Steps
 
 - Add more tools to the server
-- Implement authentication
-- Add error handling
-- Create a more complex MCP server
+- Implement different authentication methods
+- Add role-based access control
+- Create a more complex MCP server with multiple scopes
 
 ## Resources
 
 - [FastMCP Documentation](https://fastmcp.com/)
 - [Model Context Protocol](https://modelcontextprotocol.io/)
+- [JWT Authentication](https://jwt.io/)
 - [uv Package Manager](https://docs.astral.sh/uv/) 

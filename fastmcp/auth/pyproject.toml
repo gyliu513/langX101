@@ -9,8 +9,8 @@ authors = [
 
 [project.optional-dependencies]
 server = ["fastmcp"]
-client = ["fastmcp", "httpx", "requests", "asyncio"]
-dev = ["fastmcp", "httpx", "requests", "asyncio"]
+client = ["fastmcp", "httpx", "requests", "asyncio", "PyJWT", "fastmcp-auth", "pydantic"]
+dev = ["fastmcp", "httpx", "requests", "asyncio", "PyJWT", "fastmcp-auth", "pydantic"]
 
 [tool.uv]
 # This section can be used by uv for dependency management 
