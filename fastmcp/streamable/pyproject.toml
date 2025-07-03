@@ -1,0 +1,12 @@
+[project]
+name = "fastmcp-streamable"
+version = "0.1.0"
+description = "FastMCP Streamable Example Server and Client"
+requires-python = ">=3.10"
+
+[project.optional-dependencies]
+server = ["fastmcp"]
+client = ["fastmcp", "httpx", "requests", "asyncio"]
+
+[tool.uv]
+# This section can be used by uv for dependency management 

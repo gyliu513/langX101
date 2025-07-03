@@ -8,7 +8,3 @@ mcp = FastMCP("My MCP Server")
 def greet(name: str) -> str:
     """Returns a friendly greeting."""
     return f"Hello, {name}!"
-
-if __name__ == "__main__":
-    # This runs the server, defaulting to STDIO transport
-    mcp.run()
