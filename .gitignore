@@ -43,4 +43,3 @@ __pycache__
 logs/
 node_modules
 .venv
-uv.lock
