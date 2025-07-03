@@ -61,4 +61,4 @@ async def call_tool(name: str):
 
 if __name__ == "__main__":
     print("🚀 Starting FastMCP client with JWT authentication...")
-    asyncio.run(call_tool("Shane"))
+    asyncio.run(call_tool("World"))
