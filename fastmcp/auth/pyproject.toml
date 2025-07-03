@@ -6,6 +6,13 @@ requires-python = ">=3.10"
 authors = [
     {name = "FastMCP Example", email = "example@fastmcp.com"}
 ]
+dependencies = [
+    "fastmcp==2.10.1",
+    "PyJWT>=2.8.0",
+    "pydantic>=2.0.0",
+    "httpx>=0.25.0",
+    "requests>=2.31.0"
+]
 
 [project.optional-dependencies]
 server = ["fastmcp", "PyJWT"]
