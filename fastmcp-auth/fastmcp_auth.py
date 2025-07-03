@@ -14,137 +14,7 @@ import requests
 # FastMCP imports
 from fastmcp.server.auth import BearerAuthProvider
 from fastmcp.server.auth.providers.bearer import RSAKeyPair
-from fastmcp.server.dependencies import get_access_token
-
-
-@dataclass
-class AccessToken:
-    """Represents an access token with claims and metadata."""
-    token: str
-    client_id: str
-    email: Optional[str] = None
-    scopes: List[str] = None
-    expires_at: Optional[datetime] = None
-    issuer: Optional[str] = None
-    audience: Optional[str] = None
-    additional_claims: Optional[Dict] = None
-
-    def __post_init__(self):
-        if self.scopes is None:
-            self.scopes = []
-
-    @classmethod
-    def from_jwt(cls, token: str, verify_signature: bool = True, 
-                 public_key: Optional[str] = None, jwks_uri: Optional[str] = None,
-                 issuer: Optional[str] = None, audience: Optional[str] = None,
-                 algorithm: str = "RS256") -> "AccessToken":
-        """
-        Create an AccessToken instance from a JWT token.
-        
-        Args:
-            token: The JWT token string
-            verify_signature: Whether to verify the token signature
-            public_key: Public key for signature verification
-            jwks_uri: JWKS URI for key lookup
-            issuer: Expected issuer
-            audience: Expected audience
-            algorithm: JWT algorithm
-            
-        Returns:
-            AccessToken instance
-            
-        Raises:
-            jwt.InvalidTokenError: If token is invalid
-        """
-        try:
-            if verify_signature:
-                if jwks_uri:
-                    # Fetch keys from JWKS
-                    keys = cls._fetch_jwks(jwks_uri)
-                    payload = None
-                    for key in keys:
-                        try:
-                            payload = jwt.decode(
-                                token, 
-                                key, 
-                                algorithms=[algorithm],
-                                issuer=issuer,
-                                audience=audience,
-                                options={"verify_signature": True}
-                            )
-                            break
-                        except jwt.InvalidTokenError:
-                            continue
-                    if payload is None:
-                        raise jwt.InvalidTokenError("No valid key found in JWKS")
-                elif public_key:
-                    payload = jwt.decode(
-                        token,
-                        public_key,
-                        algorithms=[algorithm],
-                        issuer=issuer,
-                        audience=audience,
-                        options={"verify_signature": True}
-                    )
-                else:
-                    raise ValueError("Either public_key or jwks_uri must be provided for signature verification")
-            else:
-                payload = jwt.decode(token, options={"verify_signature": False})
-            
-            # Extract claims
-            client_id = payload.get('sub') or payload.get('client_id', 'unknown')
-            email = payload.get('email') or payload.get('email_verified') or client_id
-            scopes = payload.get('scope', '').split() if isinstance(payload.get('scope'), str) else payload.get('scopes', [])
-            expires_at = datetime.fromtimestamp(payload['exp']) if 'exp' in payload else None
-            
-            return cls(
-                token=token,
-                client_id=client_id,
-                email=email,
-                scopes=scopes,
-                expires_at=expires_at,
-                issuer=payload.get('iss'),
-                audience=payload.get('aud'),
-                additional_claims={k: v for k, v in payload.items() 
-                                 if k not in ['sub', 'client_id', 'email', 'scope', 'scopes', 'exp', 'iss', 'aud', 'iat']}
-            )
-        except jwt.InvalidTokenError as e:
-            raise jwt.InvalidTokenError(f"Invalid token: {str(e)}")
-    
-    @staticmethod
-    def _fetch_jwks(jwks_uri: str) -> List[str]:
-        """Fetch public keys from JWKS endpoint."""
-        try:
-            response = requests.get(jwks_uri, timeout=10)
-            response.raise_for_status()
-            jwks = response.json()
-            
-            keys = []
-            for key_data in jwks.get('keys', []):
-                # Convert JWK to PEM format
-                if key_data.get('kty') == 'RSA':
-                    from cryptography.hazmat.primitives.asymmetric.rsa import RSAPublicNumbers
-                    from cryptography.hazmat.primitives import serialization
-                    from cryptography.hazmat.backends import default_backend
-                    
-                    # Extract RSA components
-                    n = int.from_bytes(jwt.utils.base64url_decode(key_data['n']), 'big')
-                    e = int.from_bytes(jwt.utils.base64url_decode(key_data['e']), 'big')
-                    
-                    # Create RSA public numbers
-                    public_numbers = RSAPublicNumbers(e, n)
-                    public_key = public_numbers.public_key(backend=default_backend())
-                    
-                    # Serialize to PEM
-                    pem = public_key.public_bytes(
-                        encoding=serialization.Encoding.PEM,
-                        format=serialization.PublicFormat.SubjectPublicKeyInfo
-                    )
-                    keys.append(pem.decode('utf-8'))
-            
-            return keys
-        except Exception as e:
-            raise ValueError(f"Failed to fetch JWKS: {str(e)}")
+from fastmcp.server.dependencies import get_access_token, AccessToken
 
 
 class TokenValidator:
@@ -223,7 +93,7 @@ class TokenValidator:
         try:
             self.validate_token(token)
             return True
-        except (jwt.InvalidTokenError, ValueError):
+        except Exception:
             return False
     
     def extract_email(self, token: str) -> Optional[str]:
@@ -238,8 +108,8 @@ class TokenValidator:
         """
         try:
             access_token = self.validate_token(token)
-            return access_token.email
-        except (jwt.InvalidTokenError, ValueError):
+            return getattr(access_token, 'email', None) or getattr(access_token, 'client_id', None)
+        except Exception:
             return None
 
 
