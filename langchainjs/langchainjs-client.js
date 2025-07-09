@@ -1,6 +1,11 @@
+import 'dotenv/config';
 import { MultiServerMCPClient } from "@langchain/mcp-adapters";
 import { ChatOpenAI } from "@langchain/openai";
 import { createReactAgent } from "@langchain/langgraph/prebuilt";
+
+// Print JWT token for debugging
+console.log("🔐 JWT Token:", process.env.JWT_TOKEN);
+console.log("🔐 Token length:", process.env.JWT_TOKEN?.length || 0);
 
 // Create client and connect to server
 const client = new MultiServerMCPClient({
@@ -17,36 +22,20 @@ const client = new MultiServerMCPClient({
 
   // Server configuration
   mcpServers: {
-    // adds a STDIO connection to a server named "math"
-    math: {
-      transport: "stdio",
-      command: "npx",
-      args: ["-y", "@modelcontextprotocol/server-math"],
-      // Restart configuration for stdio transport
-      restart: {
-        enabled: true,
-        maxAttempts: 3,
-        delayMs: 1000,
-      },
-    },
 
-    // here's a filesystem server
-    filesystem: {
-      transport: "stdio",
-      command: "npx",
-      args: ["-y", "@modelcontextprotocol/server-filesystem"],
-    },
 
-    // Sreamable HTTP transport example, with auth headers and automatic SSE fallback disabled (defaults to enabled)
-    weather: {
-      url: "https://example.com/weather/mcp",
+    // Streamable HTTP transport example, with auth headers and automatic SSE fallback disabled (defaults to enabled)
+    googleworkspace: {
+      url: "http://127.0.0.1:6006/mcp",
       headers: {
-        Authorization: "Bearer token123",
-      }
+        Authorization: `Bearer ${process.env.JWT_TOKEN}`,
+      },
       automaticSSEFallback: false
     },
 
     // OAuth 2.0 authentication (recommended for secure servers)
+    // Uncomment and implement your OAuth provider when ready
+    /*
     "oauth-protected-server": {
       url: "https://protected.example.com/mcp",
       authProvider: new MyOAuthProvider({
@@ -63,17 +52,8 @@ const client = new MultiServerMCPClient({
         "User-Agent": "My-MCP-Client/1.0"
       }
     },
-
-    // how to force SSE, for old servers that are known to only support SSE (streamable HTTP falls back automatically if unsure)
-    github: {
-      transport: "sse", // also works with "type" field instead of "transport"
-      url: "https://example.com/mcp",
-      reconnect: {
-        enabled: true,
-        maxAttempts: 5,
-        delayMs: 2000,
-      },
-    },
+    */
+    
   },
 });
 
@@ -94,7 +74,7 @@ const agent = createReactAgent({
 // Run the agent
 try {
   const mathResponse = await agent.invoke({
-    messages: [{ role: "user", content: "what's (3 + 5) x 12?" }],
+    messages: [{ role: "user", content: "show me latest two emails" }],
   });
   console.log(mathResponse);
 } catch (error) {
