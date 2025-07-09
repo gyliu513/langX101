@@ -36,7 +36,7 @@ auth = BearerAuthProvider(
     audience="my-mcp-server"
 )
 
-logging.basicConfig(level=logging.DEBUG)
+# logging.basicConfig(level=logging.DEBUG)
 mcp = FastMCP(name="My MCP Server", auth=auth)
 mcp.add_middleware(LoggingMiddleware())
 mcp.add_middleware(ErrorHandlingMiddleware(
