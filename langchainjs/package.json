@@ -1,0 +1,41 @@
+{
+  "name": "langchainjs-mcp-client",
+  "version": "1.0.0",
+  "description": "LangChainJS client for Model Context Protocol (MCP) servers",
+  "type": "module",
+  "main": "langchainjs-client.js",
+  "scripts": {
+    "start": "node langchainjs-client.js",
+    "dev": "node --watch langchainjs-client.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "langchain",
+    "langchainjs",
+    "mcp",
+    "model-context-protocol",
+    "ai",
+    "agents"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@langchain/langgraph": "^0.3.7",
+    "@langchain/mcp-adapters": "^0.5.3",
+    "@langchain/openai": "^0.5.18"
+  },
+  "devDependencies": {
+    "dotenv": "^16.3.1"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yourusername/langchainjs-mcp-client.git"
+  },
+  "bugs": {
+    "url": "https://github.com/yourusername/langchainjs-mcp-client/issues"
+  },
+  "homepage": "https://github.com/yourusername/langchainjs-mcp-client#readme"
+}
