@@ -41,7 +41,7 @@ TOKEN = key_pair.create_token(
 
 print(f"🔐 Generated JWT token: {TOKEN[:50]}...")
 
-logging.basicConfig(level=logging.DEBUG)
+# logging.basicConfig(level=logging.DEBUG)
 transport = StreamableHttpTransport(
     "http://localhost:8000/mcp",
     headers={"Authorization": "Bearer " + TOKEN},
@@ -54,11 +54,53 @@ async def log_handler(message: LogMessage):
     data = message.data
     print(f"[{level}] {logger}: {data}")
 
-async def call_tool(name: str):
+async def list_tools():
+    """List all available tools from the MCP server"""
     async with Client(transport=transport, log_handler=log_handler) as client:
-        result = await client.call_tool("greet", {"name": name})
-        print(f"✅ Result: {result.data}")
+        try:
+            tools = await client.list_tools()
+            print("🔧 Available tools:")
+            if not tools:
+                print("   No tools available")
+            else:
+                for tool in tools:
+                    print(f"   📋 {tool.name}")
+                    if tool.description:
+                        print(f"      Description: {tool.description}")
+                    if tool.inputSchema:
+                        print(f"      Input Schema: {tool.inputSchema}")
+                    print()
+            return tools
+        except Exception as e:
+            print(f"❌ Error listing tools: {e}")
+            return []
+
+async def call_tool(name: str):
+    """Call a specific tool with given parameters"""
+    async with Client(transport=transport, log_handler=log_handler) as client:
+        try:
+            result = await client.call_tool("greet", {"name": name})
+            print(f"✅ Result: {result.data}")
+            return result
+        except Exception as e:
+            print(f"❌ Error calling tool: {e}")
+            return None
+
+async def main():
+    """Main function to demonstrate both listing tools and calling a tool"""
+    print("🚀 Starting FastMCP client with JWT authentication...")
+    
+    # First, list all available tools
+    print("\n" + "="*50)
+    print("📋 LISTING AVAILABLE TOOLS")
+    print("="*50)
+    tools = await list_tools()
+    
+    # Then call a specific tool
+    print("\n" + "="*50)
+    print("🎯 CALLING SPECIFIC TOOL")
+    print("="*50)
+    await call_tool("World")
 
 if __name__ == "__main__":
-    print("🚀 Starting FastMCP client with JWT authentication...")
-    asyncio.run(call_tool("World"))
+    asyncio.run(main())
