@@ -59,6 +59,26 @@ const client = new MultiServerMCPClient({
 
 const tools = await client.getTools();
 
+// Print out the tool list
+console.log("\n🔧 Available Tools:");
+console.log("=" * 50);
+if (tools.length === 0) {
+  console.log("❌ No tools available");
+} else {
+  tools.forEach((tool, index) => {
+    console.log(`${index + 1}. 📋 ${tool.name}`);
+    if (tool.description) {
+      console.log(`   Description: ${tool.description}`);
+    }
+    if (tool.schema) {
+      console.log(`   Schema: ${JSON.stringify(tool.schema, null, 2)}`);
+    }
+    console.log("");
+  });
+}
+console.log(`Total tools: ${tools.length}`);
+console.log("=" * 50);
+
 // Create an OpenAI model
 const model = new ChatOpenAI({
   modelName: "gpt-4o",
