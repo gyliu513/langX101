@@ -43,3 +43,4 @@ __pycache__
 logs/
 node_modules
 .venv
+dist

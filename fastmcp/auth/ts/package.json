@@ -12,6 +12,9 @@
     "token": "node dist/token-generator.js",
     "client": "node dist/real-client.js",
     "clean": "rm -rf dist",
+    "lint": "eslint . --ext .ts",
+    "lint:fix": "eslint . --ext .ts --fix",
+    "type-check": "tsc --noEmit",
     "test": "echo \"No tests specified\" && exit 0"
   },
   "keywords": [
@@ -26,6 +29,9 @@
   "license": "MIT",
   "devDependencies": {
     "@types/node": "^20.0.0",
+    "@typescript-eslint/eslint-plugin": "^6.0.0",
+    "@typescript-eslint/parser": "^6.0.0",
+    "eslint": "^8.0.0",
     "typescript": "^5.0.0"
   },
   "dependencies": {},
