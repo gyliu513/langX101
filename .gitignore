@@ -44,3 +44,4 @@ logs/
 node_modules
 .venv
 dist
+coverage

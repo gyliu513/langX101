@@ -1,7 +1,7 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "module": "ESNext",
+    "module": "ES2022",
     "moduleResolution": "node",
     "esModuleInterop": true,
     "allowSyntheticDefaultImports": true,
@@ -11,7 +11,8 @@
     "declaration": true,
     "outDir": "./dist",
     "rootDir": "./",
-    "resolveJsonModule": true
+    "resolveJsonModule": true,
+    "types": ["node", "jest"]
   },
   "include": [
     "*.ts"
