@@ -3,12 +3,16 @@
   "version": "1.0.0",
   "description": "JavaScript utility to generate JWT tokens for FastMCP authentication",
   "main": "token-generator.js",
+  "type": "module",
   "scripts": {
     "start": "node token-generator.js",
     "generate-keys": "node token-generator.js --generate-keys",
     "generate-token": "node token-generator.js",
     "verify": "node token-generator.js --verify",
-    "test": "node test.js"
+    "test": "node test.js",
+    "langchain-demo": "node langchain-client.js",
+    "langchain-example": "node langchain-example.js",
+    "real-client": "node real-client.js"
   },
   "keywords": [
     "fastmcp",
@@ -16,12 +20,23 @@
     "token",
     "authentication",
     "rsa",
-    "mcp"
+    "mcp",
+    "langchain"
   ],
   "author": "FastMCP JavaScript SDK",
   "license": "MIT",
   "engines": {
-    "node": ">=14.0.0"
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "@h1deya/langchain-mcp-tools": "^0.3.1",
+    "@langchain/core": "^0.3.66",
+    "@langchain/langgraph": "^0.3.11",
+    "@langchain/mcp-adapters": "^0.6.0",
+    "@langchain/openai": "^0.6.2"
+  },
+  "devDependencies": {
+    "dotenv": "^16.0.0"
   },
   "repository": {
     "type": "git",
@@ -31,4 +46,4 @@
     "url": "https://github.com/jlowin/fastmcp/issues"
   },
   "homepage": "https://gofastmcp.com"
-} 
+}

@@ -1,6 +1,6 @@
-const crypto = require('crypto');
-const fs = require('fs');
-const path = require('path');
+import crypto from 'crypto';
+import fs from 'fs';
+import path from 'path';
 
 /**
  * FastMCP JWT Token Generator
@@ -41,9 +41,16 @@ class FastMCPTokenGenerator {
 
     /**
      * Generate a new RSA key pair and save to files
+     * If keys already exist, they will be loaded instead
      */
     generateKeyPair() {
         try {
+            // Check if keys already exist
+            if (fs.existsSync(this.privateKeyPath) && fs.existsSync(this.publicKeyPath)) {
+                console.log('🔑 RSA key pair already exists, loading existing keys...');
+                return this.loadKeys();
+            }
+
             console.log('🔑 Generating new RSA key pair...');
             
             // Generate private key
@@ -83,7 +90,7 @@ class FastMCPTokenGenerator {
             issuer = 'http://localhost:8000',
             audience = 'my-mcp-server',
             scopes = ['read', 'write'],
-            expiresIn = '1h'
+            expiresIn = '30d'
         } = options;
 
         if (!this.privateKey) {
@@ -144,7 +151,7 @@ class FastMCPTokenGenerator {
             case 'm': return value * 60;
             case 'h': return value * 60 * 60;
             case 'd': return value * 60 * 60 * 24;
-            default: return 3600; // Default to 1 hour
+            default: return 2592000; // Default to 30 days
         }
     }
 
@@ -226,7 +233,7 @@ function generateFastMCPToken(options = {}) {
     
     // Try to load existing keys, generate new ones if they don't exist
     if (!generator.loadKeys()) {
-        console.log('📝 Generating new key pair...');
+        console.log('📝 No existing keys found, generating new key pair...');
         generator.generateKeyPair();
     }
     
@@ -247,7 +254,7 @@ Usage:
   node token-generator.js [options]
 
 Options:
-  --generate-keys    Generate new RSA key pair
+  --generate-keys    Generate new RSA key pair (or load existing if present)
   --subject <email>  Token subject (default: dev-user)
   --issuer <url>     Token issuer (default: http://localhost:8000)
   --audience <name>  Token audience (default: my-mcp-server)
@@ -328,12 +335,12 @@ Examples:
 }
 
 // Export for use as module
-module.exports = {
+export {
     FastMCPTokenGenerator,
     generateFastMCPToken
 };
 
 // Run CLI if called directly
-if (require.main === module) {
+if (import.meta.url === `file://${process.argv[1]}`) {
     main();
 } 

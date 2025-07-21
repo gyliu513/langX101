@@ -30,6 +30,7 @@ node --version
 
 ```bash
 # Generate new RSA key pair (creates private.pem and public.pem)
+# If keys already exist, they will be loaded instead
 node token-generator.js --generate-keys
 ```
 
@@ -68,7 +69,7 @@ const token = generateFastMCPToken({
     issuer: 'https://my-server.com',
     audience: 'my-mcp-server',
     scopes: ['read', 'write'],
-    expiresIn: '1h'
+    expiresIn: '30d'
 });
 
 console.log('Generated token:', token);
@@ -118,7 +119,7 @@ new FastMCPTokenGenerator(privateKeyPath = 'private.pem', publicKeyPath = 'publi
 #### Methods
 
 ##### `generateKeyPair()`
-Generates a new RSA key pair and saves to files.
+Generates a new RSA key pair and saves to files. If keys already exist, they will be loaded instead.
 
 ##### `loadKeys()`
 Loads existing RSA keys from files. Returns `true` if successful.
@@ -131,7 +132,7 @@ Creates a JWT token with the specified options.
 - `issuer` (string): Token issuer (default: 'http://localhost:8000')
 - `audience` (string): Token audience (default: 'my-mcp-server')
 - `scopes` (array): Array of scopes (default: ['read', 'write'])
-- `expiresIn` (string): Expiration time (default: '1h')
+- `expiresIn` (string): Expiration time (default: '30d')
 
 **Supported time units:** `s` (seconds), `m` (minutes), `h` (hours), `d` (days)
 
@@ -204,16 +205,57 @@ Run the test suite to verify everything works:
 node test.js
 ```
 
+## LangChain Client
+
+The package includes a LangChain client that uses the token generator for authentication:
+
+### Basic Usage
+
+```javascript
+const { createFastMCPClient } = require('./langchain-client');
+
+// Create and initialize client
+const client = createFastMCPClient({
+    serverUrl: 'http://localhost:8000/mcp',
+    defaultSubject: 'user@example.com',
+    defaultScopes: ['read', 'write']
+});
+
+await client.initialize();
+
+// Get authentication token
+const token = await client.getToken();
+
+// Get auth headers for HTTP requests
+const headers = await client.getAuthHeaders();
+
+// Call tools
+const result = await client.callTool('greet', { name: 'Alice' });
+```
+
+### Run LangChain Examples
+
+```bash
+# Run the main demonstration
+node langchain-client.js
+
+# Run simple examples
+node langchain-example.js
+```
+
 ## File Structure
 
 ```
 fastmcp/auth/
-├── token-generator.js    # Main utility
-├── test.js              # Test suite
-├── package.json         # Package configuration
-├── README.md           # This file
-├── private.pem         # Generated private key
-└── public.pem          # Generated public key
+├── token-generator.js      # Main utility
+├── langchain-client.js     # LangChain client with JWT auth
+├── langchain-example.js    # LangChain client examples
+├── test.js                # Test suite
+├── example-usage.js       # General usage examples
+├── package.json           # Package configuration
+├── README.md             # This file
+├── private.pem           # Generated private key
+└── public.pem            # Generated public key
 ```
 
 ## Security Notes
@@ -221,7 +263,7 @@ fastmcp/auth/
 - Keep your `private.pem` file secure and never share it
 - The `public.pem` file can be shared with your FastMCP server
 - Tokens are signed with RS256 (RSA-SHA256) for security
-- Default expiration is 1 hour - adjust based on your security requirements
+- Default expiration is 30 days - adjust based on your security requirements
 
 ## Compatibility
 
@@ -250,6 +292,37 @@ fastmcp/auth/
 - Check the test file (`test.js`) for usage examples
 - Verify your Node.js version is 14+ with `node --version`
 - Ensure you have read/write permissions in the directory
+
+## Key Features
+
+### 🔐 JWT Token Generation
+- **No Environment Variables**: Tokens are generated programmatically using RSA key pairs
+- **Automatic Refresh**: Tokens are automatically refreshed when they expire
+- **Custom Claims**: Configurable subject, issuer, audience, scopes, and expiration
+- **Token Verification**: Built-in token validation and payload extraction
+
+### 🛠️ LangChain Integration
+- **Seamless Integration**: Works with existing LangChain workflows
+- **Authentication Headers**: Automatic generation of Bearer token headers
+- **Tool Calling**: Simplified tool invocation with automatic authentication
+- **Status Monitoring**: Real-time client and token status information
+
+### 🔑 Key Management
+- **RSA Key Pairs**: 2048-bit RSA keys for secure token signing
+- **Automatic Generation**: Keys are generated automatically if they don't exist
+- **File-based Storage**: Keys stored as PEM files for easy management
+- **Existing Key Support**: Uses existing keys when available
+
+## Comparison with Environment-based Authentication
+
+| Feature | Environment Variables | Token Generator |
+|---------|---------------------|-----------------|
+| Token Source | Environment variables | Programmatically generated |
+| Key Management | Manual | Automatic |
+| Token Refresh | Manual | Automatic |
+| Security | Depends on env setup | RSA-based signing |
+| Portability | Requires env setup | Self-contained |
+| Customization | Limited | Full control |
 
 ## License
 
