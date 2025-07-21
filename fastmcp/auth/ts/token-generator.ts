@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 import fs from 'fs';
-import jwt, { SignOptions } from 'jsonwebtoken';
+import jwt from 'jsonwebtoken';
 
 /**
  * Token options interface
@@ -125,8 +125,7 @@ class FastMCPTokenGenerator {
             subject = 'dev-user',
             issuer = 'http://localhost:8000',
             audience = 'google-workspace-mcp',
-            scopes = ['read', 'write'],
-            expiresIn = '30d'
+            scopes = ['read', 'write']
         } = options;
 
         if (!this.privateKey) {
