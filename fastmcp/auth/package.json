@@ -1,0 +1,34 @@
+{
+  "name": "fastmcp-token-generator",
+  "version": "1.0.0",
+  "description": "JavaScript utility to generate JWT tokens for FastMCP authentication",
+  "main": "token-generator.js",
+  "scripts": {
+    "start": "node token-generator.js",
+    "generate-keys": "node token-generator.js --generate-keys",
+    "generate-token": "node token-generator.js",
+    "verify": "node token-generator.js --verify",
+    "test": "node test.js"
+  },
+  "keywords": [
+    "fastmcp",
+    "jwt",
+    "token",
+    "authentication",
+    "rsa",
+    "mcp"
+  ],
+  "author": "FastMCP JavaScript SDK",
+  "license": "MIT",
+  "engines": {
+    "node": ">=14.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jlowin/fastmcp"
+  },
+  "bugs": {
+    "url": "https://github.com/jlowin/fastmcp/issues"
+  },
+  "homepage": "https://gofastmcp.com"
+} 

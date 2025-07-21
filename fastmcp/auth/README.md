@@ -1,225 +1,256 @@
-# FastMCP Auth Example
+# FastMCP JWT Token Generator (JavaScript)
 
-A complete FastMCP (Model Context Protocol) implementation with JWT authentication, demonstrating secure communication between client and server using RSA key pairs.
+A JavaScript utility to generate JWT tokens for FastMCP authentication using RSA key pairs. This is equivalent to the Python `RSAKeyPair` functionality from the FastMCP Python SDK.
 
-## Prerequisites
+## Features
 
-- Python 3.10 or higher
-- `uv` package manager (install from https://docs.astral.sh/uv/getting-started/installation/)
-- OpenSSL (for generating RSA keys)
+- 🔑 Generate RSA key pairs (2048-bit)
+- 🔐 Create JWT tokens with RS256 signature
+- ✅ Verify JWT tokens
+- 🛠️ Command-line interface
+- 📦 Module import support
+- ⏰ Configurable expiration times
+- 🎯 Customizable claims (subject, issuer, audience, scopes)
+
+## Installation
+
+No external dependencies required! This utility uses Node.js built-in modules (`crypto`, `fs`, `path`).
+
+```bash
+# Clone or download the files
+cd fastmcp/auth
+
+# Make sure you have Node.js 14+ installed
+node --version
+```
 
 ## Quick Start
 
-### 1. Navigate to the Project Directory
+### 1. Generate RSA Key Pair
 
 ```bash
-cd /Users/guangyaliu/go/src/github.com/gyliu513/langX101/fastmcp/auth
+# Generate new RSA key pair (creates private.pem and public.pem)
+node token-generator.js --generate-keys
 ```
 
-### 2. Install Dependencies
+### 2. Generate JWT Token
 
 ```bash
-uv sync --extra dev
+# Generate token with default settings
+node token-generator.js
+
+# Generate token with custom settings
+node token-generator.js \
+  --subject "user@example.com" \
+  --issuer "https://my-server.com" \
+  --audience "my-mcp-server" \
+  --scopes "read,write,admin" \
+  --expires "2h"
 ```
 
-This installs all required dependencies including:
-- `fastmcp` - The main FastMCP library
-- `PyJWT` - JWT token handling
-- `pydantic` - Data validation
-
-### 3. Generate RSA Keys for JWT Authentication
+### 3. Verify Token
 
 ```bash
-# Generate private key
-openssl genpkey -algorithm RSA -out private.pem -pkeyopt rsa_keygen_bits:2048
-
-# Generate public key
-openssl rsa -in private.pem -pubout -out public.pem
+# Verify an existing token
+node token-generator.js --verify "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9..."
 ```
 
-### 4. Start the Server
+## Programmatic Usage
 
-In your terminal, run:
+### Basic Usage
 
-```bash
-uv run server.py
+```javascript
+const { FastMCPTokenGenerator, generateFastMCPToken } = require('./token-generator');
+
+// Method 1: Using the utility function (auto-generates keys if needed)
+const token = generateFastMCPToken({
+    subject: 'user@example.com',
+    issuer: 'https://my-server.com',
+    audience: 'my-mcp-server',
+    scopes: ['read', 'write'],
+    expiresIn: '1h'
+});
+
+console.log('Generated token:', token);
 ```
 
-You should see:
-```
-Starting FastMCP server on http://localhost:8000/mcp
-Available tools: greet
-```
+### Advanced Usage
 
-The server is now running with JWT authentication enabled.
+```javascript
+const { FastMCPTokenGenerator } = require('./token-generator');
 
-### 5. Test the Client
+// Create generator instance
+const generator = new FastMCPTokenGenerator('my-private.pem', 'my-public.pem');
 
-Open a **new terminal window** and navigate to the same directory:
+// Generate new key pair
+generator.generateKeyPair();
 
-```bash
-cd /Users/guangyaliu/go/src/github.com/gyliu513/langX101/fastmcp/auth
-```
+// Or load existing keys
+generator.loadKeys();
 
-Then run the client:
+// Create token
+const token = generator.createToken({
+    subject: 'user@example.com',
+    issuer: 'https://my-server.com',
+    audience: 'my-mcp-server',
+    scopes: ['read', 'write', 'admin'],
+    expiresIn: '2h'
+});
 
-```bash
-uv run client.py
-```
-
-You should see output like:
-```
-🚀 Starting FastMCP client with JWT authentication...
-🔐 Generated JWT token: eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9...
-✅ Result: Hello, World! Your userid is hello@world.com.
-```
-
-## Authentication Workflow
-
-```mermaid
-sequenceDiagram
-    participant User
-    participant Client
-    participant Server
-    participant JWT
-
-    Note over User, JWT: Setup Phase
-    User->>Client: Generate RSA Keys
-    Client->>Client: Load private.pem & public.pem
-    
-    Note over User, JWT: Authentication Phase
-    Client->>JWT: Create JWT Token
-    Note right of JWT: - Subject: hello@world.com<br/>- Issuer: http://localhost:8000<br/>- Audience: my-mcp-server<br/>- Scopes: [read, write]
-    JWT->>Client: Return Signed Token
-    
-    Note over User, JWT: Communication Phase
-    Client->>Server: Connect with Bearer Token
-    Server->>Server: Validate JWT with public key
-    Server->>Server: Extract user info & scopes
-    Server->>Client: Accept connection
-    
-    Note over User, JWT: Tool Execution Phase
-    Client->>Server: Call greet tool
-    Server->>Server: get_access_token()
-    Server->>Server: Extract user_id from token
-    Server->>Client: Return personalized greeting
-    
-    Note over User, JWT: Logging Phase
-    Server->>Server: Log access token details
-    Client->>Client: Display result
-```
-
-## What's Happening
-
-### Server (`server.py`)
-- **JWT Authentication**: Uses `BearerAuthProvider` with RSA public key validation
-- **Middleware**: Includes logging and error handling middleware
-- **Token Extraction**: Uses `get_access_token()` to extract user information
-- **Tool Access**: Validates tokens and extracts user details for each tool call
-
-### Client (`client.py`)
-- **Token Generation**: Creates JWT tokens using RSA private key
-- **Authentication**: Sends Bearer tokens in Authorization header
-- **Connection**: Establishes secure connection with server
-- **Tool Execution**: Calls authenticated tools and displays results
-
-### Security Features
-- **RSA Key Pair**: Asymmetric encryption for secure token signing/validation
-- **JWT Validation**: Server validates token signature, issuer, and audience
-- **User Context**: Extracts user information from JWT claims
-- **Logging**: Comprehensive logging for debugging and audit trails
-
-## Project Structure
-
-```
-fastmcp/auth/
-├── server.py          # FastMCP server with JWT auth
-├── client.py          # Client with JWT token generation
-├── __init__.py        # Makes this a Python package
-├── pyproject.toml     # Project configuration and dependencies
-├── private.pem        # RSA private key (generate this)
-├── public.pem         # RSA public key (generate this)
-└── README.md          # This file
-```
-
-## Available Tools
-
-### `greet(name: str) -> str`
-- **Description**: Returns a personalized greeting with user information
-- **Authentication**: Required (JWT token)
-- **Example**: `greet("Alice")` → `"Hello, Alice! Your userid is hello@world.com."`
-- **Features**: 
-  - Extracts user ID from JWT token
-  - Logs access token details
-  - Returns personalized response
-
-## Key Components
-
-### JWT Token Structure
-```json
-{
-  "sub": "hello@world.com",
-  "iss": "http://localhost:8000",
-  "aud": "my-mcp-server",
-  "scopes": ["read", "write"],
-  "iat": 1640995200,
-  "exp": 1640998800
+// Verify token
+try {
+    const payload = generator.verifyToken(token);
+    console.log('Token is valid:', payload);
+} catch (error) {
+    console.error('Token verification failed:', error.message);
 }
 ```
 
-### Authentication Flow
-1. **Key Generation**: RSA private/public key pair for secure token signing
-2. **Token Creation**: Client generates JWT with user claims and scopes
-3. **Token Validation**: Server validates signature, issuer, and audience
-4. **User Context**: Server extracts user information for tool execution
-5. **Access Control**: Tools can access user details via `get_access_token()`
+## API Reference
+
+### FastMCPTokenGenerator Class
+
+#### Constructor
+```javascript
+new FastMCPTokenGenerator(privateKeyPath = 'private.pem', publicKeyPath = 'public.pem')
+```
+
+#### Methods
+
+##### `generateKeyPair()`
+Generates a new RSA key pair and saves to files.
+
+##### `loadKeys()`
+Loads existing RSA keys from files. Returns `true` if successful.
+
+##### `createToken(options)`
+Creates a JWT token with the specified options.
+
+**Options:**
+- `subject` (string): Token subject (default: 'dev-user')
+- `issuer` (string): Token issuer (default: 'http://localhost:8000')
+- `audience` (string): Token audience (default: 'my-mcp-server')
+- `scopes` (array): Array of scopes (default: ['read', 'write'])
+- `expiresIn` (string): Expiration time (default: '1h')
+
+**Supported time units:** `s` (seconds), `m` (minutes), `h` (hours), `d` (days)
+
+##### `verifyToken(token)`
+Verifies a JWT token and returns the payload if valid.
+
+### Utility Functions
+
+#### `generateFastMCPToken(options)`
+Convenience function that automatically handles key generation/loading and token creation.
+
+## Command Line Options
+
+```bash
+node token-generator.js [options]
+
+Options:
+  --help, -h           Show help
+  --generate-keys      Generate new RSA key pair
+  --subject <email>    Token subject
+  --issuer <url>       Token issuer
+  --audience <name>    Token audience
+  --scopes <list>      Comma-separated scopes
+  --expires <time>     Expiration time
+  --verify <token>     Verify an existing token
+```
+
+## Examples
+
+### Generate Keys and Token
+```bash
+# Generate new keys
+node token-generator.js --generate-keys
+
+# Generate token with custom settings
+node token-generator.js \
+  --subject "alice@company.com" \
+  --scopes "read,write,admin" \
+  --expires "8h"
+```
+
+### Using with FastMCP Server
+
+1. **Generate keys and token:**
+```bash
+cd fastmcp/auth
+node token-generator.js --generate-keys
+node token-generator.js --subject "dev-user" --scopes "read,write"
+```
+
+2. **Use the generated token with your FastMCP client:**
+```javascript
+const token = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9..."; // Generated token
+
+// Use in your FastMCP client
+const client = new FastMCPClient({
+    transport: "http://localhost:8000/mcp",
+    auth: {
+        type: "bearer",
+        token: token
+    }
+});
+```
+
+## Testing
+
+Run the test suite to verify everything works:
+
+```bash
+node test.js
+```
+
+## File Structure
+
+```
+fastmcp/auth/
+├── token-generator.js    # Main utility
+├── test.js              # Test suite
+├── package.json         # Package configuration
+├── README.md           # This file
+├── private.pem         # Generated private key
+└── public.pem          # Generated public key
+```
+
+## Security Notes
+
+- Keep your `private.pem` file secure and never share it
+- The `public.pem` file can be shared with your FastMCP server
+- Tokens are signed with RS256 (RSA-SHA256) for security
+- Default expiration is 1 hour - adjust based on your security requirements
+
+## Compatibility
+
+- **Node.js**: 14.0.0 or higher
+- **FastMCP**: Compatible with FastMCP servers using BearerAuthProvider
+- **JWT**: RFC 7519 compliant
+- **RSA**: 2048-bit key pairs
 
 ## Troubleshooting
 
-### "private.pem and public.pem files not found" Error
-Generate the RSA keys:
-```bash
-openssl genpkey -algorithm RSA -out private.pem -pkeyopt rsa_keygen_bits:2048
-openssl rsa -in private.pem -pubout -out public.pem
-```
+### Common Issues
 
-### "No module named 'fastmcp'" Error
-Install dependencies:
-```bash
-uv sync --extra dev
-```
+1. **"Private key file not found"**
+   - Run `node token-generator.js --generate-keys` first
 
-### Authentication Errors
-Make sure the server and client are using the same:
-- Issuer: `http://localhost:8000`
-- Audience: `my-mcp-server`
-- RSA key pair
+2. **"Token verification failed"**
+   - Ensure you're using the correct public key for verification
+   - Check if the token has expired
 
-### Debug Logging
-The server includes comprehensive debug logging. Check the server output for:
-- JWT validation details
-- Access token information
-- Tool execution logs
+3. **"Invalid JWT format"**
+   - Ensure the token is a valid JWT string
+   - Check for any modifications to the token
 
-## Security Considerations
+### Getting Help
 
-- **Key Management**: Keep private keys secure and never share them
-- **Token Expiration**: JWT tokens have built-in expiration for security
-- **Scope Validation**: Implement scope-based access control for sensitive operations
-- **Audit Logging**: Server logs all authentication attempts and tool calls
+- Check the test file (`test.js`) for usage examples
+- Verify your Node.js version is 14+ with `node --version`
+- Ensure you have read/write permissions in the directory
 
-## Next Steps
+## License
 
-- Add more tools with different scope requirements
-- Implement role-based access control (RBAC)
-- Add token refresh functionality
-- Create a more complex MCP server with multiple authentication methods
-- Add audit logging for compliance requirements
-
-## Resources
-
-- [FastMCP Documentation](https://fastmcp.com/)
-- [Model Context Protocol](https://modelcontextprotocol.io/)
-- [JWT Authentication](https://jwt.io/)
-- [RSA Encryption](https://en.wikipedia.org/wiki/RSA_(cryptosystem))
-- [uv Package Manager](https://docs.astral.sh/uv/) 
+MIT License - see the main FastMCP repository for details. 
