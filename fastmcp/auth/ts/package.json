@@ -1,0 +1,40 @@
+{
+  "name": "fastmcp-auth-ts",
+  "version": "1.0.0",
+  "description": "FastMCP Authentication TypeScript Implementation",
+  "type": "module",
+  "main": "dist/token-generator.js",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "start": "node dist/token-generator.js",
+    "start:client": "node dist/real-client.js",
+    "token": "node dist/token-generator.js",
+    "client": "node dist/real-client.js",
+    "clean": "rm -rf dist",
+    "test": "echo \"No tests specified\" && exit 0"
+  },
+  "keywords": [
+    "fastmcp",
+    "jwt",
+    "authentication",
+    "typescript",
+    "mcp",
+    "langchain"
+  ],
+  "author": "Your Name",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0"
+  },
+  "dependencies": {},
+  "optionalDependencies": {
+    "@langchain/mcp-adapters": "^0.0.1",
+    "@langchain/openai": "^0.0.1",
+    "@langchain/langgraph": "^0.0.1"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+} 

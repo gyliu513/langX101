@@ -3,13 +3,50 @@ import fs from 'fs';
 import path from 'path';
 
 /**
+ * Token options interface
+ */
+interface TokenOptions {
+    subject?: string;
+    issuer?: string;
+    audience?: string;
+    scopes?: string[];
+    expiresIn?: string;
+}
+
+/**
+ * JWT payload interface
+ */
+interface JWTPayload {
+    sub: string;
+    iss: string;
+    aud: string;
+    scope: string;
+    iat: number;
+    exp: number;
+}
+
+/**
+ * JWT header interface
+ */
+interface JWTHeader {
+    alg: string;
+    typ: string;
+}
+
+/**
  * FastMCP JWT Token Generator
  * 
  * This utility generates JWT tokens for FastMCP authentication using RSA key pairs.
  * It's equivalent to the Python RSAKeyPair functionality.
  */
 class FastMCPTokenGenerator {
-    constructor(privateKeyPath = '/Users/guangyaliu/langX101/fastmcp/auth/private.pem', publicKeyPath = '/Users/guangyaliu/langX101/fastmcp/auth/public.pem') {
+    private privateKeyPath: string;
+    private publicKeyPath: string;
+    private privateKey: string | null;
+    private publicKey: string | null;
+
+    constructor(privateKeyPath: string = '/Users/guangyaliu/langX101/fastmcp/auth/private.pem', 
+                publicKeyPath: string = '/Users/guangyaliu/langX101/fastmcp/auth/public.pem') {
         this.privateKeyPath = privateKeyPath;
         this.publicKeyPath = publicKeyPath;
         this.privateKey = null;
@@ -19,7 +56,7 @@ class FastMCPTokenGenerator {
     /**
      * Load RSA keys from PEM files
      */
-    loadKeys() {
+    loadKeys(): boolean {
         try {
             if (!fs.existsSync(this.privateKeyPath)) {
                 throw new Error(`Private key file not found: ${this.privateKeyPath}`);
@@ -34,7 +71,7 @@ class FastMCPTokenGenerator {
             console.log('✅ RSA keys loaded successfully');
             return true;
         } catch (error) {
-            console.error('❌ Error loading RSA keys:', error.message);
+            console.error('❌ Error loading RSA keys:', (error as Error).message);
             return false;
         }
     }
@@ -43,7 +80,7 @@ class FastMCPTokenGenerator {
      * Generate a new RSA key pair and save to files
      * If keys already exist, they will be loaded instead
      */
-    generateKeyPair() {
+    generateKeyPair(): boolean {
         try {
             // Check if keys already exist
             if (fs.existsSync(this.privateKeyPath) && fs.existsSync(this.publicKeyPath)) {
@@ -76,7 +113,7 @@ class FastMCPTokenGenerator {
             console.log('✅ RSA key pair generated and saved');
             return true;
         } catch (error) {
-            console.error('❌ Error generating RSA key pair:', error.message);
+            console.error('❌ Error generating RSA key pair:', (error as Error).message);
             return false;
         }
     }
@@ -84,11 +121,11 @@ class FastMCPTokenGenerator {
     /**
      * Create JWT token with RSA256 signature
      */
-    createToken(options = {}) {
+    createToken(options: TokenOptions = {}): string {
         const {
             subject = 'dev-user',
             issuer = 'http://localhost:8000',
-            audience = 'my-mcp-server',
+            audience = 'google-workspace-mcp',
             scopes = ['read', 'write'],
             expiresIn = '30d'
         } = options;
@@ -99,14 +136,14 @@ class FastMCPTokenGenerator {
 
         try {
             // Create JWT header
-            const header = {
+            const header: JWTHeader = {
                 alg: 'RS256',
                 typ: 'JWT'
             };
 
             // Create JWT payload
             const now = Math.floor(Date.now() / 1000);
-            const payload = {
+            const payload: JWTPayload = {
                 sub: subject,
                 iss: issuer,
                 aud: audience,
@@ -134,7 +171,7 @@ class FastMCPTokenGenerator {
             console.log('🔐 JWT token generated successfully');
             return token;
         } catch (error) {
-            console.error('❌ Error creating JWT token:', error.message);
+            console.error('❌ Error creating JWT token:', (error as Error).message);
             throw error;
         }
     }
@@ -142,7 +179,7 @@ class FastMCPTokenGenerator {
     /**
      * Parse expiresIn string to seconds
      */
-    parseExpiresIn(expiresIn) {
+    parseExpiresIn(expiresIn: string): number {
         const unit = expiresIn.slice(-1);
         const value = parseInt(expiresIn.slice(0, -1));
 
@@ -158,7 +195,7 @@ class FastMCPTokenGenerator {
     /**
      * Base64 URL encoding (RFC 4648)
      */
-    base64UrlEncode(buffer) {
+    base64UrlEncode(buffer: string | Buffer): string {
         if (typeof buffer === 'string') {
             buffer = Buffer.from(buffer);
         }
@@ -171,7 +208,7 @@ class FastMCPTokenGenerator {
     /**
      * Verify JWT token
      */
-    verifyToken(token) {
+    verifyToken(token: string): JWTPayload {
         if (!this.publicKey) {
             throw new Error('Public key not loaded. Call loadKeys() or generateKeyPair() first.');
         }
@@ -183,6 +220,9 @@ class FastMCPTokenGenerator {
             }
 
             const [encodedHeader, encodedPayload, encodedSignature] = parts;
+            if (!encodedHeader || !encodedPayload || !encodedSignature) {
+                throw new Error('Invalid JWT format - missing parts');
+            }
             const data = `${encodedHeader}.${encodedPayload}`;
             const signature = this.base64UrlDecode(encodedSignature);
 
@@ -197,7 +237,7 @@ class FastMCPTokenGenerator {
             }
 
             // Decode payload
-            const payload = JSON.parse(this.base64UrlDecode(encodedPayload));
+            const payload = JSON.parse(this.base64UrlDecode(encodedPayload).toString());
             
             // Check expiration
             const now = Math.floor(Date.now() / 1000);
@@ -208,7 +248,7 @@ class FastMCPTokenGenerator {
             console.log('✅ JWT token verified successfully');
             return payload;
         } catch (error) {
-            console.error('❌ Error verifying JWT token:', error.message);
+            console.error('❌ Error verifying JWT token:', (error as Error).message);
             throw error;
         }
     }
@@ -216,7 +256,7 @@ class FastMCPTokenGenerator {
     /**
      * Base64 URL decoding
      */
-    base64UrlDecode(str) {
+    base64UrlDecode(str: string): Buffer {
         str = str.replace(/-/g, '+').replace(/_/g, '/');
         while (str.length % 4) {
             str += '=';
@@ -228,7 +268,7 @@ class FastMCPTokenGenerator {
 /**
  * Utility function to generate a token with default settings
  */
-function generateFastMCPToken(options = {}) {
+function generateFastMCPToken(options: TokenOptions = {}): string {
     const generator = new FastMCPTokenGenerator();
     
     // Try to load existing keys, generate new ones if they don't exist
@@ -243,7 +283,7 @@ function generateFastMCPToken(options = {}) {
 /**
  * CLI usage example
  */
-function main() {
+function main(): void {
     const args = process.argv.slice(2);
     
     if (args.includes('--help') || args.includes('-h')) {
@@ -290,37 +330,40 @@ Examples:
                 const payload = generator.verifyToken(token);
                 console.log('📋 Token payload:', JSON.stringify(payload, null, 2));
             } catch (error) {
-                console.error('❌ Token verification failed:', error.message);
+                console.error('❌ Token verification failed:', (error as Error).message);
             }
         }
         return;
     }
 
     // Parse options
-    const options = {};
+    const options: TokenOptions = {};
     const subjectIndex = args.indexOf('--subject');
     if (subjectIndex !== -1 && args[subjectIndex + 1]) {
-        options.subject = args[subjectIndex + 1];
+        options.subject = args[subjectIndex + 1] || undefined;
     }
 
     const issuerIndex = args.indexOf('--issuer');
     if (issuerIndex !== -1 && args[issuerIndex + 1]) {
-        options.issuer = args[issuerIndex + 1];
+        options.issuer = args[issuerIndex + 1] || undefined;
     }
 
     const audienceIndex = args.indexOf('--audience');
     if (audienceIndex !== -1 && args[audienceIndex + 1]) {
-        options.audience = args[audienceIndex + 1];
+        options.audience = args[audienceIndex + 1] || undefined;
     }
 
     const scopesIndex = args.indexOf('--scopes');
     if (scopesIndex !== -1 && args[scopesIndex + 1]) {
-        options.scopes = args[scopesIndex + 1].split(',');
+        const scopesValue = args[scopesIndex + 1];
+        if (scopesValue) {
+            options.scopes = scopesValue.split(',');
+        }
     }
 
     const expiresIndex = args.indexOf('--expires');
     if (expiresIndex !== -1 && args[expiresIndex + 1]) {
-        options.expiresIn = args[expiresIndex + 1];
+        options.expiresIn = args[expiresIndex + 1] || undefined;
     }
 
     // Generate token
@@ -330,14 +373,17 @@ Examples:
         console.log(token);
         console.log('\n📋 Token preview (first 50 chars):', token.substring(0, 50) + '...');
     } catch (error) {
-        console.error('❌ Error generating token:', error.message);
+        console.error('❌ Error generating token:', (error as Error).message);
     }
 }
 
 // Export for use as module
 export {
     FastMCPTokenGenerator,
-    generateFastMCPToken
+    generateFastMCPToken,
+    TokenOptions,
+    JWTPayload,
+    JWTHeader
 };
 
 // Run CLI if called directly
