@@ -1,4 +1,4 @@
-import { FastMCPTokenGenerator, generateFastMCPToken, TokenOptions, JWTPayload } from './token-generator.js';
+import { FastMCPTokenGenerator, TokenOptions, JWTPayload } from './token-generator.js';
 import fs from 'fs';
 
 /**
@@ -310,6 +310,7 @@ class RealFastMCPClient {
     /**
      * Create and run a LangChain agent
      */
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars, no-unused-vars
     async createAgent(modelName: string = "gpt-4o", temperature: number = 0): Promise<any> {
         try {
             console.log('🤖 Creating LangChain agent...');
@@ -327,6 +328,7 @@ class RealFastMCPClient {
     /**
      * Run agent with a user message
      */
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars, no-unused-vars
     async runAgent(message: string, modelName: string = "gpt-4o", temperature: number = 0): Promise<any> {
         try {
             console.log('🤖 Running LangChain agent...');
@@ -432,7 +434,7 @@ async function realServerExample(): Promise<void> {
 
         // List available tools from real server
         console.log('\n📝 Step 4: Listing tools from real server...');
-        const tools = await client.listTools();
+        await client.listTools();
 
         // Call the greet tool on the real server
         console.log('\n📝 Step 5: Calling greet tool on real server...');
