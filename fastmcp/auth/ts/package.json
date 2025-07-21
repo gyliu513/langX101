@@ -1,46 +1,33 @@
 {
-  "name": "fastmcp-auth-ts",
+  "name": "fastmcp-token-generator",
   "version": "1.0.0",
-  "description": "FastMCP Authentication TypeScript Implementation",
+  "description": "FastMCP JWT Token Generator using jsonwebtoken",
+  "main": "token-generator.ts",
   "type": "module",
-  "main": "dist/token-generator.js",
   "scripts": {
     "build": "tsc",
-    "dev": "tsc --watch",
-    "start": "node dist/token-generator.js",
-    "start:client": "node dist/real-client.js",
-    "token": "node dist/token-generator.js",
-    "client": "node dist/real-client.js",
-    "clean": "rm -rf dist",
-    "lint": "eslint . --ext .ts",
-    "lint:fix": "eslint . --ext .ts --fix",
-    "type-check": "tsc --noEmit",
-    "test": "echo \"No tests specified\" && exit 0"
+    "start": "node token-generator.js",
+    "dev": "tsx token-generator.ts",
+    "client": "tsx real-client.ts",
+    "client:build": "tsc real-client.ts --outDir dist"
   },
-  "keywords": [
-    "fastmcp",
-    "jwt",
-    "authentication",
-    "typescript",
-    "mcp",
-    "langchain"
-  ],
-  "author": "Your Name",
-  "license": "MIT",
+  "dependencies": {
+    "jsonwebtoken": "^9.0.2",
+    "@langchain/mcp-adapters": "^0.6.0",
+    "@langchain/openai": "^0.6.2"
+  },
   "devDependencies": {
+    "@types/jsonwebtoken": "^9.0.5",
     "@types/node": "^20.0.0",
-    "@typescript-eslint/eslint-plugin": "^6.0.0",
-    "@typescript-eslint/parser": "^6.0.0",
-    "eslint": "^8.0.0",
+    "tsx": "^4.0.0",
     "typescript": "^5.0.0"
   },
-  "dependencies": {},
-  "optionalDependencies": {
-    "@langchain/mcp-adapters": "^0.0.1",
-    "@langchain/openai": "^0.0.1",
-    "@langchain/langgraph": "^0.0.1"
-  },
-  "engines": {
-    "node": ">=18.0.0"
-  }
+  "keywords": [
+    "jwt",
+    "token",
+    "fastmcp",
+    "authentication"
+  ],
+  "author": "",
+  "license": "MIT"
 } 

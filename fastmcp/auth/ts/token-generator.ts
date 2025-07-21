@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 import fs from 'fs';
+import jwt, { SignOptions } from 'jsonwebtoken';
 
 /**
  * Token options interface
@@ -25,18 +26,10 @@ interface JWTPayload {
 }
 
 /**
- * JWT header interface
- */
-interface JWTHeader {
-    alg: string;
-    typ: string;
-}
-
-/**
  * FastMCP JWT Token Generator
  * 
  * This utility generates JWT tokens for FastMCP authentication using RSA key pairs.
- * It's equivalent to the Python RSAKeyPair functionality.
+ * It uses the jsonwebtoken npm package for reliable JWT handling.
  */
 class FastMCPTokenGenerator {
     private privateKeyPath: string;
@@ -57,6 +50,9 @@ class FastMCPTokenGenerator {
      */
     loadKeys(): boolean {
         try {
+            console.log('🔍 Looking for private key at:', this.privateKeyPath);
+            console.log('🔍 Looking for public key at:', this.publicKeyPath);
+            
             if (!fs.existsSync(this.privateKeyPath)) {
                 throw new Error(`Private key file not found: ${this.privateKeyPath}`);
             }
@@ -81,6 +77,10 @@ class FastMCPTokenGenerator {
      */
     generateKeyPair(): boolean {
         try {
+            console.log('🔍 Checking for existing keys...');
+            console.log('🔍 Private key path:', this.privateKeyPath);
+            console.log('🔍 Public key path:', this.publicKeyPath);
+            
             // Check if keys already exist
             if (fs.existsSync(this.privateKeyPath) && fs.existsSync(this.publicKeyPath)) {
                 console.log('🔑 RSA key pair already exists, loading existing keys...');
@@ -118,7 +118,7 @@ class FastMCPTokenGenerator {
     }
 
     /**
-     * Create JWT token with RSA256 signature
+     * Create JWT token with RS256 signature using jsonwebtoken package
      */
     createToken(options: TokenOptions = {}): string {
         const {
@@ -134,38 +134,24 @@ class FastMCPTokenGenerator {
         }
 
         try {
-            // Create JWT header
-            const header: JWTHeader = {
-                alg: 'RS256',
-                typ: 'JWT'
-            };
-
+            // Print which PEM files are being used
+            console.log('🔑 Using private key from:', this.privateKeyPath);
+            console.log('🔑 Using public key from:', this.publicKeyPath);
+            
             // Create JWT payload
-            const now = Math.floor(Date.now() / 1000);
-            const payload: JWTPayload = {
+            const payload = {
                 sub: subject,
                 iss: issuer,
                 aud: audience,
-                scope: scopes.join(' '),
-                iat: now,
-                exp: now + this.parseExpiresIn(expiresIn)
+                scope: scopes.join(' ')
             };
 
-            // Encode header and payload
-            const encodedHeader = this.base64UrlEncode(JSON.stringify(header));
-            const encodedPayload = this.base64UrlEncode(JSON.stringify(payload));
-
-            // Create signature
-            const data = `${encodedHeader}.${encodedPayload}`;
-            const signature = crypto.sign('RSA-SHA256', Buffer.from(data), {
-                key: this.privateKey,
-                padding: crypto.constants.RSA_PKCS1_PADDING
+            // Sign the token using jsonwebtoken with explicit RS256 algorithm
+            // Note: expiresIn is handled by jsonwebtoken internally
+            const token = jwt.sign(payload, this.privateKey!, { 
+                algorithm: 'RS256',
+                expiresIn: '30d' // Default to 30 days
             });
-
-            const encodedSignature = this.base64UrlEncode(signature);
-
-            // Combine to create JWT
-            const token = `${encodedHeader}.${encodedPayload}.${encodedSignature}`;
 
             console.log('🔐 JWT token generated successfully');
             return token;
@@ -176,36 +162,7 @@ class FastMCPTokenGenerator {
     }
 
     /**
-     * Parse expiresIn string to seconds
-     */
-    parseExpiresIn(expiresIn: string): number {
-        const unit = expiresIn.slice(-1);
-        const value = parseInt(expiresIn.slice(0, -1));
-
-        switch (unit) {
-            case 's': return value;
-            case 'm': return value * 60;
-            case 'h': return value * 60 * 60;
-            case 'd': return value * 60 * 60 * 24;
-            default: return 2592000; // Default to 30 days
-        }
-    }
-
-    /**
-     * Base64 URL encoding (RFC 4648)
-     */
-    base64UrlEncode(buffer: string | Buffer): string {
-        if (typeof buffer === 'string') {
-            buffer = Buffer.from(buffer);
-        }
-        return buffer.toString('base64')
-            .replace(/\+/g, '-')
-            .replace(/\//g, '_')
-            .replace(/=/g, '');
-    }
-
-    /**
-     * Verify JWT token
+     * Verify JWT token using jsonwebtoken package
      */
     verifyToken(token: string): JWTPayload {
         if (!this.publicKey) {
@@ -213,54 +170,38 @@ class FastMCPTokenGenerator {
         }
 
         try {
-            const parts = token.split('.');
-            if (parts.length !== 3) {
-                throw new Error('Invalid JWT format');
-            }
-
-            const [encodedHeader, encodedPayload, encodedSignature] = parts;
-            if (!encodedHeader || !encodedPayload || !encodedSignature) {
-                throw new Error('Invalid JWT format - missing parts');
-            }
-            const data = `${encodedHeader}.${encodedPayload}`;
-            const signature = this.base64UrlDecode(encodedSignature);
-
-            // Verify signature
-            const isValid = crypto.verify('RSA-SHA256', Buffer.from(data), {
-                key: this.publicKey,
-                padding: crypto.constants.RSA_PKCS1_PADDING
-            }, signature);
-
-            if (!isValid) {
-                throw new Error('Invalid signature');
-            }
-
-            // Decode payload
-            const payload = JSON.parse(this.base64UrlDecode(encodedPayload).toString());
-            
-            // Check expiration
-            const now = Math.floor(Date.now() / 1000);
-            if (payload.exp && payload.exp < now) {
-                throw new Error('Token has expired');
-            }
+            // Verify the token using jsonwebtoken
+            const decoded = jwt.verify(token, this.publicKey, {
+                algorithms: ['RS256']
+            }) as JWTPayload;
 
             console.log('✅ JWT token verified successfully');
-            return payload;
-        } catch (error) {
-            console.error('❌ Error verifying JWT token:', (error as Error).message);
-            throw error;
+            return decoded;
+        } catch (error: unknown) {
+            if (error instanceof jwt.TokenExpiredError) {
+                console.error('❌ Token has expired');
+                throw new Error('Token has expired');
+            } else if (error instanceof jwt.JsonWebTokenError) {
+                console.error('❌ Invalid token:', error.message);
+                throw new Error(`Invalid token: ${error.message}`);
+            } else {
+                console.error('❌ Error verifying JWT token:', (error as Error).message);
+                throw error;
+            }
         }
     }
 
     /**
-     * Base64 URL decoding
+     * Decode JWT token without verification (for debugging)
      */
-    base64UrlDecode(str: string): Buffer {
-        str = str.replace(/-/g, '+').replace(/_/g, '/');
-        while (str.length % 4) {
-            str += '=';
+    decodeToken(token: string): any {
+        try {
+            const decoded = jwt.decode(token, { complete: true });
+            return decoded;
+        } catch (error: unknown) {
+            console.error('❌ Error decoding JWT token:', (error as Error).message);
+            throw error;
         }
-        return Buffer.from(str, 'base64');
     }
 }
 
@@ -287,7 +228,7 @@ function main(): void {
     
     if (args.includes('--help') || args.includes('-h')) {
         console.log(`
-FastMCP JWT Token Generator
+FastMCP JWT Token Generator (using jsonwebtoken)
 
 Usage:
   node token-generator.js [options]
@@ -296,15 +237,17 @@ Options:
   --generate-keys    Generate new RSA key pair (or load existing if present)
   --subject <email>  Token subject (default: dev-user)
   --issuer <url>     Token issuer (default: http://localhost:8000)
-  --audience <name>  Token audience (default: my-mcp-server)
+  --audience <name>  Token audience (default: google-workspace-mcp)
   --scopes <list>    Comma-separated scopes (default: read,write)
-  --expires <time>   Expiration time (default: 1h)
+  --expires <time>   Expiration time (default: 30d)
   --verify <token>   Verify an existing token
+  --decode <token>   Decode a token without verification
 
 Examples:
   node token-generator.js --generate-keys
   node token-generator.js --subject "user@example.com" --scopes "read,write,admin"
   node token-generator.js --verify "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9..."
+  node token-generator.js --decode "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9..."
         `);
         return;
     }
@@ -331,6 +274,23 @@ Examples:
             } catch (error) {
                 console.error('❌ Token verification failed:', (error as Error).message);
             }
+        }
+        return;
+    }
+
+    if (args.includes('--decode')) {
+        const tokenIndex = args.indexOf('--decode') + 1;
+        const token = args[tokenIndex];
+        if (!token) {
+            console.error('❌ Token required for decoding');
+            return;
+        }
+        
+        try {
+            const decoded = generator.decodeToken(token);
+            console.log('📋 Decoded token:', JSON.stringify(decoded, null, 2));
+        } catch (error) {
+            console.error('❌ Token decoding failed:', (error as Error).message);
         }
         return;
     }
@@ -381,8 +341,7 @@ export {
     FastMCPTokenGenerator,
     generateFastMCPToken,
     TokenOptions,
-    JWTPayload,
-    JWTHeader
+    JWTPayload
 };
 
 // Run CLI if called directly
