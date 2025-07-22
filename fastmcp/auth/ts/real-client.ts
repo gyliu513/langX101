@@ -1,4 +1,4 @@
-import { FastMCPTokenGenerator, TokenOptions, JWTPayload } from './token-generator.js';
+import { JWTTokenGenerator, generateFastMCPToken, TokenOptions } from './token-generator.js';
 import fs from 'fs';
 
 /**
@@ -59,7 +59,7 @@ interface MCPClientConfig {
  */
 class RealFastMCPClient {
     private options: Required<ClientOptions>;
-    private tokenGenerator: FastMCPTokenGenerator;
+    private tokenGenerator: JWTTokenGenerator;
     private currentToken: string | null;
     private tokenExpiry: Date | null;
     private mcpClient: any; // Using any for LangChain client type
@@ -67,8 +67,8 @@ class RealFastMCPClient {
     constructor(options: ClientOptions = {}) {
         this.options = {
             serverUrl: 'http://localhost:8000/mcp',
-            privateKeyPath: '/Users/guangyaliu/langX101/fastmcp/auth/private.pem',
-            publicKeyPath: '/Users/guangyaliu/langX101/fastmcp/auth/public.pem',
+            privateKeyPath: '../private.pem',
+            publicKeyPath: '../public.pem',
             defaultSubject: 'real-client@example.com',
             defaultIssuer: 'http://localhost:8000',
             defaultAudience: 'my-mcp-server',
@@ -78,9 +78,8 @@ class RealFastMCPClient {
             ...options
         };
 
-        this.tokenGenerator = new FastMCPTokenGenerator(
-            this.options.privateKeyPath,
-            this.options.publicKeyPath
+        this.tokenGenerator = new JWTTokenGenerator(
+            this.options.privateKeyPath
         );
 
         this.currentToken = null;
@@ -89,16 +88,16 @@ class RealFastMCPClient {
     }
 
     /**
-     * Initialize the client by loading or generating keys
+     * Initialize the client by loading private key
      */
     async initialize(): Promise<boolean> {
         try {
             console.log('🔧 Initializing Real FastMCP Client...');
             
-            // Try to load existing keys, generate new ones if they don't exist
-            if (!this.tokenGenerator.loadKeys()) {
-                console.log('📝 No existing keys found, generating new key pair...');
-                this.tokenGenerator.generateKeyPair();
+            // Try to load existing private key
+            if (!this.tokenGenerator.loadPrivateKey()) {
+                console.log('📝 No existing private key found');
+                throw new Error('Private key not found. Please ensure the private key file exists.');
             }
 
             // Generate initial token
@@ -113,26 +112,22 @@ class RealFastMCPClient {
     }
 
     /**
-     * Generate a new JWT token
+     * Generate a new JWT token using generateFastMCPToken
      */
     async generateToken(customOptions: TokenOptions = {}): Promise<string> {
         const tokenOptions: TokenOptions = {
             subject: this.options.defaultSubject,
-            issuer: this.options.defaultIssuer,
-            audience: this.options.defaultAudience,
-            scopes: this.options.defaultScopes,
-            expiresIn: this.options.defaultExpiresIn,
             ...customOptions
         };
 
         try {
-            const token = this.tokenGenerator.createToken(tokenOptions);
-            const payload = this.tokenGenerator.verifyToken(token);
+            const token = generateFastMCPToken(tokenOptions, this.options.privateKeyPath);
             
             this.currentToken = token;
-            this.tokenExpiry = new Date(payload.exp * 1000);
+            // Set expiry to 30 days from now (default from JWT)
+            this.tokenExpiry = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
             
-            console.log('🔐 New JWT token generated');
+            console.log('🔐 New JWT token generated using generateFastMCPToken');
             console.log(`📋 Token expires: ${this.tokenExpiry.toISOString()}`);
             
             return token;
@@ -374,24 +369,7 @@ class RealFastMCPClient {
         };
     }
 
-    /**
-     * Verify current token
-     */
-    async verifyCurrentToken(): Promise<JWTPayload> {
-        if (!this.currentToken) {
-            throw new Error('No current token to verify');
-        }
 
-        try {
-            const payload = this.tokenGenerator.verifyToken(this.currentToken);
-            console.log('✅ Current token is valid');
-            console.log('📋 Token payload:', JSON.stringify(payload, null, 2));
-            return payload;
-        } catch (error) {
-            console.error('❌ Current token verification failed:', (error as Error).message);
-            throw error;
-        }
-    }
 }
 
 /**
@@ -428,9 +406,7 @@ async function realServerExample(): Promise<void> {
         const status = client.getStatus();
         console.log('📋 Status:', JSON.stringify(status, null, 2));
 
-        // Verify current token
-        console.log('\n📝 Step 3: Verifying current token...');
-        await client.verifyCurrentToken();
+
 
         // List available tools from real server
         console.log('\n📝 Step 4: Listing tools from real server...');

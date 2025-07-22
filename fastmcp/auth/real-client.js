@@ -57,7 +57,7 @@ class RealFastMCPClient {
     }
 
     /**
-     * Generate a new JWT token
+     * Generate a new JWT token using generateFastMCPToken
      */
     async generateToken(customOptions = {}) {
         const tokenOptions = {
@@ -70,13 +70,13 @@ class RealFastMCPClient {
         };
 
         try {
-            const token = this.tokenGenerator.createToken(tokenOptions);
+            const token = generateFastMCPToken(tokenOptions);
             const payload = this.tokenGenerator.verifyToken(token);
             
             this.currentToken = token;
             this.tokenExpiry = new Date(payload.exp * 1000);
             
-            console.log('🔐 New JWT token generated');
+            console.log('🔐 New JWT token generated using generateFastMCPToken');
             console.log(`📋 Token expires: ${this.tokenExpiry.toISOString()}`);
             
             return token;
