@@ -34,9 +34,6 @@ key_pair = RSAKeyPair(
 test_email = "hello@world.com"
 TOKEN = key_pair.create_token(
     subject=test_email,
-    issuer="http://localhost:8000",
-    audience="my-mcp-server",
-    scopes=["read", "write"]
 )
 
 print(f"🔐 Generated JWT token: {TOKEN[:50]}...")

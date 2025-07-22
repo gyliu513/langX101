@@ -32,8 +32,6 @@ with open("public.pem", "r") as public_key_file:
 # Configure the auth provider with the public key
 auth = BearerAuthProvider(
     public_key=public_key_content,
-    issuer="http://localhost:8000",
-    audience="my-mcp-server"
 )
 
 # logging.basicConfig(level=logging.DEBUG)
