@@ -1,0 +1,14 @@
+[project]
+name = "langgraph-add-message"
+version = "0.1.0"
+description = "LangGraph add message demo"
+requires-python = ">=3.9"
+dependencies = [
+    "langgraph",
+    "langchain-openai",
+    "langchain-core",
+    "python-dotenv",
+]
+
+[tool.uv]
+dev-dependencies = []
