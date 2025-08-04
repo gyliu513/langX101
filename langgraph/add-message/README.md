@@ -1,6 +1,6 @@
-# LangGraph Custom Workflow Demo
+# LangGraph Add Message Demo
 
-This is a simple demonstration of using LangGraph to create a custom workflow for joke generation using OpenAI.
+This is a demonstration of using LangGraph's message handling capabilities with OpenAI.
 
 ## Setup
 
@@ -24,7 +24,7 @@ This is a simple demonstration of using LangGraph to create a custom workflow fo
 Install the dependencies using uv:
 
 ```bash
-cd langgraph/custom-workflow
+cd langgraph/add-message
 uv pip install -e .
 ```
 
@@ -33,20 +33,19 @@ uv pip install -e .
 Run the script using uv:
 
 ```bash
-uv run python chaining.py
+uv run add-message.py
 ```
 
 ## How it Works
 
-This script demonstrates a simple LangGraph workflow:
+This script demonstrates a simple LangGraph workflow with message handling:
 
-1. Generate an initial joke about a user-provided topic
-2. Check if the joke has a punchline (contains "?" or "!")
-3. If it doesn't have a punchline, improve the joke by adding wordplay
-4. Polish the joke by adding a surprising twist
-5. Output the final joke
+1. A user asks about the capital of France
+2. The AI responds using OpenAI
+3. The user asks a follow-up question about Germany
+4. The AI responds again, with access to the full conversation history
 
-The workflow uses conditional branching to determine whether the joke needs improvement.
+The workflow uses LangGraph's `add_messages` annotation to properly accumulate messages in the state.
 
 ## Environment Variables
 
@@ -54,4 +53,4 @@ The following environment variables can be set in the `.env` file:
 
 - `OPENAI_API_KEY`: Your OpenAI API key (required)
 - `OPENAI_MODEL`: The OpenAI model to use (optional, defaults to "gpt-3.5-turbo")
-- `TEMPERATURE`: The temperature setting for the model (optional, defaults to 0.7)
+- `TEMPERATURE`: The temperature setting for the model (optional, defaults to 0)

@@ -1,0 +1,16 @@
+[project]
+name = "langgraph-basic-agent"
+version = "0.1.0"
+description = "LangGraph basic agent demo"
+requires-python = ">=3.9"
+dependencies = [
+    "langgraph",
+    "langchain-openai",
+    "langchain-core",
+    "python-dotenv",
+    "grandalf",
+]
+
+[tool.uv]
+dev-dependencies = []
+

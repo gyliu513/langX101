@@ -1,6 +1,6 @@
-# LangGraph Custom Workflow Demo
+# LangGraph Basic Agent Demo
 
-This is a simple demonstration of using LangGraph to create a custom workflow for joke generation using OpenAI.
+This is a simple demonstration of using LangGraph to create a basic ReAct agent with OpenAI.
 
 ## Setup
 
@@ -24,7 +24,7 @@ This is a simple demonstration of using LangGraph to create a custom workflow fo
 Install the dependencies using uv:
 
 ```bash
-cd langgraph/custom-workflow
+cd langgraph/basic
 uv pip install -e .
 ```
 
@@ -33,20 +33,22 @@ uv pip install -e .
 Run the script using uv:
 
 ```bash
-uv run python chaining.py
+uv run basic-agent.py
 ```
 
 ## How it Works
 
-This script demonstrates a simple LangGraph workflow:
+This script demonstrates a simple LangGraph ReAct agent:
 
-1. Generate an initial joke about a user-provided topic
-2. Check if the joke has a punchline (contains "?" or "!")
-3. If it doesn't have a punchline, improve the joke by adding wordplay
-4. Polish the joke by adding a surprising twist
-5. Output the final joke
+1. It creates a ReAct agent using the OpenAI model
+2. The agent has access to a mock weather tool
+3. It maintains conversation history using an InMemorySaver
+4. It can answer follow-up questions using the conversation context
 
-The workflow uses conditional branching to determine whether the joke needs improvement.
+The script will:
+1. Ask about the weather in New York
+2. Ask a follow-up question about San Francisco
+3. Display the responses in a formatted JSON output
 
 ## Environment Variables
 
@@ -54,4 +56,4 @@ The following environment variables can be set in the `.env` file:
 
 - `OPENAI_API_KEY`: Your OpenAI API key (required)
 - `OPENAI_MODEL`: The OpenAI model to use (optional, defaults to "gpt-3.5-turbo")
-- `TEMPERATURE`: The temperature setting for the model (optional, defaults to 0.7)
+- `TEMPERATURE`: The temperature setting for the model (optional, defaults to 0)
