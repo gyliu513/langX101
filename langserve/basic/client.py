@@ -44,5 +44,3 @@ print("Batch results:", batch_results)
 # Run async operations if this script is executed directly
 if __name__ == "__main__":
     asyncio.run(run_async_operations())
-
-# Made with Bob
