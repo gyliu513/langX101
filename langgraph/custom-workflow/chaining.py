@@ -121,5 +121,3 @@ if __name__ == "__main__":
         exit(1)
     
     main()
-
-# Made with Bob
