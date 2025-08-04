@@ -1,0 +1,16 @@
+[project]
+name = "langgraph-custom-workflow"
+version = "0.1.0"
+description = "LangGraph custom workflow demo"
+requires-python = ">=3.9"
+dependencies = [
+    "langgraph",
+    "langchain-openai",
+    "langchain-core",
+    "ipython",
+    "pillow",
+    "python-dotenv",
+]
+
+[tool.uv]
+dev-dependencies = []
