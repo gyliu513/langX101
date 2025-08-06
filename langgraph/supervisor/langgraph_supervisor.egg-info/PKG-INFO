@@ -1,0 +1,9 @@
+Metadata-Version: 2.4
+Name: langgraph-supervisor
+Version: 0.1.0
+Summary: LangGraph supervisor example with OpenAI API
+Requires-Python: >=3.9
+Requires-Dist: langgraph>=0.2.0
+Requires-Dist: langchain>=0.2.0
+Requires-Dist: langchain-openai>=0.2.0
+Requires-Dist: python-dotenv>=1.0.0
