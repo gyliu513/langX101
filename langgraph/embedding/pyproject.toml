@@ -1,0 +1,44 @@
+[project]
+name = "langgraph-embedding-agent"
+version = "0.1.0"
+description = "A LangGraph agent with embedding retrieval capabilities"
+authors = [
+    {name = "Your Name", email = "your.email@example.com"}
+]
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "langchain>=0.1.0",
+    "langchain-openai>=0.1.0",
+    "langchain-community>=0.1.0",
+    "langchain-chroma>=0.1.0",
+    "langgraph>=0.1.0",
+    "chromadb>=0.4.0",
+    "openai>=1.0.0",
+    "tiktoken>=0.5.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "black>=23.0.0",
+    "isort>=5.12.0",
+]
+
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.black]
+line-length = 88
+target-version = ['py39']
+
+[tool.isort]
+profile = "black"
+line_length = 88
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"] 
