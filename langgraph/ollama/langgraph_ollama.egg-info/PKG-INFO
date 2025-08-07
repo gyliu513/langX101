@@ -1,0 +1,11 @@
+Metadata-Version: 2.4
+Name: langgraph-ollama
+Version: 0.1.0
+Summary: LangGraph Multi-Agent System with Ollama
+Requires-Python: >=3.9
+Requires-Dist: langchain
+Requires-Dist: langchain-community
+Requires-Dist: langgraph
+Requires-Dist: python-dotenv
+Requires-Dist: requests
+Requires-Dist: numpy

@@ -1,0 +1,20 @@
+[project]
+name = "langgraph-ollama"
+version = "0.1.0"
+description = "LangGraph Multi-Agent System with Ollama"
+requires-python = ">=3.9"
+dependencies = [
+    "langchain",
+    "langchain-community", 
+    "langgraph",
+    "python-dotenv",
+    "requests",
+    "numpy",
+]
+
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+py-modules = ["main"] 
