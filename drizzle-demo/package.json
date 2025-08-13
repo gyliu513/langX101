@@ -1,0 +1,29 @@
+{
+  "name": "drizzle-demo",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "db:generate": "drizzle-kit generate --config=drizzle.config.ts",
+    "db:migrate": "drizzle-kit migrate --config=drizzle.config.ts",
+    "db:push": "drizzle-kit push --config=drizzle.config.ts",
+    "db:studio": "drizzle-kit studio --config=drizzle.config.ts",
+    "db:seed": "ts-node src/db/seed.ts",
+    "dev": "ts-node src/index.ts"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "dotenv": "^17.2.1",
+    "drizzle-orm": "^0.44.4",
+    "pg": "^8.16.3"
+  },
+  "devDependencies": {
+    "@types/node": "^24.2.1",
+    "drizzle-kit": "^0.31.4",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.2"
+  }
+}
