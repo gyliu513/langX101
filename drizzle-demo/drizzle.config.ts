@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import type { Config } from "drizzle-kit";
 
 export default {
@@ -10,5 +11,6 @@ export default {
     user: process.env.PGUSER ?? "postgres",
     password: process.env.PGPASSWORD ?? "postgres",
     database: process.env.PGDATABASE ?? "demo",
+    ssl: false,
   },
 } satisfies Config;
