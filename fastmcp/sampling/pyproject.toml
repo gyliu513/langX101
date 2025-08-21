@@ -1,0 +1,15 @@
+[project]
+name = "fastmcp-sampling"
+version = "0.1.0"
+description = "FastMCP Sampling Example Server and Client"
+requires-python = ">=3.10"
+dependencies = ["fastmcp", "openai", "python-dotenv"]
+
+[project.optional-dependencies]
+server = ["fastmcp"]
+client = ["fastmcp", "httpx", "requests", "asyncio"]
+
+[tool.uv]
+# This section can be used by uv for dependency management
+
+
