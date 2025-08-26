@@ -1,15 +1,16 @@
 [project]
-name = "langgraph-plan-and-execute"
+name = "langgraph-agentic-workflow"
 version = "0.1.0"
-description = "LangGraph plan-and-execute tutorial implementation"
+description = "LangGraph agentic workflow implementation with Gemini model"
 requires-python = ">=3.9"
 dependencies = [
     "langgraph",
-    "langchain-openai",
+    "langchain-google-genai",
     "langchain-core",
     "langchain-community",
     "python-dotenv",
     "langchain-tavily",
+    "ipython",
 ]
 
 [tool.uv]
