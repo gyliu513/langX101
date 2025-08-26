@@ -1,19 +1,22 @@
-# LangGraph Plan-and-Execute Tutorial
+# LangGraph Agentic Workflow Implementation
 
-This project demonstrates the **plan-and-execute** pattern using LangGraph, a powerful approach for breaking down complex tasks into planning and execution phases.
+This project demonstrates the **agentic workflow** pattern using LangGraph, implementing the complete workflow with planning, execution, reflection, and decision-making phases.
 
-## 🎯 What is Plan-and-Execute?
+## 🎯 What is the Agentic Workflow?
 
-The plan-and-execute pattern consists of two main phases:
+The agentic workflow consists of four main phases:
 
 1. **Planning Phase**: An LLM creates a detailed, step-by-step plan to solve a problem
-2. **Execution Phase**: The plan is executed step by step, with the ability to replan if needed
+2. **Execution Phase**: The plan is executed step by step using available tools
+3. **Reflection Phase**: Results are evaluated to determine if they meet requirements
+4. **Decision Phase**: Either continue with next steps or replan if results are not satisfactory
 
 ### Key Benefits
 
 - ✅ Better task decomposition and reasoning
 - ✅ Ability to handle complex, multi-step problems  
 - ✅ Dynamic replanning when execution fails
+- ✅ Continuous reflection and improvement
 - ✅ More reliable and interpretable results
 - ✅ Clear separation of concerns between planning and execution
 
@@ -23,7 +26,7 @@ The plan-and-execute pattern consists of two main phases:
 
 - Python 3.9 or higher
 - `uv` package manager installed
-- OpenAI API key
+- Google API key for Gemini model access
 
 ### Installation
 
@@ -40,7 +43,7 @@ The plan-and-execute pattern consists of two main phases:
 3. **Set up your environment variables:**
    Create a `.env` file in the project directory:
    ```bash
-   echo "OPENAI_API_KEY=your_openai_api_key_here" > .env
+   echo "GOOGLE_API_KEY=your_google_api_key_here" > .env
    echo "TAVILY_API_KEY=your_tavily_api_key_here" >> .env  # Optional for search functionality
    ```
 
@@ -102,10 +105,10 @@ Replanner ← Failure
 Edit the `llm` configuration in `plan_and_execute.py`:
 
 ```python
-llm = ChatOpenAI(
-    model="gpt-3.5-turbo",  # Change to your preferred model
-    temperature=0,
-    streaming=True
+llm = ChatGoogleGenerativeAI(
+    model="gemini-1.5-flash",  # Change to your preferred model
+    google_api_key=api_key,
+    temperature=0
 )
 ```
 
@@ -137,9 +140,9 @@ PLANNER_PROMPT = ChatPromptTemplate.from_messages([
 When you run the script, you'll see output like:
 
 ```
-🚀 LangGraph Plan-and-Execute Demo
+🚀 LangGraph Agentic Workflow Demo
 ==================================================
-🎯 Problem: I need to plan a weekend trip to San Francisco...
+🎯 Problem: what is the hometown of the current Australia open winner?...
 
 🤔 Planning phase...
 📋 Generated plan:
@@ -163,7 +166,7 @@ When you run the script, you'll see output like:
 ### Common Issues
 
 1. **API Key Not Found**
-   - Ensure your `.env` file exists and contains `OPENAI_API_KEY`
+   - Ensure your `.env` file exists and contains `GOOGLE_API_KEY`
    - Check that the file is in the correct directory
 
 2. **Import Errors**
@@ -171,8 +174,9 @@ When you run the script, you'll see output like:
    - Verify Python version is 3.9+
 
 3. **Rate Limiting**
-   - The script uses streaming to reduce API calls
-   - Consider using `gpt-3.5-turbo` for cost savings
+   - The script automatically selects the best available model
+   - If one model has rate limits, try another provider
+   - Consider using local Ollama models for unlimited usage
 
 4. **Search Tool Issues**
    - Tavily search requires an API key (optional)
