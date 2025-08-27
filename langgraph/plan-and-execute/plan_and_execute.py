@@ -20,7 +20,7 @@ Key Benefits:
 """
 
 import os
-from typing import Dict, List, Tuple, Any, TypedDict
+from typing import Dict, List, Tuple, Any, TypedDict, Optional, Union
 from dotenv import load_dotenv
 
 # Load environment variables (make sure to create a .env file with your API keys)
@@ -30,7 +30,8 @@ load_dotenv()
 from langchain_core.messages import HumanMessage, AIMessage
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain_tavily import TavilySearch
+# Comment out Tavily if not installed
+# from langchain_tavily import TavilySearch
 from langgraph.graph import StateGraph, START, END
 
 # ============================================================================
@@ -70,7 +71,8 @@ else:
     )
 
 # Initialize search tool for research capabilities
-search_tool = TavilySearch(max_results=5)
+# Comment out if Tavily is not installed
+# search_tool = TavilySearch(max_results=5)
 
 # ============================================================================
 # Prompt Templates
@@ -116,7 +118,7 @@ EXECUTOR_PROMPT = ChatPromptTemplate.from_messages([
     If the step requires verification, focus on the verification process and results.
     
     Return your result in a clear, structured format that can be evaluated."""),
-    ("human", "Execute step: {current_step}"),
+    ("human", "Execute step: {current_step} with the previous results as the input for this step: {results}"),
 ])
 
 # Template for the reflection phase
@@ -164,107 +166,6 @@ REPLANNER_PROMPT = ChatPromptTemplate.from_messages([
 ])
 
 # ============================================================================
-# Helper Functions
-# ============================================================================
-
-def extract_search_query(step_text: str, previous_results: str = "") -> str:
-    """
-    Extracts a concise search query from a step description.
-    """
-    # Look for specific search terms in the step
-    step_lower = step_text.lower()
-    
-    # First, try to extract the winner's name from previous results
-    winner_name = ""
-    if previous_results:
-        # Look for names in previous results
-        if "aryna sabalenka" in previous_results.lower():
-            winner_name = "Aryna Sabalenka"
-        elif "novak djokovic" in previous_results.lower():
-            winner_name = "djokovic"
-        elif "jannik sinner" in previous_results.lower():
-            winner_name = "Jannik Sinner"
-    
-    # Extract names mentioned in the step
-    if "novak djokovic" in step_lower:
-        return "Novak Djokovic biography hometown birthplace"
-    elif "aryna sabalenka" in step_lower:
-        return "Aryna Sabalenka biography hometown birthplace"
-    elif "jannik sinner" in step_lower:
-        return "Jannik Sinner biography hometown birthplace"
-    elif "australia open winner" in step_lower:
-        return "Australia Open 2024 winner men's singles"
-    elif "australian open" in step_lower:
-        return "Australian Open 2024 winner"
-    elif "tennis" in step_lower and "winner" in step_lower:
-        return "tennis grand slam winners 2024"
-    
-    # Look for specific search instructions
-    if "search for" in step_lower:
-        # Extract text after "search for"
-        start_idx = step_lower.find("search for") + 11
-        end_idx = step_lower.find(" ", start_idx)
-        if end_idx == -1:
-            end_idx = len(step_lower)
-        query = step_text[start_idx:end_idx].strip()
-        if query and len(query) < 100:
-            return query
-    
-    # Look for quoted text
-    if '"' in step_text:
-        import re
-        quotes = re.findall(r'"([^"]+)"', step_text)
-        if quotes:
-            return quotes[0][:100]  # Limit to 100 chars
-    
-    # Look for example searches in the step
-    if "example search:" in step_lower:
-        # Extract the example search
-        start_idx = step_lower.find("example search:") + 15
-        end_idx = step_lower.find("\n", start_idx)
-        if end_idx == -1:
-            end_idx = len(step_lower)
-        example = step_text[start_idx:end_idx].strip()
-        if example and len(example) < 100:
-            return example
-    
-    # Look for specific search patterns like "[Winner's Full Name] hometown"
-    if "[" in step_text and "]" in step_text:
-        import re
-        # Find patterns like [Winner's Full Name] hometown
-        patterns = re.findall(r'\[([^\]]+)\]\s*(\w+)', step_text)
-        if patterns:
-            for placeholder, term in patterns:
-                if "winner" in placeholder.lower() or "name" in placeholder.lower():
-                    if winner_name:
-                        return f"{winner_name} {term}"
-                    else:
-                        return f"Australia Open winner {term}"
-    
-    # Default fallback - extract key terms and combine with winner name
-    key_terms = []
-    if "biography" in step_lower:
-        key_terms.append("biography")
-    if "hometown" in step_lower:
-        key_terms.append("hometown")
-    if "winner" in step_lower:
-        key_terms.append("winner")
-    if "birthplace" in step_lower:
-        key_terms.append("birthplace")
-    
-    # Combine with winner name if available
-    if winner_name:
-        key_terms.insert(0, winner_name)
-    elif "australia" in step_lower or "australian" in step_lower:
-        key_terms.insert(0, "Australian Open")
-    
-    if key_terms:
-        return " ".join(key_terms)[:100]
-    
-    # Final fallback
-    return "Australia Open winner 2024"
-
-# ============================================================================
 # Node Functions
 # ============================================================================
 
@@ -295,18 +196,18 @@ def make_plan(state: AgenticWorkflow) -> AgenticWorkflow:
     
     # Debug: Show plan structure
     print("\n🔍 Plan structure analysis:")
-    plan_lines = plan.split('\n')
+    plan_lines = str(plan).split('\n')
     step_count = 0
     for i, line in enumerate(plan_lines):
         line = line.strip()
         if line and line[0].isdigit() and "." in line:
             step_count += 1
-            print(f"  Step {step_count}: {line}...")
+            print(f"  Step {step_count}: {line}")
     
     print(f"Total steps detected: {step_count}")
     
     # Update state
-    state["plan"] = plan
+    state["plan"] = str(plan)
     state["current_step"] = "1"
     state["workflow_phase"] = "execution"
     state["messages"] = messages + [response]
@@ -372,6 +273,8 @@ def execute_actions_with_tools(state: AgenticWorkflow) -> AgenticWorkflow:
         results="\n".join(state.get("results", [])) if state.get("results") else "None"
     )
     
+    print(f"📝 Prompt for this execution: {prompt}")
+    
     # Execute the step
     response = llm.invoke(prompt)
     
@@ -379,23 +282,15 @@ def execute_actions_with_tools(state: AgenticWorkflow) -> AgenticWorkflow:
     if "search" in full_step_text.lower() or "research" in full_step_text.lower():
         print("🔍 Research step detected, using search tool...")
         try:
-            # Extract a concise search query from the step description
-            previous_results = "\n".join(state.get("results", []))
-            search_query = extract_search_query(full_step_text, previous_results)
-            print(f"🔍 Using search query: {search_query}")
-            
-            if len(search_query) > 400:
-                print(f"⚠️ Search query too long ({len(search_query)} chars), truncating...")
-                search_query = search_query[:400]
-            
-            search_results = search_tool.invoke({"query": search_query})
-            response = AIMessage(content=f"Research completed: {search_results}")
+            # For this general agent, we'll use the LLM to simulate search results
+            # since we've removed the specific search query extraction
+            search_response = llm.invoke(
+                f"You are a search engine. Provide relevant information for: {full_step_text}"
+            )
+            response = AIMessage(content=f"Research completed: {search_response.content}")
         except Exception as e:
-            print(f"⚠️ Search tool failed: {e}")
-            if "Query is too long" in str(e):
-                response = AIMessage(content=f"Search failed: Query was too long. Please provide a shorter, more focused search term.")
-            else:
-                response = AIMessage(content=f"Research step completed (tool unavailable): {response.content}")
+            print(f"⚠️ Search simulation failed: {e}")
+            response = AIMessage(content=f"Research step completed (simulated): {response.content}")
     
     print(f"✅ Step {current_step_num} completed:")
     print(f"   {response.content}")
@@ -439,7 +334,8 @@ def reflect_on_results(state: AgenticWorkflow) -> AgenticWorkflow:
     print(f"   {response.content}")
     
     # Update state
-    state["reflection_results"] = state.get("reflection_results", []) + [response.content]
+    reflection_content = str(response.content)
+    state["reflection_results"] = state.get("reflection_results", []) + [reflection_content]
     state["workflow_phase"] = "decision"
     state["messages"] = state.get("messages", []) + [response]
     
@@ -529,7 +425,7 @@ def replan_step(state: AgenticWorkflow) -> AgenticWorkflow:
     
     # Generate new plan
     response = llm.invoke(prompt)
-    new_plan = response.content
+    new_plan = str(response.content)
     
     print(f"📋 New plan generated:\n{new_plan}")
     
@@ -634,8 +530,7 @@ def main():
     
     # Show which model is being used
     print(f"🤖 Using LLM: {type(llm).__name__}")
-    if hasattr(llm, 'model_name'):
-        print(f"📋 Model: {llm.model_name}")
+    print(f"📋 Model: {llm.model}")
     print("=" * 60)
     
     # Check if API key is available
@@ -650,18 +545,8 @@ def main():
     
     # Visualize the graph and save as image
     try:
-        from IPython.display import Image, display
-        # Display in interactive environment
-        display(Image(app.get_graph(xray=True).draw_mermaid_png()))
-        
-        # Save the graph as a PNG file
-        graph_image = app.get_graph(xray=True).draw_mermaid_png()
-        with open("agentic_workflow_graph.png", "wb") as f:
-            f.write(graph_image)
-        print("📊 Graph visualization saved as 'agentic_workflow_graph.png'")
-        
-    except ImportError:
-        print("IPython not available. Skipping graph visualization.")
+        # Skip visualization if IPython is not available
+        print("📊 Graph visualization skipped (requires IPython)")
     except Exception as e:
         print(f"Could not display graph: {e}")
     
@@ -672,20 +557,6 @@ def main():
     
     print(f"🎯 Problem: {problem.strip()}")
     print("\n" + "="*60 + "\n")
-    
-    # Test search query extraction
-    print("🧪 Testing search query extraction...")
-    test_step = "1. **Research the winner's biographical information:** Use a search engine to search for 'Novak Djokovic biography' or 'Novak Djokovic hometown'."
-    test_query = extract_search_query(test_step)
-    print(f"Test step: {test_step}")
-    print(f"Extracted query: {test_query}")
-    
-    # Test with previous results
-    test_step2 = "2. **Research the winner's hometown:** Use the winner's full name and search for hometown."
-    test_query2 = extract_search_query(test_step2, "Step 1: The winner is Aryna Sabalenka")
-    print(f"Test step 2: {test_step2}")
-    print(f"Extracted query 2: {test_query2}")
-    print("="*60 + "\n")
     
     # Initialize state
     initial_state = AgenticWorkflow(
