@@ -118,7 +118,7 @@ EXECUTOR_PROMPT = ChatPromptTemplate.from_messages([
     If the step requires verification, focus on the verification process and results.
     
     Return your result in a clear, structured format that can be evaluated."""),
-    ("human", "Execute step: {current_step} with the previous results as the input for this step: {results}"),
+    ("human", "Execute step: {current_step}"),
 ])
 
 # Template for the reflection phase
@@ -274,7 +274,6 @@ def execute_actions_with_tools(state: AgenticWorkflow) -> AgenticWorkflow:
     )
     
     print(f"📝 Prompt for this execution: {prompt}")
-    
     # Execute the step
     response = llm.invoke(prompt)
     
@@ -284,6 +283,12 @@ def execute_actions_with_tools(state: AgenticWorkflow) -> AgenticWorkflow:
         try:
             # For this general agent, we'll use the LLM to simulate search results
             # since we've removed the specific search query extraction
+            if state.get("results"):
+                full_step_text = (
+                    f"{full_step_text}\n with the following results:\n" +
+                    "\n".join(state["results"])
+    )
+            print(f"📝 full_step_text for search: {full_step_text}")
             search_response = llm.invoke(
                 f"You are a search engine. Provide relevant information for: {full_step_text}"
             )
