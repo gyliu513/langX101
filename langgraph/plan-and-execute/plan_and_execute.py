@@ -557,7 +557,7 @@ def main():
     
     # Example problem to solve
     problem = """
-    what is the hometown of the current Australia open winner?
+    What is the hometown of the 2023 Australia open winner for men's singles?
     """
     
     print(f"🎯 Problem: {problem.strip()}")
