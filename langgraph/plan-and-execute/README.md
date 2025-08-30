@@ -22,7 +22,7 @@ The agentic workflow is a structured approach to problem-solving that mimics hum
 
 ### Related Resources
 
-- 📝 For a detailed explanation of the agentic workflow pattern, see [agentic_workflow_blog.md](./agentic_workflow_blog.md)
+- 📝 For a detailed explanation of the agentic workflow pattern, see [agentic_workflow_blog.md](https://gyliu513.github.io/jekyll/update/2025/08/21/agentic-workflow.html)
 
 ## 🚀 Quick Start
 
@@ -48,7 +48,6 @@ The agentic workflow is a structured approach to problem-solving that mimics hum
    Create a `.env` file in the project directory:
    ```bash
    echo "GOOGLE_API_KEY=your_google_api_key_here" > .env
-   echo "TAVILY_API_KEY=your_tavily_api_key_here" >> .env  # Optional for search functionality
    ```
 
 ### Running the Demo
