@@ -556,8 +556,11 @@ def main():
         print(f"Could not display graph: {e}")
     
     # Example problem to solve
+    # problem = """
+    # What is the hometown of the 2023 Australia open winner for men's singles?
+    # """
     problem = """
-    What is the hometown of the 2023 Australia open winner for men's singles?
+    Show me the latest 3 applications from Instana via Instana MCP Server?
     """
     
     print(f"🎯 Problem: {problem.strip()}")
