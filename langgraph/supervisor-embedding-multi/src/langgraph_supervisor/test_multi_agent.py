@@ -50,5 +50,3 @@ if __name__ == "__main__":
         exit(1)
     
     test_multi_agent_selection()
-
-# Made with Bob

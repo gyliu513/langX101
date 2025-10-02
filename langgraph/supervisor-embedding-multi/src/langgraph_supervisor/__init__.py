@@ -3,5 +3,3 @@
 from .main import app, AGENTS, agent_selector
 
 __all__ = ["app", "AGENTS", "agent_selector"]
-
-# Made with Bob
