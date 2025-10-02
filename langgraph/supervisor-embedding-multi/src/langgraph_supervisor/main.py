@@ -659,5 +659,3 @@ if __name__ == "__main__":
             print(f"Assistant: {last_response}")
         else:
             print("Assistant: I'm sorry, I couldn't process that request.")
-
-# Made with Bob

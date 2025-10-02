@@ -1,0 +1,30 @@
+[project]
+name = "agent-orchestrator"
+version = "0.1.0"
+description = "LangGraph Agent Orchestrator with Task Decomposition"
+authors = [
+    {name = "gyliu513", email = "gyliu513@gmail.com"},
+]
+dependencies = [
+    "numpy>=1.24.0",
+    "langchain>=0.1.0",
+    "langchain-core>=0.1.0",
+    "langgraph>=0.0.15",
+    "python-dotenv>=1.0.0",
+    "requests>=2.31.0",
+]
+
+[project.optional-dependencies]
+ollama = [
+    "langchain-ollama",
+]
+community = [
+    "langchain-community",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["."]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
