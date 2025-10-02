@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-LangGraph Agentic Workflow Implementation
+LangGraph Agentic Workflow Implementation with Ollama
 
-This script implements the agentic workflow pattern using LangGraph, following the
-agentic workflow diagram with planning, execution, and reflection phases.
+This script implements the agentic workflow pattern using LangGraph with local Ollama models,
+following the agentic workflow diagram with planning, execution, and reflection phases.
 
 The agentic workflow consists of:
 1. Planning Phase: An LLM creates a detailed plan to solve a problem
@@ -17,22 +17,48 @@ Key Benefits:
 - Dynamic replanning when execution fails
 - Continuous reflection and improvement
 - More reliable and interpretable results
+- Local execution using Ollama models (no API keys required)
+- Privacy-preserving as all processing happens locally
 """
 
 import os
 from typing import Dict, List, Tuple, Any, TypedDict, Optional, Union
 from dotenv import load_dotenv
 
-# Load environment variables (make sure to create a .env file with your API keys)
+# Load environment variables (not required for Ollama but kept for compatibility)
 load_dotenv()
+
+# Note: You need to install the following packages:
+# pip install langchain langgraph
+#
+# For Ollama support (choose one):
+# Option 1 (recommended): pip install langchain-ollama
+# Option 2 (fallback): pip install langchain-community
+#
+# Make sure Ollama is installed and running:
+# 1. Download from https://ollama.com/download
+# 2. Run: ollama serve
+# 3. Run: ollama pull llama3.1
 
 # Import LangGraph and LangChain components
 from langchain_core.messages import HumanMessage, AIMessage
-from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 # Comment out Tavily if not installed
 # from langchain_tavily import TavilySearch
 from langgraph.graph import StateGraph, START, END
+
+# Try to import from langchain_ollama (preferred) or fall back to langchain_community
+try:
+    # Preferred modern imports
+    from langchain_ollama import OllamaLLM
+    from langchain_ollama import OllamaEmbeddings
+    print("Using langchain_ollama package (recommended)")
+except ImportError:
+    # Fallback to community package (deprecated but more widely available)
+    from langchain_community.llms import Ollama as OllamaLLM
+    from langchain_community.embeddings import OllamaEmbeddings
+    print("Using langchain_community package (deprecated)")
+    print("Consider installing langchain_ollama for better support: pip install langchain-ollama")
 
 # ============================================================================
 # State Definition
@@ -53,22 +79,27 @@ class AgenticWorkflow(TypedDict):
 # Configuration and Setup
 # ============================================================================
 
-# Initialize the LLM - make sure you have GOOGLE_API_KEY in your .env file
-api_key = os.getenv("GOOGLE_API_KEY")
-if not api_key:
-    print("⚠️  GOOGLE_API_KEY not set. Using default configuration.")
-    # Use default configuration without explicit API key
-    # The ChatGoogleGenerativeAI will try to find the key from other sources
-    llm = ChatGoogleGenerativeAI(
-        model="gemini-1.5-flash",
-        temperature=0
+# Initialize the LLM - using local Ollama instance
+try:
+    # Initialize Ollama model
+    llm = OllamaLLM(
+        model="llama3.1",  # You can change this to any model you have in Ollama
+        base_url="http://localhost:11434",  # Default Ollama URL
+        temperature=0.1
     )
-else:
-    llm = ChatGoogleGenerativeAI(
-        model="gemini-1.5-flash",
-        google_api_key=api_key,
-        temperature=0
+    
+    # Initialize embeddings if needed for future use
+    embeddings = OllamaEmbeddings(
+        model="llama3.1",  # Use the same model for embeddings
+        base_url="http://localhost:11434"
     )
+    
+    print("✅ Successfully connected to Ollama")
+except Exception as e:
+    print(f"❌ Error initializing Ollama: {e}")
+    print("Please make sure Ollama is running:")
+    print("ollama serve")
+    exit(1)
 
 # Initialize search tool for research capabilities
 # Comment out if Tavily is not installed
@@ -190,7 +221,12 @@ def make_plan(state: AgenticWorkflow) -> AgenticWorkflow:
     response = llm.invoke(prompt)
     
     # Extract the plan from the response
-    plan = response.content
+    # Handle both string and message object responses
+    if hasattr(response, 'content'):
+        plan = response.content
+    else:
+        # If response is a string (as with OllamaLLM)
+        plan = response
     
     print(f"📋 Generated plan:\n{plan}")
     
@@ -277,6 +313,10 @@ def execute_actions_with_tools(state: AgenticWorkflow) -> AgenticWorkflow:
     # Execute the step
     response = llm.invoke(prompt)
     
+    # Convert to AIMessage if it's a string
+    if not hasattr(response, 'content'):
+        response = AIMessage(content=response)
+    
     # Check if tools are needed
     if "search" in full_step_text.lower() or "research" in full_step_text.lower():
         print("🔍 Research step detected, using search tool...")
@@ -287,12 +327,17 @@ def execute_actions_with_tools(state: AgenticWorkflow) -> AgenticWorkflow:
                 full_step_text = (
                     f"{full_step_text}\n with the following results:\n" +
                     "\n".join(state["results"])
-    )
+                )
             print(f"📝 full_step_text for search: {full_step_text}")
-            search_response = llm.invoke(
-                f"You are a search engine. Provide relevant information for: {full_step_text}"
-            )
-            response = AIMessage(content=f"Research completed: {search_response.content}")
+            
+            # Create a search prompt for Ollama
+            search_prompt = f"You are a search engine. Provide relevant information for: {full_step_text}"
+            
+            # Call Ollama directly
+            search_result = llm.invoke(search_prompt)
+            
+            # Create a proper message object
+            response = AIMessage(content=f"Research completed: {search_result}")
         except Exception as e:
             print(f"⚠️ Search simulation failed: {e}")
             response = AIMessage(content=f"Research step completed (simulated): {response.content}")
@@ -335,11 +380,19 @@ def reflect_on_results(state: AgenticWorkflow) -> AgenticWorkflow:
     # Generate reflection
     response = llm.invoke(prompt)
     
-    print(f"🤔 Reflection:")
-    print(f"   {response.content}")
+    # Handle both string and message object responses
+    if hasattr(response, 'content'):
+        reflection_content = response.content
+        print(f"🤔 Reflection:")
+        print(f"   {reflection_content}")
+    else:
+        # If response is a string (as with OllamaLLM)
+        reflection_content = response
+        print(f"🤔 Reflection:")
+        print(f"   {reflection_content}")
     
     # Update state
-    reflection_content = str(response.content)
+    reflection_content = str(reflection_content)
     state["reflection_results"] = state.get("reflection_results", []) + [reflection_content]
     state["workflow_phase"] = "decision"
     state["messages"] = state.get("messages", []) + [response]
@@ -430,7 +483,13 @@ def replan_step(state: AgenticWorkflow) -> AgenticWorkflow:
     
     # Generate new plan
     response = llm.invoke(prompt)
-    new_plan = str(response.content)
+    
+    # Handle both string and message object responses
+    if hasattr(response, 'content'):
+        new_plan = str(response.content)
+    else:
+        # If response is a string (as with OllamaLLM)
+        new_plan = str(response)
     
     print(f"📋 New plan generated:\n{new_plan}")
     
@@ -538,11 +597,20 @@ def main():
     print(f"📋 Model: {llm.model}")
     print("=" * 60)
     
-    # Check if API key is available
-    if not os.getenv("GOOGLE_API_KEY"):
-        print("❌ Error: GOOGLE_API_KEY not found in environment variables")
-        print("Please create a .env file with your Google API key:")
-        print("GOOGLE_API_KEY=your_api_key_here")
+    # Check if Ollama is running
+    try:
+        import requests
+        response = requests.get("http://localhost:11434/api/tags", timeout=5)
+        if response.status_code != 200:
+            print("❌ Error: Ollama is not responding properly.")
+            print("Please make sure Ollama is running:")
+            print("ollama serve")
+            return
+    except Exception as e:
+        print("❌ Error: Cannot connect to Ollama.")
+        print("Please make sure Ollama is running:")
+        print("ollama serve")
+        print(f"Error details: {e}")
         return
     
     # Create the workflow
@@ -556,12 +624,15 @@ def main():
         print(f"Could not display graph: {e}")
     
     # Example problem to solve
-    # problem = """
-    # What is the hometown of the 2023 Australia open winner for men's singles?
-    # """
     problem = """
-    Show me the latest 3 applications from Instana via Instana MCP Server?
+    What is the hometown of the 2023 Australia open winner for men's singles?
     """
+    # problem = """
+    # Create a plan to build a simple web application with a login page and dashboard.
+    # """
+    
+    print("🤖 Using local Ollama model for all LLM operations")
+    print(f"📋 Model: {llm.model}")
     
     print(f"🎯 Problem: {problem.strip()}")
     print("\n" + "="*60 + "\n")
