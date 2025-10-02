@@ -20,13 +20,13 @@ class AgentState(TypedDict):
 
 # Initialize Ollama model and embeddings
 model = Ollama(
-    model="llama2",  # You can change this to any model you have in Ollama
+    model="llama3.1",  # You can change this to any model you have in Ollama
     base_url="http://localhost:11434",  # Default Ollama URL
     temperature=0.1
 )
 
 embeddings = OllamaEmbeddings(
-    model="llama2",  # Use the same model for embeddings
+    model="llama3.1",  # Use the same model for embeddings
     base_url="http://localhost:11434"
 )
 
