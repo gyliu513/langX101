@@ -31,7 +31,7 @@ embeddings = OllamaEmbeddings(
 )
 
 # Define agents with detailed descriptions
-AGENTS = {
+AGENTS: dict[str, dict[str, Any]] = {
     "general_conversation": {
         "name": "General Conversation Agent",
         "description": """I am a friendly and engaging conversational agent. I excel at:
@@ -149,7 +149,7 @@ I'm perfect for users seeking health advice, fitness tips, wellness guidance, or
 class AgentSelector:
     """Uses embeddings to select the most appropriate agent(s) for a user query"""
     
-    def __init__(self, similarity_threshold: float = 0.3, max_agents: int = 3):
+    def __init__(self, similarity_threshold: float = 0.3, max_agents: int = 1):
         self.embeddings = embeddings
         self.agent_embeddings = {}
         self.similarity_threshold = similarity_threshold
