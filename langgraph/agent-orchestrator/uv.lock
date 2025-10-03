@@ -12,6 +12,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "langchain" },
+    { name = "langchain-community" },
     { name = "langchain-core" },
     { name = "langgraph" },
     { name = "numpy" },
@@ -20,9 +21,6 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
-community = [
-    { name = "langchain-community" },
-]
 ollama = [
     { name = "langchain-ollama" },
 ]
@@ -30,7 +28,7 @@ ollama = [
 [package.metadata]
 requires-dist = [
     { name = "langchain", specifier = ">=0.1.0" },
-    { name = "langchain-community", marker = "extra == 'community'" },
+    { name = "langchain-community", specifier = ">=0.0.10" },
     { name = "langchain-core", specifier = ">=0.1.0" },
     { name = "langchain-ollama", marker = "extra == 'ollama'" },
     { name = "langgraph", specifier = ">=0.0.15" },
@@ -38,7 +36,7 @@ requires-dist = [
     { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "requests", specifier = ">=2.31.0" },
 ]
-provides-extras = ["ollama", "community"]
+provides-extras = ["ollama"]
 
 [[package]]
 name = "aiohappyeyeballs"

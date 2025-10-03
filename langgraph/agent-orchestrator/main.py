@@ -44,54 +44,10 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langgraph.graph import StateGraph, START, END
 from langgraph.types import Command
 
-# Try to import from langchain_ollama (preferred) or fall back to langchain_community
-# If neither is available, use a mock implementation for demonstration
-USING_MOCK = False
-
-try:
-    # Preferred modern imports
-    from langchain_ollama import OllamaLLM
-    from langchain_ollama import OllamaEmbeddings
-    print("Using langchain_ollama package (recommended)")
-except ImportError:
-    try:
-        # Fallback to community package (deprecated but more widely available)
-        from langchain_community.llms import Ollama as OllamaLLM
-        from langchain_community.embeddings import OllamaEmbeddings
-        print("Using langchain_community package (deprecated)")
-        print("Consider installing langchain_ollama for better support: pip install langchain-ollama")
-    except ImportError:
-        # If neither package is available, use mock implementations
-        print("⚠️ Neither langchain_ollama nor langchain_community is installed.")
-        print("⚠️ Using mock implementations for demonstration purposes.")
-        print("⚠️ To use real Ollama models, install one of the packages:")
-        print("⚠️ uv pip install langchain-ollama")
-        print("⚠️ or")
-        print("⚠️ uv pip install langchain-community")
-        
-        USING_MOCK = True
-        
-        # Mock LLM implementation
-        class OllamaLLM:
-            def __init__(self, model="mock", base_url=None, temperature=0):
-                self.model = model
-                self.base_url = base_url
-                self.temperature = temperature
-                
-            def invoke(self, prompt):
-                print(f"🔄 Mock LLM invoked with prompt: {prompt[:50]}...")
-                return f"This is a mock response for: {prompt[:30]}..."
-        
-        # Mock Embeddings implementation
-        class OllamaEmbeddings:
-            def __init__(self, model="mock", base_url=None):
-                self.model = model
-                self.base_url = base_url
-                
-            def embed_query(self, text):
-                import random
-                # Return a random embedding vector of length 384
-                return [random.random() for _ in range(384)]
+# Import Ollama components
+from langchain_community.llms import Ollama
+from langchain_community.embeddings import OllamaEmbeddings
+print("Using langchain_community package for Ollama integration")
 
 # ============================================================================
 # State Definition
@@ -105,7 +61,7 @@ class OrchestratorState(TypedDict):
     current_step_index: int
     total_steps: int
     results: List[str]
-    reflection_results: List[str]
+    reflection_results: List[Union[str, Any]]  # Allow any type for reflection results
     replan_count: int
     max_replans: int
     workflow_phase: str  # "planning", "agent_selection", "execution", "reflection", "decision"
@@ -236,33 +192,27 @@ I'm perfect for users seeking health advice, fitness tips, wellness guidance, or
 # Configuration and Setup
 # ============================================================================
 
-# Initialize the LLM - using local Ollama instance or mock if not available
-if not USING_MOCK:
-    try:
-        # Initialize Ollama model
-        llm = OllamaLLM(
-            model="llama3.1",  # You can change this to any model you have in Ollama
-            base_url="http://localhost:11434",  # Default Ollama URL
-            temperature=0  # Use integer for mock compatibility
-        )
-        
-        # Initialize embeddings for agent selection
-        embeddings = OllamaEmbeddings(
-            model="llama3.1",  # Use the same model for embeddings
-            base_url="http://localhost:11434"
-        )
-        
-        print("✅ Successfully connected to Ollama")
-    except Exception as e:
-        print(f"❌ Error initializing Ollama: {e}")
-        print("Please make sure Ollama is running:")
-        print("ollama serve")
-        exit(1)
-else:
-    # Using mock implementations
-    llm = OllamaLLM()
-    embeddings = OllamaEmbeddings()
-    print("✅ Using mock LLM and embeddings for demonstration")
+# Initialize Ollama model and embeddings
+try:
+    # Initialize Ollama model
+    llm = Ollama(
+        model="llama3.1",  # You can change this to any model you have in Ollama
+        base_url="http://localhost:11434",  # Default Ollama URL
+        temperature=0.1
+    )
+    
+    # Initialize embeddings for agent selection
+    embeddings = OllamaEmbeddings(
+        model="llama3.1",  # Use the same model for embeddings
+        base_url="http://localhost:11434"
+    )
+    
+    print("✅ Successfully connected to Ollama")
+except Exception as e:
+    print(f"❌ Error initializing Ollama: {e}")
+    print("Please make sure Ollama is running:")
+    print("ollama serve")
+    exit(1)
 
 # ============================================================================
 # Agent Selection Logic
@@ -463,7 +413,10 @@ def make_plan(state: OrchestratorState) -> OrchestratorState:
     step_count = 0
     for i, line in enumerate(plan_lines):
         line = line.strip()
-        if line and line[0].isdigit() and "." in line:
+        # Check for various step formats: "1.", "Step 1:", "**Step 1:**"
+        if (line and line[0].isdigit() and "." in line) or \
+           (line.lower().startswith("step") and any(c.isdigit() for c in line)) or \
+           (line.startswith("**") and "step" in line.lower() and any(c.isdigit() for c in line)):
             step_count += 1
             print(f"  Step {step_count}: {line}")
     
@@ -475,7 +428,13 @@ def make_plan(state: OrchestratorState) -> OrchestratorState:
     state["current_step_index"] = 1
     state["total_steps"] = step_count
     state["workflow_phase"] = "agent_selection"
-    state["messages"] = messages + [AIMessage(content=plan)]
+    
+    # Create a proper AIMessage
+    if isinstance(response, AIMessage):
+        state["messages"] = messages + [response]
+    else:
+        state["messages"] = messages + [AIMessage(content=str(plan))]
+    
     state["selected_agents"] = []
     
     return state
@@ -501,10 +460,12 @@ def select_agent_for_step(state: OrchestratorState) -> OrchestratorState:
             continue
             
         # Check for step start patterns
-        if (line.startswith(f"{current_step_num}.") or 
+        if (line.startswith(f"{current_step_num}.") or
             line.startswith(f"{current_step_num}**") or
             line.startswith(f"{current_step_num} ") or
-            (line.startswith("**") and f"{current_step_num}." in line)):
+            (line.startswith("**") and f"{current_step_num}." in line) or
+            (line.lower().startswith(f"step {current_step_num}:")) or
+            (line.lower().startswith(f"**step {current_step_num}:**"))):
             
             in_current_step = True
             current_step_text = line
@@ -512,10 +473,12 @@ def select_agent_for_step(state: OrchestratorState) -> OrchestratorState:
         elif in_current_step:
             # Check if we've reached the next step
             next_step_num = current_step_num + 1
-            if (line.startswith(f"{next_step_num}.") or 
+            if (line.startswith(f"{next_step_num}.") or
                 line.startswith(f"{next_step_num}**") or
                 line.startswith(f"{next_step_num} ") or
-                (line.startswith("**") and f"{next_step_num}." in line)):
+                (line.startswith("**") and f"{next_step_num}." in line) or
+                (line.lower().startswith(f"step {next_step_num}:")) or
+                (line.lower().startswith(f"**step {next_step_num}:**"))):
                 break
             else:
                 step_content.append(line)
@@ -571,10 +534,12 @@ def execute_step_with_agent(state: OrchestratorState) -> OrchestratorState:
             continue
             
         # Check for step start patterns
-        if (line.startswith(f"{current_step_num}.") or 
+        if (line.startswith(f"{current_step_num}.") or
             line.startswith(f"{current_step_num}**") or
             line.startswith(f"{current_step_num} ") or
-            (line.startswith("**") and f"{current_step_num}." in line)):
+            (line.startswith("**") and f"{current_step_num}." in line) or
+            (line.lower().startswith(f"step {current_step_num}:")) or
+            (line.lower().startswith(f"**step {current_step_num}:**"))):
             
             in_current_step = True
             current_step_text = line
@@ -582,10 +547,12 @@ def execute_step_with_agent(state: OrchestratorState) -> OrchestratorState:
         elif in_current_step:
             # Check if we've reached the next step
             next_step_num = current_step_num + 1
-            if (line.startswith(f"{next_step_num}.") or 
+            if (line.startswith(f"{next_step_num}.") or
                 line.startswith(f"{next_step_num}**") or
                 line.startswith(f"{next_step_num} ") or
-                (line.startswith("**") and f"{next_step_num}." in line)):
+                (line.startswith("**") and f"{next_step_num}." in line) or
+                (line.lower().startswith(f"step {next_step_num}:")) or
+                (line.lower().startswith(f"**step {next_step_num}:**"))):
                 break
             else:
                 step_content.append(line)
@@ -612,16 +579,19 @@ def execute_step_with_agent(state: OrchestratorState) -> OrchestratorState:
     response = llm.invoke(prompt)
     
     # Convert to AIMessage if it's a string
-    if not hasattr(response, 'content'):
-        response = AIMessage(content=response)
+    if isinstance(response, AIMessage):
+        ai_message = response
+    else:
+        # If response is a string or other format
+        ai_message = AIMessage(content=str(response))
     
     print(f"✅ Step {current_step_num} completed by {agent_info['name']}:")
-    print(f"   {response.content}")
+    print(f"   {ai_message.content}")
     
     # Update state
-    state["results"] = state.get("results", []) + [f"Step {current_step_num} ({agent_info['name']}): {response.content}"]
+    state["results"] = state.get("results", []) + [f"Step {current_step_num} ({agent_info['name']}): {ai_message.content}"]
     state["workflow_phase"] = "reflection"
-    state["messages"] = state.get("messages", []) + [response]
+    state["messages"] = state.get("messages", []) + [ai_message]
     
     return state
 
@@ -654,21 +624,21 @@ def reflect_on_results(state: OrchestratorState) -> OrchestratorState:
     response = llm.invoke(prompt)
     
     # Handle both string and message object responses
-    if hasattr(response, 'content'):
-        reflection_content = response.content
-        print(f"🤔 Reflection:")
-        print(f"   {reflection_content}")
+    if isinstance(response, AIMessage):
+        ai_message = response
+        reflection_content = ai_message.content
     else:
-        # If response is a string (as with OllamaLLM)
-        reflection_content = response
-        print(f"🤔 Reflection:")
-        print(f"   {reflection_content}")
+        # If response is a string or other format
+        reflection_content = str(response)
+        ai_message = AIMessage(content=reflection_content)
+    
+    print(f"🤔 Reflection:")
+    print(f"   {reflection_content}")
     
     # Update state
-    reflection_content = str(reflection_content)
     state["reflection_results"] = state.get("reflection_results", []) + [reflection_content]
     state["workflow_phase"] = "decision"
-    state["messages"] = state.get("messages", []) + [AIMessage(content=reflection_content)]
+    state["messages"] = state.get("messages", []) + [ai_message]
     
     return state
 
@@ -748,11 +718,13 @@ def replan_step(state: OrchestratorState) -> OrchestratorState:
     response = llm.invoke(prompt)
     
     # Handle both string and message object responses
-    if hasattr(response, 'content'):
-        new_plan = str(response.content)
+    if isinstance(response, AIMessage):
+        ai_message = response
+        new_plan = str(ai_message.content)
     else:
-        # If response is a string (as with OllamaLLM)
+        # If response is a string or other format
         new_plan = str(response)
+        ai_message = AIMessage(content=new_plan)
     
     print(f"📋 New plan generated:\n{new_plan}")
     
@@ -770,7 +742,7 @@ def replan_step(state: OrchestratorState) -> OrchestratorState:
     state["current_step_index"] = 1
     state["total_steps"] = step_count
     state["workflow_phase"] = "agent_selection"  # Go back to agent selection for the first step
-    state["messages"] = state.get("messages", []) + [AIMessage(content=new_plan)]
+    state["messages"] = state.get("messages", []) + [ai_message]
     
     return state
 
@@ -838,10 +810,13 @@ Provide a clear, concise summary of what was accomplished, highlighting key insi
     response = llm.invoke(summary_prompt)
     
     # Handle both string and message object responses
-    if hasattr(response, 'content'):
-        summary = response.content
+    if isinstance(response, AIMessage):
+        ai_message = response
+        summary = ai_message.content
     else:
-        summary = response
+        # If response is a string or other format
+        summary = str(response)
+        ai_message = AIMessage(content=summary)
     
     # Create the final summary message
     summary_message = f"""# Workflow Summary
@@ -869,7 +844,8 @@ Provide a clear, concise summary of what was accomplished, highlighting key insi
     print(summary_message)
     
     # Add the summary to the state
-    state["messages"] = state.get("messages", []) + [AIMessage(content=summary_message)]
+    final_message = AIMessage(content=summary_message)
+    state["messages"] = state.get("messages", []) + [final_message]
     
     return state
 
@@ -952,24 +928,21 @@ def main():
     print(f"📋 Model: {llm.model}")
     print("=" * 60)
     
-    # Check if Ollama is running (skip if using mock)
-    if not USING_MOCK:
-        try:
-            import requests
-            response = requests.get("http://localhost:11434/api/tags", timeout=5)
-            if response.status_code != 200:
-                print("❌ Error: Ollama is not responding properly.")
-                print("Please make sure Ollama is running:")
-                print("ollama serve")
-                return
-        except Exception as e:
-            print("❌ Error: Cannot connect to Ollama.")
+    # Check if Ollama is running
+    try:
+        import requests
+        response = requests.get("http://localhost:11434/api/tags", timeout=5)
+        if response.status_code != 200:
+            print("❌ Error: Ollama is not responding properly.")
             print("Please make sure Ollama is running:")
             print("ollama serve")
-            print(f"Error details: {e}")
             return
-    else:
-        print("🔄 Using mock implementation - no Ollama connection required")
+    except Exception as e:
+        print("❌ Error: Cannot connect to Ollama.")
+        print("Please make sure Ollama is running:")
+        print("ollama serve")
+        print(f"Error details: {e}")
+        return
     
     # Create the workflow
     app = create_orchestrator_graph()

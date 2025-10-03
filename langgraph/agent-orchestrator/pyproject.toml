@@ -12,14 +12,12 @@ dependencies = [
     "langgraph>=0.0.15",
     "python-dotenv>=1.0.0",
     "requests>=2.31.0",
+    "langchain-community>=0.0.10",
 ]
 
 [project.optional-dependencies]
 ollama = [
     "langchain-ollama",
-]
-community = [
-    "langchain-community",
 ]
 
 [tool.hatch.build.targets.wheel]
