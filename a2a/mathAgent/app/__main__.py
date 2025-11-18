@@ -21,12 +21,13 @@ from a2a.types import (
     AgentSkill,
 )
 from dotenv import load_dotenv
+load_dotenv()
 
 from app.agent import MathAgent
 from app.agent_executor import MathAgentExecutor
 
 
-load_dotenv()
+
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
