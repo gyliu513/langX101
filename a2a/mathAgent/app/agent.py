@@ -31,12 +31,12 @@ class MathAgent:
             # Use default configuration without explicit API key
             # The ChatGoogleGenerativeAI will try to find the key from other sources
             self.model = ChatGoogleGenerativeAI(
-                model="gemini-1.5-flash",
+                model="gemini-flash-latest",
                 temperature=0
             )
         else:
             self.model = ChatGoogleGenerativeAI(
-                model="gemini-1.5-flash",
+                model="gemini-flash-latest",
                 google_api_key=api_key,
                 temperature=0
             )
