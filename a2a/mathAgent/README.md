@@ -138,47 +138,23 @@ The Math Agent includes **8 comprehensive test files** covering all aspects of f
 
 ### 📋 Test Files Overview
 
-- **[Test Documentation](test/README.md)** - Complete testing guide
-- **`simple_test.py`** - Basic functionality test
-- **`comprehensive_test.py`** - Full MCP + LLM integration test  
-- **`test_mcp_connection.py`** - MCP server connection test
-- **`test_mcp_agent.py`** - All 6 MCP mathematical tools test
-- **`test_math_functions.py`** - Direct mathematical operations test
-- **`test_orchestrator_routing.py`** - Orchestrator routing test
-- **`debug_routing.py`** - Routing decision debugging
+The testcase is located in `app/test_client.py`, you can extend it and add more testcases there if needed
+
 
 ### 🚀 Quick Testing
 
 ```bash
 # Basic functionality test
 cd mathAgent
-uv run python test/simple_test.py
-
-# Comprehensive MCP + LLM test
-uv run python test/comprehensive_test.py
-
-# Test all MCP tools individually
-uv run python test/test_mcp_agent.py
-
-# Test orchestrator routing for math queries
-uv run python test/test_orchestrator_routing.py
+uv run python app/test_client.py
 ```
 
 ### 🔍 Expected Test Results
 
 **Simple Test**:
 ```
-🔢 Testing: What is 5 + 7?
-📊 Result: 12
-```
-
-**Comprehensive Test**:
-```
-1. 🔢 Question: What is (3 + 5) × 12?
-   📊 Answer: (3 + 5) × 12 = 96
-
-2. 🔢 Question: Solve the equation 2x + 5 = 15
-   📊 Answer: x = 5
+🔢 Question: "text": "What is 1+2?"
+📊 Answer: "text": "3"
 ```
 
 ## A2A SDK Integration
