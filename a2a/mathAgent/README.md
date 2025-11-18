@@ -57,7 +57,12 @@ The Math Agent uses a sophisticated **MCP-based architecture** that separates ma
 
 ```bash
 cd mathAgent
-pip install -e .
+# Install uv if you haven't yet
+pip install uv
+# leverage "uv sync" to ensure packages installed with the locked versions defined in uv.lock
+uv sync
+# activate the virtual env created by uv
+source .venv/bin/activate
 ```
 
 ## Environment Setup
