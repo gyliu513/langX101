@@ -108,3 +108,58 @@ completion = client.chat.completions.create(
 print("-" * 80)
 print(completion.choices[0].message.content)
 print("-" * 80)
+
+"""
+gyliu-cary@Mac myls % uv run --with llama-stack-client,fire,requests demo_script.py
+RAG demonstration
+
+Fetching document from: https://www.paulgraham.com/greatwork.html
+File uploaded and added to vector store: file-bee2cf9d96ab4100b5db4b62522ef627
+Query: How do you do great work?
+
+
+RAG using Responses API:
+   - Automatic tool calling (model decides when to search)
+   - Simpler code, less control
+   - Best for: Conversational agents, automatic workflows
+
+
+Reply via Responses API:
+
+--------------------------------------------------------------------------------
+To work on what you most want to work on, it's vital to find an approach that works for you and allows you to take calculated risks to achieve your goals, like when solving a mathematical equation. Great work usually entails spending time on a problem that genuinely interests you, even if it seems daunting, like Paul Graham suggests. Consistency is key – the more you focus consistently on something you’re genuinely interested in, the further you'll come,.
+
+Consistency can lead to exponential growth and compound your efforts over time; it's essential to recognize exponential growth in progress and take steps accordingly, such as taking calculated risks and adapting strategies when necessary. To avoid setbacks from demoralizing you entirely, break them down and allow yourself to learn from failure or seek immediate improvement by seeking help, learning a new skill,<|file-DQrZ2M0LXh5OgJU1tBfS6Q==|>
+--------------------------------------------------------------------------------
+
+
+RAG using Chat Completions API:
+   - Manual retrieval (you control the search)
+   - More code, more control
+   - Best for: Custom RAG patterns, batch processing, specialized workflows
+
+Searching vector store...
+Found 3 relevant chunks
+
+Reply via Chat Completions API:
+
+--------------------------------------------------------------------------------
+The question of how to do great work is a complex one, and the author of this text suggests that there is no single definitive answer. However, based on the provided context, here are some key takeaways:
+
+1. **Focus on developing your interests**: Rather than worrying about whether what you're working on is "important" or not, focus on doing something amazing that expands people's ideas of what's possible.
+2. **Casting a wide net**: Curious people are more likely to find the right thing to work on because they cast a wide net and explore different possibilities.
+3. **Being optimistic**: If you want to do great work, it's an advantage to be optimistic, even if that means taking risks and being vulnerable. Being cynical or pessimistic can hold you back from creating something truly remarkable.
+4. **Finding your own voice**: Great work is consistent not only with who did it but also with itself. Be willing to take risks and try new things, rather than trying to conform to what others expect of you.
+5. **Being a conduit for ideas**: When working on something that could be seen as either creation or discovery, err on the side of discovery. Try to see yourself as a mere conduit through which the ideas take their natural shape.
+6. **Embracing effort and failure**: Doing great work is not easy, and you will need to put in effort and be willing to fail. Don't let modesty or fear hold you back from trying something new.
+7. **Being honest with yourself**: Great work requires honesty with yourself, including being willing to cut things that don't fit or are holding you back.
+
+Some additional tips that can be inferred from the text include:
+
+* **Try to understand your own thought process and biases**: Recognize how your own thoughts and biases might influence your work.
+* **Don't worry about being presumptuous**: If you have an idea, go for it. It's better to try something new than to play it safe and miss out on the opportunity to create something great.
+* **Be patient and persistent**: Doing great work takes time, effort, and perseverance.
+
+Overall, doing great work requires a combination of curiosity, optimism, creativity, and risk-taking, as well as a willingness to learn from your mistakes and be honest with yourself.
+--------------------------------------------------------------------------------
+"""
