@@ -1,3 +1,5 @@
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/gyliu513/langX101)
+
 # langX101
 
 A comprehensive repository for testing and exploring GenAI Observability Tools, AI Frameworks, and Model Context Protocol (MCP) implementations.
