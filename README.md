@@ -1,8 +1,10 @@
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/gyliu513/langX101)
+[![GitHub stars](https://img.shields.io/github/stars/gyliu513/langX101?style=social)](https://github.com/gyliu513/langX101)
+[![License](https://img.shields.io/github/license/gyliu513/langX101)](LICENSE)
 
 # langX101
 
-A comprehensive repository for testing and exploring GenAI Observability Tools, AI Frameworks, and Model Context Protocol (MCP) implementations.
+A comprehensive repository for testing and exploring **GenAI Observability**, **AI Agent Frameworks**, **Model Context Protocol (MCP)**, and **Agent-to-Agent (A2A) Protocol** implementations.
 
 ## 🎯 Overview
 
@@ -10,66 +12,100 @@ This repository serves as a hands-on laboratory for experimenting with various g
 
 ## 📁 Repository Structure
 
-### 🤖 AI Agents & Workflows
-- **`a2a/`** - Agent-to-agent communication examples
-- **`a2a_langgraph_mcp/`** - LangGraph with MCP integration for multi-agent systems
-- **`adk/`** - Agent Development Kit with MCP server implementations
-- **`swarm/`** - AI agent swarm implementations
-- **`oai-agent/`** - OpenAI agent examples with function calling
+### 🤖 AI Agents & Multi-Agent Systems
+| Directory | Description |
+|-----------|-------------|
+| `a2a/` | Agent-to-Agent (A2A) protocol implementations |
+| `a2a_langgraph_mcp/` | LangGraph with MCP integration for multi-agent systems |
+| `adk/` | Agent Development Kit with MCP server implementations |
+| `swarm/` | OpenAI Swarm agent implementations |
+| `oai-agent/` | OpenAI agent examples with function calling |
+| `crew/` | CrewAI multi-agent orchestration examples |
+| `langgraph/` | LangGraph stateful agent workflows |
+| `agent-semantic-convention/` | OpenTelemetry semantic conventions for AI agents |
 
 ### 🔧 Model Context Protocol (MCP)
-- **`mcp/`** - Core MCP implementations including weather, email, and tutorial servers
-- **`mcp-client/`** - MCP client implementations
-- **`mcp-go/`** - Go-based MCP server and client examples
-- **`oai-mcp/`** - OpenAI integration with MCP (filesystem and SSE examples)
-- **`langchain-mcp/`** - LangChain integration with MCP servers
-- **`fastmcp/`** - Fast MCP server implementations
+| Directory | Description |
+|-----------|-------------|
+| `mcp/` | Core MCP implementations (weather, email, tutorial servers) |
+| `mcp-client/` | MCP client implementations |
+| `mcp-go/` | Go-based MCP server and client examples |
+| `oai-mcp/` | OpenAI integration with MCP (filesystem, SSE) |
+| `langchain-mcp/` | LangChain integration with MCP servers |
+| `fastmcp/` | FastMCP server implementations |
 
 ### 🦜 LangChain Ecosystem
-- **`langchain/`** - Comprehensive LangChain examples including callbacks, RAG, and AutoGPT
-- **`langserve/`** - LangServe server implementations
-- **`langflow/`** - LangFlow workflows and custom components
-- **`langsmith/`** - LangSmith evaluation and monitoring examples
-- **`langfuse/`** - LangFuse observability integration
+| Directory | Description |
+|-----------|-------------|
+| `langchain/` | Comprehensive LangChain examples (callbacks, RAG, AutoGPT) |
+| `langchainjs/` | LangChain JavaScript/TypeScript examples |
+| `langgraph/` | LangGraph stateful workflows and agents |
+| `langserve/` | LangServe server implementations |
+| `langflow/` | LangFlow visual workflows and custom components |
+| `langsmith/` | LangSmith evaluation and monitoring |
+| `langfuse/` | LangFuse observability integration |
 
 ### 📊 Observability & Monitoring
-- **`otel/`** - OpenTelemetry instrumentation for various AI frameworks
-  - OpenAI instrumentation
-  - LangChain instrumentation  
-  - ChromaDB instrumentation
-  - WatsonX instrumentation
-- **`arize/`** - Arize AI monitoring integration
-- **`helicone/`** - Helicone observability examples
-- **`langtrace/`** - LangTrace monitoring implementation
-- **`llmonitor/`** - LLM monitoring examples
-- **`newrelic/`** - New Relic AI monitoring
-- **`promptlayer/`** - PromptLayer integration
+| Directory | Description |
+|-----------|-------------|
+| `otel/` | **OpenTelemetry instrumentation** for AI frameworks |
+| `traceloop/` | Traceloop SDK integration examples |
+| `arize/` | Arize AI monitoring integration |
+| `helicone/` | Helicone observability examples |
+| `langtrace/` | LangTrace monitoring implementation |
+| `llmonitor/` | LLM monitoring examples |
+| `newrelic/` | New Relic AI monitoring |
+| `promptlayer/` | PromptLayer integration |
+
+#### OpenTelemetry (`otel/`) Includes:
+- OpenAI auto-instrumentation
+- LangChain instrumentation
+- ChromaDB instrumentation
+- WatsonX instrumentation
+- Custom span and trace examples
 
 ### ☁️ Cloud Providers & Models
-- **`aws/`** - AWS Bedrock examples and model implementations
-- **`watsonx/`** - IBM WatsonX examples with RAG implementations
-- **`openai/`** - OpenAI API examples and assistants
-- **`deepseek/`** - DeepSeek model implementations
-- **`litellm/`** - LiteLLM proxy examples
+| Directory | Description |
+|-----------|-------------|
+| `aws/` | AWS Bedrock examples and model implementations |
+| `watsonx/` | IBM WatsonX examples with RAG |
+| `openai/` | OpenAI API examples and assistants |
+| `deepseek/` | DeepSeek model implementations |
+| `litellm/` | LiteLLM proxy examples |
+| `llamastack/` | Meta Llama Stack implementations |
+
+### 🗄️ Vector Databases & Memory
+| Directory | Description |
+|-----------|-------------|
+| `milvus/` | Milvus vector database examples |
+| `embedchain/` | Embedchain implementations |
+| `mem0/` | Mem0 memory layer for AI agents |
+| `postgres/` | PostgreSQL with pgvector examples |
 
 ### 🛡️ Security & Evaluation
-- **`llmguard/`** - LLM security and guardrails
-- **`eval/`** - Model evaluation frameworks and examples
-
-### 🗄️ Vector Databases & Storage
-- **`milvus/`** - Milvus vector database examples
-- **`embedchain/`** - Embedchain implementations
+| Directory | Description |
+|-----------|-------------|
+| `llmguard/` | LLM security and guardrails |
+| `eval/` | Model evaluation frameworks |
 
 ### 🌐 Web & API Development
-- **`graphql_instana/`** - GraphQL with Instana monitoring
-- **`my_flask_graphql_app/`** - Flask GraphQL application
-- **`streamlit-test/`** - Streamlit application examples
+| Directory | Description |
+|-----------|-------------|
+| `graphql_instana/` | GraphQL with Instana monitoring |
+| `graphql-example/` | GraphQL examples |
+| `my_flask_graphql_app/` | Flask GraphQL application |
+| `streamlit-test/` | Streamlit application examples |
+| `drizzle-demo/` | Drizzle ORM demo |
 
-### 🔄 AI Frameworks & Tools
-- **`crew/`** - CrewAI multi-agent examples
-- **`haystack/`** - Haystack RAG implementations
-- **`react/`** - ReAct pattern implementations
-- **`python/`** - Python utilities and decorators
+### 🔧 Utilities & Tools
+| Directory | Description |
+|-----------|-------------|
+| `python/` | Python utilities and decorators |
+| `mylib/` | Custom library implementations |
+| `autowrapt/` | Auto-wrapping utilities |
+| `oauth/` | OAuth authentication examples |
+| `cline/` | Cline AI coding assistant examples |
+| `scira/` | Scira search integration |
 
 ## 🚀 Getting Started
 
@@ -78,6 +114,7 @@ This repository serves as a hands-on laboratory for experimenting with various g
 - Node.js (for TypeScript/JavaScript examples)
 - Go (for Go examples)
 - Docker (for some services)
+- [uv](https://github.com/astral-sh/uv) (recommended for Python dependency management)
 
 ### Installation
 
@@ -87,13 +124,25 @@ git clone https://github.com/gyliu513/langX101.git
 cd langX101
 ```
 
-2. Set up Python environment:
+2. Set up Python environment (using uv):
 ```bash
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+uv venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+uv sync
 ```
 
-3. Install dependencies for specific examples as needed (each directory may have its own requirements).
+Or using pip:
+```bash
+python -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt  # if available in specific directory
+```
+
+3. Configure environment variables:
+```bash
+cp dot-env.txt .env
+# Edit .env with your API keys
+```
 
 ## 📚 Key Examples
 
@@ -101,35 +150,47 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 Check out the MCP examples in `/mcp/` for setting up Model Context Protocol servers:
 - Weather server implementation
 - Email sending capabilities
-- Tutorial and learning examples
+- Multi-tool scenarios
 
-### Observability Integration
-Explore comprehensive observability setups:
-- OpenTelemetry auto-instrumentation in `/otel/openai-auto/`
-- LangFuse integration in `/langfuse/`
-- Multi-tool monitoring comparisons
-
-### Agent Workflows
-See advanced agent implementations:
-- Multi-agent systems in `/a2a_langgraph_mcp/`
+### Agent-to-Agent (A2A) Communication
+Explore the `/a2a/` and `/a2a_langgraph_mcp/` directories for:
 - Agent orchestration patterns
-- Function calling and tool usage
+- Multi-agent coordination
+- MCP + A2A integration
+
+### OpenTelemetry GenAI Observability
+The `/otel/` directory contains comprehensive examples for:
+- Auto-instrumentation of LLM calls
+- Custom span attributes for AI operations
+- Integration with various observability backends
 
 ### RAG Implementations
 Find various RAG patterns:
 - WatsonX RAG in `/watsonx/`
-- LangChain RAG examples
+- LangChain RAG examples in `/langchain/`
+- Llama Stack RAG in `/llamastack/`
 - Vector database integrations
 
 ## 🔗 Related Resources
 
-- [Model Context Protocol Documentation](https://modelcontextprotocol.io/)
+- [Model Context Protocol (MCP) Documentation](https://modelcontextprotocol.io/)
+- [OpenTelemetry GenAI Semantic Conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/)
 - [LangChain Documentation](https://python.langchain.com/)
-- [OpenTelemetry Python](https://opentelemetry.io/docs/languages/python/)
+- [LangGraph Documentation](https://langchain-ai.github.io/langgraph/)
+- [Traceloop OpenLLMetry](https://github.com/traceloop/openllmetry)
+
+## 👤 Author
+
+**Guangya Liu** - Senior Technical Staff Member at IBM
+
+- OpenTelemetry GenAI Semantic Convention Maintainer
+- Apache Mesos PMC Member & Committer
+- IBM Master Inventor with 30+ patents
+- [LinkedIn](https://www.linkedin.com/in/guangya-liu-ibm) | [GitHub](https://github.com/gyliu513) | [Medium](https://gyliu513.medium.com/)
 
 ## 🤝 Contributing
 
-This repository is primarily for testing and experimentation. Feel free to:
+Contributions are welcome! Feel free to:
 - Add new tool integrations
 - Improve existing examples
 - Share interesting use cases
@@ -137,8 +198,8 @@ This repository is primarily for testing and experimentation. Feel free to:
 
 ## 📄 License
 
-See [LICENSE](LICENSE) file for details.
+This project is licensed under the Apache 2.0 License - see the [LICENSE](LICENSE) file for details.
 
 ## 🏷️ Tags
 
-`genai` `observability` `mcp` `langchain` `openai` `agents` `rag` `monitoring` `opentelemetry` `ai-tools`
+`genai` `observability` `mcp` `a2a` `langchain` `langgraph` `openai` `agents` `rag` `monitoring` `opentelemetry` `ai-agents` `multi-agent` `traceloop`
