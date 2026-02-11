@@ -1,0 +1,27 @@
+# Prometheus Configuration
+# Scrapes metrics from the OpenTelemetry Collector
+
+global:
+  scrape_interval: 15s      # How often to scrape targets
+  evaluation_interval: 15s  # How often to evaluate rules
+  external_labels:
+    cluster: 'llama-stack-dev'
+
+# Scrape configurations
+scrape_configs:
+  # OTLP Collector - scrapes llama-stack metrics
+  - job_name: 'otel-collector'
+    static_configs:
+      - targets: ['otel-collector:8889']
+        labels:
+          service: 'llama-stack'
+          component: 'tool-runtime'
+
+    # Scrape interval for this job (override global)
+    scrape_interval: 10s
+    scrape_timeout: 5s
+
+  # Prometheus self-monitoring
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
