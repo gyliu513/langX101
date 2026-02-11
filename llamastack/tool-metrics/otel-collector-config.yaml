@@ -1,0 +1,53 @@
+# OpenTelemetry Collector Configuration
+# This collector receives metrics from llama-stack via OTLP and exports to Prometheus
+
+receivers:
+  # OTLP receiver - listens for metrics from llama-stack
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+        cors:
+          allowed_origins:
+            - "*"
+
+processors:
+  # Batch metrics for better performance
+  batch:
+    timeout: 10s
+    send_batch_size: 1024
+
+  # Add resource attributes
+  resource:
+    attributes:
+      - key: service.name
+        value: llama-stack
+        action: upsert
+
+exporters:
+  # Prometheus exporter - exposes metrics for Prometheus to scrape
+  prometheus:
+    endpoint: "0.0.0.0:8889"
+    namespace: ""
+    const_labels:
+      environment: "development"
+    resource_to_telemetry_conversion:
+      enabled: true
+
+  # Logging exporter - useful for debugging
+  logging:
+    verbosity: detailed
+    sampling_initial: 5
+    sampling_thereafter: 200
+
+service:
+  extensions: []
+  pipelines:
+    metrics:
+      receivers: [otlp]
+      processors: [batch, resource]
+      exporters: [prometheus, logging]
+
+  telemetry:
+    logs:
+      level: info

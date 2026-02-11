@@ -1,0 +1,80 @@
+version: '3.8'
+
+services:
+  # OpenTelemetry Collector - receives metrics from llama-stack via OTLP
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.91.0
+    container_name: llama-stack-otel-collector
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    volumes:
+      - ./otel-collector-config.yaml:/etc/otel-collector-config.yaml
+    ports:
+      - "4318:4318"   # OTLP HTTP receiver (llama-stack sends metrics here)
+      - "8889:8889"   # Prometheus metrics exporter
+    networks:
+      - metrics
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:13133/"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # Prometheus - scrapes and stores metrics from OTLP collector
+  prometheus:
+    image: prom/prometheus:v2.48.1
+    container_name: llama-stack-prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+      - '--web.enable-lifecycle'
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"   # Prometheus Web UI
+    networks:
+      - metrics
+    depends_on:
+      - otel-collector
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:9090/-/healthy"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # Grafana - visualization and dashboards
+  grafana:
+    image: grafana/grafana:10.2.3
+    container_name: llama-stack-grafana
+    ports:
+      - "3000:3000"   # Grafana Web UI
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_INSTALL_PLUGINS=grafana-piechart-panel
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning
+      - ./grafana/dashboards:/var/lib/grafana/dashboards
+    networks:
+      - metrics
+    depends_on:
+      - prometheus
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  prometheus-data:
+    driver: local
+  grafana-data:
+    driver: local
+
+networks:
+  metrics:
+    driver: bridge
