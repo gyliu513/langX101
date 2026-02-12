@@ -1,0 +1,51 @@
+# Sample llama-stack configuration with tool runtime for metrics testing
+#
+# Usage:
+#   1. Set API key: export BRAVE_SEARCH_API_KEY="your-key"
+#   2. Run server: llama stack run sample-tool-config.yaml
+#   3. Run tests: python test_real_tools.py
+#
+# This is a minimal config focused on tool runtime only.
+# For production, you'll want to add inference, safety, etc.
+
+version: 2
+
+# Optional: Specify a base distribution
+# image_name: llamastack/distribution-together
+
+providers:
+  # Tool Runtime Providers
+  tool_runtime:
+    # Brave Search - Web search tool
+    - provider_id: brave-search
+      provider_type: remote::brave-search
+      config:
+        api_key: ${env.BRAVE_SEARCH_API_KEY:}
+        max_results: 5
+
+    # Tavily Search - AI-focused search (optional)
+    # Uncomment if you have a Tavily API key
+    # - provider_id: tavily-search
+    #   provider_type: remote::tavily-search
+    #   config:
+    #     api_key: ${env.TAVILY_SEARCH_API_KEY:}
+
+    # Wolfram Alpha - Math and knowledge queries (optional)
+    # Uncomment if you have a Wolfram Alpha API key
+    # - provider_id: wolfram-alpha
+    #   provider_type: remote::wolfram-alpha
+    #   config:
+    #     api_key: ${env.WOLFRAM_ALPHA_API_KEY:}
+
+# Tool groups to register
+tool_groups:
+  - toolgroup_id: websearch
+    provider_id: brave-search
+
+  # Uncomment if using Tavily
+  # - toolgroup_id: tavily
+  #   provider_id: tavily-search
+
+  # Uncomment if using Wolfram Alpha
+  # - toolgroup_id: math
+  #   provider_id: wolfram-alpha
