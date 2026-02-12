@@ -1,0 +1,24 @@
+# Llama Stack configuration with custom weather tool
+#
+# Usage:
+#   1. Run server: llama stack run weather-tool-config.yaml
+#   2. Run test: python test_weather_tool.py
+#
+# This config demonstrates how to use a custom inline tool provider
+
+version: 2
+
+# Optional: Specify a base distribution
+# image_name: llamastack/distribution-together
+
+providers:
+  # Custom Weather Tool Runtime
+  tool_runtime:
+    - provider_id: weather-tool
+      provider_type: inline::weather
+      config: {}
+
+# Register the weather tool group
+tool_groups:
+  - toolgroup_id: weather
+    provider_id: weather-tool
