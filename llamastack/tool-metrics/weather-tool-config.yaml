@@ -22,3 +22,39 @@ providers:
 tool_groups:
   - toolgroup_id: weather
     provider_id: weather-tool
+
+
+# Web Search Config
+# Llama Stack configuration with Tavily Web Search tool
+#
+# Usage:
+#   1. Set your Tavily API key:
+#      export TAVILY_SEARCH_API_KEY="your-api-key"
+#
+#   2. Start the server:
+#      llama stack run websearch-stack-config.yaml --port 8321
+#
+#   3. Test the web search tool:
+#      python test_websearch_metrics.py
+#
+# To enable metrics export to Prometheus/Grafana:
+#   export OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:4318"
+#   export OTEL_EXPORTER_OTLP_PROTOCOL="http/protobuf"
+#   export OTEL_SERVICE_NAME="llama-stack-server"
+
+version: 2
+
+providers:
+  # Tavily Web Search Tool Runtime
+  tool_runtime:
+    - provider_id: tavily-search-runtime
+      provider_type: remote::tavily-search
+      config:
+        api_key: ${env.TAVILY_SEARCH_API_KEY}
+        max_results: 5
+
+# Register the web search tool group
+registered_resources:
+  tool_groups:
+    - toolgroup_id: builtin::websearch
+      provider_id: tavily-search-runtime
