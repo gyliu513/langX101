@@ -15,7 +15,9 @@ from openai import OpenAI
 # Initialize the OpenAI client
 # For llama-stack, you would use the base_url pointing to your llama-stack server
 # Example: client = OpenAI(base_url="http://localhost:8000/v1", api_key="dummy")
-client = OpenAI()
+# client = OpenAI()
+from llama_stack_client import LlamaStackClient
+client = LlamaStackClient(base_url=f"http://localhost:8321")
 
 
 def example_basic_response_with_top_logprobs():
@@ -34,12 +36,13 @@ def example_basic_response_with_top_logprobs():
         model="gpt-4o-mini",  # or your llama model
         input="What is machine learning?",
         top_logprobs=5,  # Get top 5 most likely tokens at each position
-        logprobs=True,
+        # logprobs=True,
         # For Llama Stack, also add:
         # include=["message.output_text.logprobs"],
         store=True,
     )
 
+    import pdb; pdb.set_trace()
     print(f"Response ID: {response.id}")
     print(f"Status: {response.status}")
     print(f"top_logprobs setting: {response.top_logprobs}")
