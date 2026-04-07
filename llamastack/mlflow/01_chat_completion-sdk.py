@@ -13,6 +13,22 @@ Learning Objectives:
 
 """
 sqlite3 /tmp/llama-telemetry/mlflow/mlflow.db "SELECT count(*) FROM trace_info;"
+sqlite> .schema trace_info
+CREATE TABLE trace_info (
+	request_id VARCHAR(50) NOT NULL,
+	experiment_id INTEGER NOT NULL,
+	timestamp_ms BIGINT NOT NULL,
+	execution_time_ms BIGINT,
+	status VARCHAR(50) NOT NULL, client_request_id VARCHAR(50), request_preview VARCHAR(1000), response_preview VARCHAR(1000),
+	CONSTRAINT trace_info_pk PRIMARY KEY (request_id),
+	CONSTRAINT fk_trace_info_experiment_id FOREIGN KEY(experiment_id) REFERENCES experiments (experiment_id)
+);
+CREATE INDEX index_trace_info_experiment_id_timestamp_ms ON trace_info (experiment_id, timestamp_ms);
+sqlite>
+sqlite> select count(*) FROM trace_info where experiment_id=1;
+2
+sqlite> select count(*) FROM trace_info where experiment_id=0;
+87
 cd /Users/gualiu/llamastack/llama-stack-demos && MLFLOW_ENABLE_TRACING=1 MLFLOW_TRACKING_URI=http://localhost:5000 uv run python -m demos.06_openai_compatibility.01_chat_completion-sdk localhost 8321 --stream
 """
 
