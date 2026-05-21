@@ -1,0 +1,29 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: high-priority-gang
+  namespace: preemption-demo
+  labels:
+    kueue.x-k8s.io/queue-name: demo-lq   # 告诉 Kueue 用哪个 LocalQueue
+spec:
+  parallelism: 4          # gang: 4 个 pod 必须同时被 admit
+  completions: 4
+  suspend: true           # Kueue 要求 job 以 suspend=true 提交
+  template:
+    metadata:
+      labels:
+        app: high-priority-gang
+    spec:
+      priorityClassName: high-priority
+      restartPolicy: Never
+      containers:
+        - name: worker
+          image: busybox:1.36
+          command: ["sh", "-c", "echo 'HIGH-PRIORITY pod started'; sleep 60; echo 'HIGH-PRIORITY pod done'"]
+          resources:
+            requests:
+              cpu: "1"
+              memory: "256Mi"
+            limits:
+              cpu: "1"
+              memory: "256Mi"
