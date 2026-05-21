@@ -1,0 +1,21 @@
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: ClusterQueue
+metadata:
+  name: demo-cq
+spec:
+  namespaceSelector: {}
+  queueingStrategy: BestEffortFIFO
+  preemption:
+    withinClusterQueue: LowerPriority   # 允许高优先级抢占同队列中低优先级的 workload
+    reclaimWithinCohort: Never
+    borrowWithinCohort:
+      policy: Never
+  resourceGroups:
+    - coveredResources: ["cpu", "memory"]
+      flavors:
+        - name: default-flavor
+          resources:
+            - name: cpu
+              nominalQuota: "4"       # 故意设置 4 CPU，与 job 请求刚好匹配
+            - name: memory
+              nominalQuota: "4Gi"
