@@ -1,0 +1,29 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: high-priority-gang
+  namespace: cohort-preemption-demo
+  labels:
+    kueue.x-k8s.io/queue-name: lq-high   # 使用 cq-high 队列
+spec:
+  parallelism: 3          # gang：3 个 pod（恰好填满 cq-high 的 nominalQuota）
+  completions: 3
+  suspend: true
+  template:
+    metadata:
+      labels:
+        app: high-priority-gang
+    spec:
+      priorityClassName: high-priority    # PriorityClass=1000，可触发 reclaimWithinCohort
+      restartPolicy: Never
+      containers:
+        - name: worker
+          image: busybox:1.36
+          command: ["sh", "-c", "echo 'HIGH-PRIORITY pod $(hostname) started'; sleep 60"]
+          resources:
+            requests:
+              cpu: "1"
+              memory: "256Mi"
+            limits:
+              cpu: "1"
+              memory: "256Mi"

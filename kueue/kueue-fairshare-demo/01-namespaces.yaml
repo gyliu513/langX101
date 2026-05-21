@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: fairshare-team-a
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: fairshare-team-b

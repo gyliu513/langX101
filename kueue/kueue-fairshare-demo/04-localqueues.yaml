@@ -1,0 +1,15 @@
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: LocalQueue
+metadata:
+  name: lq-team-a
+  namespace: fairshare-team-a
+spec:
+  clusterQueue: cq-team-a
+---
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: LocalQueue
+metadata:
+  name: lq-team-b
+  namespace: fairshare-team-b
+spec:
+  clusterQueue: cq-team-b
