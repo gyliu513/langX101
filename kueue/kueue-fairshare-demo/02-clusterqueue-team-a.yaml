@@ -1,0 +1,26 @@
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: ClusterQueue
+metadata:
+  name: cq-team-a
+spec:
+  cohortName: fairshare-cohort
+  namespaceSelector: {}
+  queueingStrategy: BestEffortFIFO
+  fairSharing:
+    weight: "2"               # team-a 占 2/(2+3) = 40% 份额
+  preemption:
+    reclaimWithinCohort: Any
+    withinClusterQueue: Never
+  resourceGroups:
+    - coveredResources: ["cpu", "memory"]
+      flavors:
+        - name: default-flavor
+          resources:
+            - name: cpu
+              nominalQuota: "4"
+              # borrowingLimit: "0" 禁止借用，确保 Phase 2 严格 2:3 分配
+              # 注释掉则允许 Phase 1 的借用行为
+              borrowingLimit: "0"
+            - name: memory
+              nominalQuota: "4Gi"
+              borrowingLimit: "0"

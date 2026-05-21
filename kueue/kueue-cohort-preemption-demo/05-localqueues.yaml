@@ -1,0 +1,15 @@
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: LocalQueue
+metadata:
+  name: lq-high
+  namespace: cohort-preemption-demo
+spec:
+  clusterQueue: cq-high
+---
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: LocalQueue
+metadata:
+  name: lq-low
+  namespace: cohort-preemption-demo
+spec:
+  clusterQueue: cq-low

@@ -1,0 +1,24 @@
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: ClusterQueue
+metadata:
+  name: cq-team-b
+spec:
+  cohortName: fairshare-cohort
+  namespaceSelector: {}
+  queueingStrategy: BestEffortFIFO
+  fairSharing:
+    weight: "3"               # team-b 占 3/(2+3) = 60% 份额
+  preemption:
+    reclaimWithinCohort: Any
+    withinClusterQueue: Never
+  resourceGroups:
+    - coveredResources: ["cpu", "memory"]
+      flavors:
+        - name: default-flavor
+          resources:
+            - name: cpu
+              nominalQuota: "6"
+              borrowingLimit: "0"
+            - name: memory
+              nominalQuota: "4Gi"
+              borrowingLimit: "0"

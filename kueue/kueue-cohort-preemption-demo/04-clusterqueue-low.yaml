@@ -1,0 +1,20 @@
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: ClusterQueue
+metadata:
+  name: cq-low
+spec:
+  cohortName: preemption-cohort           # 与 cq-high 同一 cohort
+  namespaceSelector: {}
+  queueingStrategy: BestEffortFIFO
+  preemption:
+    reclaimWithinCohort: LowerPriority
+    withinClusterQueue: Never
+  resourceGroups:
+    - coveredResources: ["cpu", "memory"]
+      flavors:
+        - name: default-flavor
+          resources:
+            - name: cpu
+              nominalQuota: "3"   # cq-low 的保证配额：3 CPU
+            - name: memory
+              nominalQuota: "3Gi"

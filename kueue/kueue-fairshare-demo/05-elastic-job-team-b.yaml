@@ -1,0 +1,38 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: elastic-job-team-b
+  namespace: fairshare-team-b
+  labels:
+    kueue.x-k8s.io/queue-name: lq-team-b
+  annotations:
+    # PartialAdmission：告诉 Kueue 此 job 最少需要 2 个 pod 才能运行
+    # Kueue 会在 2~10 之间自动选择实际 parallelism（取决于可用配额）
+    kueue.x-k8s.io/job-min-parallelism: "2"
+spec:
+  parallelism: 10         # 弹性上限：最多希望运行 10 个 pod（10 CPU）
+  completions: 10
+  suspend: true
+  template:
+    metadata:
+      labels:
+        app: elastic-job-team-b
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: worker
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              echo "TEAM-B worker started, pod=$(hostname)"
+              sleep 300
+              echo "TEAM-B worker done"
+          resources:
+            requests:
+              cpu: "1"
+              memory: "256Mi"
+            limits:
+              cpu: "1"
+              memory: "256Mi"
