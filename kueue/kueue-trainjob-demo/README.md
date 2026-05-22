@@ -659,5 +659,5 @@ containers:
 | `01-cluster-training-runtime.yaml` | 真实逻辑回归训练运行时（内嵌数据集） |
 | `02-trainjob.yaml` | TrainJob（引用 Runtime，绑定 Kueue 队列） |
 | `fix-jobset-deployment.yaml` | JobSet 控制器部署修复（稳定镜像） |
-| `REPORT.md` | 本文档（中文） |
-| `REPORT_EN.md` | 英文版报告 |
+| `README.md` | 本文档（中文） |
+| `README_EN.md` | 英文版报告 |
