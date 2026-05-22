@@ -1,0 +1,78 @@
+---
+# ClusterTrainingRuntime: CPU PyTorch 分布式训练运行时
+# Trainer v2 注入 PET_* 前缀的环境变量（PyTorch Elastic Training）：
+#   PET_NNODES     = 总节点数 (对应 world_size)
+#   PET_NODE_RANK  = 当前节点编号 (0-indexed, 由 batch.kubernetes.io/job-completion-index 提供)
+#   PET_MASTER_ADDR = 主节点的 headless-service DNS 地址
+#   PET_MASTER_PORT = torchrun rendezvous 端口 (29500)
+apiVersion: trainer.kubeflow.org/v1alpha1
+kind: ClusterTrainingRuntime
+metadata:
+  name: torch-distributed-cpu
+  labels:
+    trainer.kubeflow.org/framework: torch
+spec:
+  mlPolicy:
+    numNodes: 2
+    torch: {}
+  template:
+    spec:
+      replicatedJobs:
+        - name: node
+          template:
+            metadata:
+              labels:
+                trainer.kubeflow.org/trainjob-ancestor-step: trainer
+            spec:
+              template:
+                spec:
+                  containers:
+                    - name: node
+                      image: python:3.11-slim
+                      command:
+                        - python3
+                        - -c
+                        - |
+                          import os, time, math, random
+
+                          # Trainer v2 injects PET_* env vars (PyTorch Elastic Training convention)
+                          world_size = int(os.environ.get("PET_NNODES", "1"))
+                          node_rank  = int(os.environ.get("PET_NODE_RANK", "0"))
+                          master     = os.environ.get("PET_MASTER_ADDR", "localhost")
+                          master_port = os.environ.get("PET_MASTER_PORT", "29500")
+
+                          print(f"[Node {node_rank}] world_size={world_size}  master={master}:{master_port}", flush=True)
+
+                          # 模拟数据集分片：每个 node 负责不同的数据范围
+                          total_samples    = 1000
+                          samples_per_node = total_samples // world_size
+                          start_idx        = node_rank * samples_per_node
+                          end_idx          = start_idx + samples_per_node
+                          print(f"[Node {node_rank}] Data shard: samples[{start_idx}:{end_idx}] ({samples_per_node} samples)", flush=True)
+
+                          # 模拟 3 个 epoch 的训练（梯度下降 loss 曲线）
+                          num_epochs    = 3
+                          batch_size    = 50
+                          learning_rate = 0.01
+                          loss          = 2.5
+
+                          for epoch in range(1, num_epochs + 1):
+                            epoch_loss  = 0.0
+                            num_batches = samples_per_node // batch_size
+                            for batch in range(num_batches):
+                              noise      = random.uniform(-0.02, 0.02)
+                              batch_loss = loss * math.exp(-learning_rate * (epoch * num_batches + batch)) + noise
+                              epoch_loss += batch_loss
+                              time.sleep(0.05)
+                            avg_loss = epoch_loss / num_batches
+                            accuracy = min(0.99, 1.0 - avg_loss / 2.5)
+                            print(f"[Node {node_rank}] Epoch {epoch}/{num_epochs}  loss={avg_loss:.4f}  acc={accuracy:.2%}", flush=True)
+
+                          print(f"[Node {node_rank}] Training complete.", flush=True)
+                      resources:
+                        requests:
+                          cpu: "500m"
+                          memory: "256Mi"
+                        limits:
+                          cpu: "1"
+                          memory: "512Mi"

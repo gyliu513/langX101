@@ -1,0 +1,33 @@
+---
+# ResourceFlavor: 描述 CPU 节点的资源类型（本地 kind 集群，无需 nodeLabel 匹配）
+apiVersion: kueue.x-k8s.io/v1beta1
+kind: ResourceFlavor
+metadata:
+  name: default-cpu
+spec: {}
+---
+# ClusterQueue: 定义资源配额，最多 4 CPU / 8Gi Memory
+apiVersion: kueue.x-k8s.io/v1beta1
+kind: ClusterQueue
+metadata:
+  name: cluster-queue
+spec:
+  namespaceSelector: {}
+  resourceGroups:
+    - coveredResources: ["cpu", "memory"]
+      flavors:
+        - name: default-cpu
+          resources:
+            - name: cpu
+              nominalQuota: "4"
+            - name: memory
+              nominalQuota: "8Gi"
+---
+# LocalQueue: namespace 级别的队列入口
+apiVersion: kueue.x-k8s.io/v1beta1
+kind: LocalQueue
+metadata:
+  name: user-queue
+  namespace: default
+spec:
+  clusterQueue: cluster-queue
