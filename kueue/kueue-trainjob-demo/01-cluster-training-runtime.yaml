@@ -1,10 +1,8 @@
 ---
-# ClusterTrainingRuntime: CPU PyTorch 分布式训练运行时
-# Trainer v2 注入 PET_* 前缀的环境变量（PyTorch Elastic Training）：
-#   PET_NNODES     = 总节点数 (对应 world_size)
-#   PET_NODE_RANK  = 当前节点编号 (0-indexed, 由 batch.kubernetes.io/job-completion-index 提供)
-#   PET_MASTER_ADDR = 主节点的 headless-service DNS 地址
-#   PET_MASTER_PORT = torchrun rendezvous 端口 (29500)
+# ClusterTrainingRuntime: 真实逻辑回归训练，纯 Python，无外部依赖
+# 数据集：100 个 2D 样本，二分类（正/负高斯簇）
+# 算法：SGD 逻辑回归（sigmoid + 二元交叉熵 + 梯度下降）
+# 分布式：每个 node 训练自己的数据分片，模拟 data-parallel
 apiVersion: trainer.kubeflow.org/v1alpha1
 kind: ClusterTrainingRuntime
 metadata:
@@ -33,42 +31,97 @@ spec:
                         - python3
                         - -c
                         - |
-                          import os, time, math, random
+                          import os, math, random
 
-                          # Trainer v2 injects PET_* env vars (PyTorch Elastic Training convention)
-                          world_size = int(os.environ.get("PET_NNODES", "1"))
-                          node_rank  = int(os.environ.get("PET_NODE_RANK", "0"))
-                          master     = os.environ.get("PET_MASTER_ADDR", "localhost")
+                          # ── 分布式环境（Trainer v2 注入） ──────────────────
+                          world_size  = int(os.environ.get("PET_NNODES", "1"))
+                          node_rank   = int(os.environ.get("PET_NODE_RANK", "0"))
+                          master      = os.environ.get("PET_MASTER_ADDR", "localhost")
                           master_port = os.environ.get("PET_MASTER_PORT", "29500")
-
                           print(f"[Node {node_rank}] world_size={world_size}  master={master}:{master_port}", flush=True)
 
-                          # 模拟数据集分片：每个 node 负责不同的数据范围
-                          total_samples    = 1000
-                          samples_per_node = total_samples // world_size
-                          start_idx        = node_rank * samples_per_node
-                          end_idx          = start_idx + samples_per_node
-                          print(f"[Node {node_rank}] Data shard: samples[{start_idx}:{end_idx}] ({samples_per_node} samples)", flush=True)
+                          # ── 数据集：固定 seed，所有 node 生成相同全集 ──────
+                          # 100 个 2D 样本，两类（高斯分布）
+                          #   Class 1: 中心 (+1.5, +1.5)
+                          #   Class 0: 中心 (-1.5, -1.5)
+                          random.seed(42)
 
-                          # 模拟 3 个 epoch 的训练（梯度下降 loss 曲线）
-                          num_epochs    = 3
-                          batch_size    = 50
-                          learning_rate = 0.01
-                          loss          = 2.5
+                          def make_cluster(n, cx, cy, label):
+                              return [(round(cx + random.gauss(0, 0.6), 4),
+                                       round(cy + random.gauss(0, 0.6), 4),
+                                       label)
+                                      for _ in range(n)]
 
+                          dataset = make_cluster(50, 1.5, 1.5, 1) + make_cluster(50, -1.5, -1.5, 0)
+                          random.shuffle(dataset)   # 相同 seed → 所有 node 顺序一致
+
+                          # ── 数据分片：按 node_rank 划分 ───────────────────
+                          shard_size = len(dataset) // world_size
+                          start = node_rank * shard_size
+                          end   = start + shard_size if node_rank < world_size - 1 else len(dataset)
+                          shard = dataset[start:end]
+
+                          print(f"[Node {node_rank}] Dataset: {len(dataset)} total samples  "
+                                f"→ shard [{start}:{end}] ({len(shard)} samples)", flush=True)
+                          pos = sum(1 for _, _, y in shard if y == 1)
+                          neg = len(shard) - pos
+                          print(f"[Node {node_rank}] Shard distribution: {pos} positive, {neg} negative", flush=True)
+
+                          # ── 逻辑回归：初始化权重 ──────────────────────────
+                          w1, w2, b = 0.0, 0.0, 0.0
+                          lr = 0.05
+                          num_epochs = 10
+
+                          def sigmoid(z):
+                              z = max(-500.0, min(500.0, z))
+                              return 1.0 / (1.0 + math.exp(-z))
+
+                          def bce_loss(pred, y):
+                              return -(y * math.log(pred + 1e-9) + (1 - y) * math.log(1 - pred + 1e-9))
+
+                          print(f"[Node {node_rank}] Starting SGD  lr={lr}  epochs={num_epochs}", flush=True)
+                          print(f"[Node {node_rank}] Initial weights: w1={w1:.4f}  w2={w2:.4f}  b={b:.4f}", flush=True)
+
+                          # ── 训练循环 ──────────────────────────────────────
                           for epoch in range(1, num_epochs + 1):
-                            epoch_loss  = 0.0
-                            num_batches = samples_per_node // batch_size
-                            for batch in range(num_batches):
-                              noise      = random.uniform(-0.02, 0.02)
-                              batch_loss = loss * math.exp(-learning_rate * (epoch * num_batches + batch)) + noise
-                              epoch_loss += batch_loss
-                              time.sleep(0.05)
-                            avg_loss = epoch_loss / num_batches
-                            accuracy = min(0.99, 1.0 - avg_loss / 2.5)
-                            print(f"[Node {node_rank}] Epoch {epoch}/{num_epochs}  loss={avg_loss:.4f}  acc={accuracy:.2%}", flush=True)
+                              total_loss = 0.0
+                              correct    = 0
 
-                          print(f"[Node {node_rank}] Training complete.", flush=True)
+                              for x1, x2, y in shard:
+                                  # 前向传播
+                                  z    = w1 * x1 + w2 * x2 + b
+                                  pred = sigmoid(z)
+
+                                  # 损失（Binary Cross Entropy）
+                                  total_loss += bce_loss(pred, y)
+
+                                  # 预测
+                                  correct += int(round(pred) == y)
+
+                                  # 反向传播（解析梯度）
+                                  err = pred - y
+                                  w1 -= lr * err * x1
+                                  w2 -= lr * err * x2
+                                  b  -= lr * err
+
+                              avg_loss = total_loss / len(shard)
+                              accuracy = correct / len(shard)
+                              print(f"[Node {node_rank}] Epoch {epoch:2d}/{num_epochs}  "
+                                    f"loss={avg_loss:.4f}  acc={accuracy:.1%}  "
+                                    f"w1={w1:.3f}  w2={w2:.3f}  b={b:.3f}", flush=True)
+
+                          # ── 最终结果 ─────────────────────────────────────
+                          print(f"[Node {node_rank}] ── Training complete ──", flush=True)
+                          print(f"[Node {node_rank}] Final weights: w1={w1:.4f}  w2={w2:.4f}  b={b:.4f}", flush=True)
+
+                          # 测试几个典型样本
+                          test_cases = [(2.0, 2.0, 1), (-2.0, -2.0, 0), (0.0, 0.0, "?")]
+                          print(f"[Node {node_rank}] Inference check:", flush=True)
+                          for x1, x2, label in test_cases:
+                              z    = w1 * x1 + w2 * x2 + b
+                              pred = sigmoid(z)
+                              print(f"[Node {node_rank}]   input=({x1:+.1f},{x2:+.1f})  "
+                                    f"P(class=1)={pred:.3f}  predict={round(pred)}  true={label}", flush=True)
                       resources:
                         requests:
                           cpu: "500m"
