@@ -1,0 +1,22 @@
+---
+# TrainJob: 引用 ClusterTrainingRuntime，通过 Kueue 队列调度
+apiVersion: trainer.kubeflow.org/v1alpha1
+kind: TrainJob
+metadata:
+  name: cpu-distributed-training
+  namespace: default
+  labels:
+    kueue.x-k8s.io/queue-name: user-queue
+spec:
+  runtimeRef:
+    name: torch-distributed-cpu
+    kind: ClusterTrainingRuntime
+  trainer:
+    numNodes: 2
+    resourcesPerNode:
+      requests:
+        cpu: "500m"
+        memory: "256Mi"
+      limits:
+        cpu: "1"
+        memory: "512Mi"
