@@ -1,0 +1,18 @@
+---
+# Headless Service: selects the Pod with completion-index=0 (the master)
+# All worker Pods use this Service's DNS to reach the master
+# DNS: pytorch-master-svc.default.svc.cluster.local
+apiVersion: v1
+kind: Service
+metadata:
+  name: pytorch-master-svc
+  namespace: default
+spec:
+  clusterIP: None
+  selector:
+    batch.kubernetes.io/job-completion-index: "0"
+    job-name: pytorch-multinode-training
+  ports:
+    - name: rdzv
+      port: 29500
+      targetPort: 29500
