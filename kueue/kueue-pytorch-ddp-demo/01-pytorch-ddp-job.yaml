@@ -1,0 +1,118 @@
+---
+# PyTorch DDP Data-Parallel Training Job
+# 依赖：仅 Kueue（无需 Kubeflow / JobSet / KubeRay）
+# 原理：单 Pod 内 torchrun 启动 2 个进程，使用 gloo 后端（CPU 模式）
+# 训练任务：合成数据集上的线性回归（y = 3x + 2），演示 DDP 数据并行
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: pytorch-ddp-training
+  namespace: default
+  labels:
+    # Kueue 通过此标签接管调度
+    kueue.x-k8s.io/queue-name: pytorch-user-queue
+spec:
+  parallelism: 1
+  completions: 1
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: trainer
+          image: python:3.11-slim
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -e
+              echo "[Setup] Installing PyTorch (CPU)..."
+              pip install torch --index-url https://download.pytorch.org/whl/cpu -q
+              echo "[Setup] PyTorch installed."
+
+              cat > /tmp/train_ddp.py << 'PYEOF'
+              import os
+              import torch
+              import torch.distributed as dist
+              import torch.nn as nn
+              from torch.utils.data import DataLoader, TensorDataset, DistributedSampler
+
+              def main():
+                  # gloo 后端：支持 CPU，无需 GPU
+                  dist.init_process_group(backend="gloo")
+                  rank       = dist.get_rank()
+                  world_size = dist.get_world_size()
+
+                  print(f"[Rank {rank}/{world_size}] Process started", flush=True)
+
+                  # ── 合成数据集：y = 3x + 2 + noise（1000 条样本）──────────
+                  torch.manual_seed(42)
+                  X = torch.randn(1000, 1)
+                  y = 3.0 * X + 2.0 + 0.1 * torch.randn(1000, 1)
+
+                  dataset = TensorDataset(X, y)
+                  # DistributedSampler 将数据集均分给各 rank
+                  sampler = DistributedSampler(dataset, num_replicas=world_size, rank=rank, shuffle=True)
+                  loader  = DataLoader(dataset, batch_size=32, sampler=sampler)
+
+                  print(f"[Rank {rank}/{world_size}] Dataset: 1000 samples → "
+                        f"{len(sampler)} samples/rank, {len(loader)} batches/epoch", flush=True)
+
+                  # ── 模型：单层线性回归 ─────────────────────────────────────
+                  model     = nn.Linear(1, 1)
+                  # DDP 在反向传播时自动 all-reduce 梯度，保持各 rank 权重同步
+                  ddp_model = nn.parallel.DistributedDataParallel(model)
+                  optimizer = torch.optim.SGD(ddp_model.parameters(), lr=0.05)
+                  loss_fn   = nn.MSELoss()
+
+                  print(f"[Rank {rank}/{world_size}] Starting DDP training  "
+                        f"lr=0.05  epochs=10  backend=gloo", flush=True)
+
+                  # ── 训练循环 ──────────────────────────────────────────────
+                  for epoch in range(1, 11):
+                      sampler.set_epoch(epoch)
+                      total_loss = 0.0
+
+                      for X_batch, y_batch in loader:
+                          pred = ddp_model(X_batch)
+                          loss = loss_fn(pred, y_batch)
+                          optimizer.zero_grad()
+                          loss.backward()   # DDP 自动 all-reduce
+                          optimizer.step()
+                          total_loss += loss.item()
+
+                      avg_loss = total_loss / len(loader)
+                      w = ddp_model.module.weight.item()
+                      b = ddp_model.module.bias.item()
+                      print(f"[Rank {rank}/{world_size}] Epoch {epoch:2d}/10  "
+                            f"loss={avg_loss:.4f}  w={w:.4f}  b={b:.4f}", flush=True)
+
+                  # ── 最终结果（仅 rank 0 打印）────────────────────────────
+                  if rank == 0:
+                      w = ddp_model.module.weight.item()
+                      b = ddp_model.module.bias.item()
+                      print("", flush=True)
+                      print("═══════════════════════════════════════════", flush=True)
+                      print(f"  Training complete (DDP, {world_size} processes)", flush=True)
+                      print(f"  Learned : w={w:.4f}  b={b:.4f}", flush=True)
+                      print(f"  Target  : w=3.0000  b=2.0000", flush=True)
+                      print(f"  Error   : Δw={abs(w-3.0):.4f}  Δb={abs(b-2.0):.4f}", flush=True)
+                      print("═══════════════════════════════════════════", flush=True)
+
+                  dist.destroy_process_group()
+
+              if __name__ == "__main__":
+                  main()
+              PYEOF
+
+              echo "[Setup] Launching torchrun with 2 processes (DDP, gloo/CPU)..."
+              torchrun \
+                --nproc_per_node=2 \
+                --master_addr=localhost \
+                --master_port=29500 \
+                /tmp/train_ddp.py
+          resources:
+            requests:
+              cpu: "2"
+              memory: "1Gi"
+            limits:
+              cpu: "2"
+              memory: "1Gi"
