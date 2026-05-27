@@ -1,0 +1,36 @@
+---
+# ResourceFlavor: matches worker nodes in the kind cluster
+# For GPU production, add nodeLabels: {nvidia.com/gpu.present: "true"}
+apiVersion: kueue.x-k8s.io/v1beta1
+kind: ResourceFlavor
+metadata:
+  name: default-flavor
+spec: {}
+---
+# ClusterQueue: quota for 2 pods × (500m CPU + 512Mi memory)
+# Total: 1 CPU + 1Gi memory reserved by Kueue for gang admission
+# For GPU production, add "nvidia.com/gpu" to coveredResources
+apiVersion: kueue.x-k8s.io/v1beta1
+kind: ClusterQueue
+metadata:
+  name: multinode-cluster-queue
+spec:
+  namespaceSelector: {}
+  resourceGroups:
+    - coveredResources: ["cpu", "memory"]
+      flavors:
+        - name: default-flavor
+          resources:
+            - name: cpu
+              nominalQuota: "4"
+            - name: memory
+              nominalQuota: "4Gi"
+---
+# LocalQueue: namespace-scoped entry point for submitting jobs
+apiVersion: kueue.x-k8s.io/v1beta1
+kind: LocalQueue
+metadata:
+  name: multinode-user-queue
+  namespace: default
+spec:
+  clusterQueue: multinode-cluster-queue
