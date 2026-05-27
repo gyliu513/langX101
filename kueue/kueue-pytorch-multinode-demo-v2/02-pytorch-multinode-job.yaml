@@ -1,0 +1,151 @@
+---
+# PyTorch Multi-Node DDP Training Job
+#
+# Kind cluster demo (CPU mode):
+#   - 2 Pods, each on a DIFFERENT worker node (enforced by podAntiAffinity)
+#   - 2 processes per Pod (--nproc_per_node=2), world_size=4
+#   - gloo backend (CPU only), no GPU required
+#   - Resource requests sized for a typical laptop kind cluster
+#
+# To switch to GPU production:
+#   1. backend="gloo" -> backend="nccl"
+#   2. device = torch.device("cpu") -> device = torch.device(f"cuda:{local_rank}")
+#   3. Uncomment nvidia.com/gpu under resources.limits
+#   4. Add nvidia.com/gpu quota to the ClusterQueue in 00-kueue-resources.yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: pytorch-multinode-training
+  namespace: default
+  labels:
+    kueue.x-k8s.io/queue-name: multinode-user-queue
+spec:
+  completions: 2
+  parallelism: 2
+  completionMode: Indexed
+  template:
+    metadata:
+      labels:
+        app: pytorch-multinode-training
+    spec:
+      restartPolicy: Never
+      # Anti-affinity: ensures the 2 Pods land on DIFFERENT worker nodes
+      # This is the key setting that guarantees Pod-0 -> worker-1, Pod-1 -> worker-2
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  app: pytorch-multinode-training
+              topologyKey: kubernetes.io/hostname
+      containers:
+        - name: trainer
+          image: python:3.11-slim
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -e
+              echo "[Pod ${JOB_COMPLETION_INDEX}] Installing PyTorch (CPU)..."
+              pip install torch --index-url https://download.pytorch.org/whl/cpu -q
+              echo "[Pod ${JOB_COMPLETION_INDEX}] PyTorch installed."
+
+              cat > /tmp/train_multinode.py << 'PYEOF'
+              import os
+              import torch
+              import torch.distributed as dist
+              import torch.nn as nn
+              from torch.utils.data import DataLoader, TensorDataset, DistributedSampler
+
+              def main():
+                  local_rank  = int(os.environ.get("LOCAL_RANK", 0))
+                  rank        = int(os.environ.get("RANK", 0))
+                  world_size  = int(os.environ.get("WORLD_SIZE", 1))
+                  node_rank   = int(os.environ.get("GROUP_RANK", 0))
+                  master_addr = os.environ.get("MASTER_ADDR", "localhost")
+                  master_port = os.environ.get("MASTER_PORT", "29500")
+
+                  print(f"[Rank {rank}/{world_size}] node={node_rank}  "
+                        f"local_rank={local_rank}  "
+                        f"master={master_addr}:{master_port}", flush=True)
+
+                  # For GPU: dist.init_process_group(backend="nccl")
+                  dist.init_process_group(backend="gloo")
+                  print(f"[Rank {rank}/{world_size}] Process group initialized", flush=True)
+
+                  # For GPU: device = torch.device(f"cuda:{local_rank}")
+                  device = torch.device("cpu")
+
+                  # Synthetic dataset: y = 3x + 2 + noise (2000 samples)
+                  torch.manual_seed(42)
+                  X = torch.randn(2000, 1)
+                  y = 3.0 * X + 2.0 + 0.1 * torch.randn(2000, 1)
+
+                  dataset = TensorDataset(X.to(device), y.to(device))
+                  sampler = DistributedSampler(dataset, num_replicas=world_size, rank=rank, shuffle=True)
+                  loader  = DataLoader(dataset, batch_size=64, sampler=sampler)
+
+                  print(f"[Rank {rank}/{world_size}] Dataset: 2000 total -> "
+                        f"{len(sampler)} samples/rank  "
+                        f"{len(loader)} batches/epoch", flush=True)
+
+                  model     = nn.Linear(1, 1).to(device)
+                  ddp_model = nn.parallel.DistributedDataParallel(model)
+                  optimizer = torch.optim.SGD(ddp_model.parameters(), lr=0.05)
+                  loss_fn   = nn.MSELoss()
+
+                  print(f"[Rank {rank}/{world_size}] Starting DDP training  "
+                        f"world_size={world_size}  backend=gloo  device={device}", flush=True)
+
+                  for epoch in range(1, 11):
+                      sampler.set_epoch(epoch)
+                      total_loss = 0.0
+
+                      for X_batch, y_batch in loader:
+                          pred = ddp_model(X_batch)
+                          loss = loss_fn(pred, y_batch)
+                          optimizer.zero_grad()
+                          loss.backward()
+                          optimizer.step()
+                          total_loss += loss.item()
+
+                      avg_loss = total_loss / len(loader)
+                      w = ddp_model.module.weight.item()
+                      b = ddp_model.module.bias.item()
+                      print(f"[Rank {rank}/{world_size}] Epoch {epoch:2d}/10  "
+                            f"loss={avg_loss:.4f}  w={w:.4f}  b={b:.4f}", flush=True)
+
+                  if rank == 0:
+                      w = ddp_model.module.weight.item()
+                      b = ddp_model.module.bias.item()
+                      print("", flush=True)
+                      print("===================================================", flush=True)
+                      print(f"  Multi-node DDP training complete", flush=True)
+                      print(f"  world_size={world_size} ({world_size//2} nodes x 2 processes/node)", flush=True)
+                      print(f"  Learned : w={w:.4f}  b={b:.4f}", flush=True)
+                      print(f"  Target  : w=3.0000  b=2.0000", flush=True)
+                      print(f"  Error   : dw={abs(w-3.0):.4f}  db={abs(b-2.0):.4f}", flush=True)
+                      print("===================================================", flush=True)
+
+                  dist.destroy_process_group()
+
+              if __name__ == "__main__":
+                  main()
+              PYEOF
+
+              echo "[Pod ${JOB_COMPLETION_INDEX}] Launching torchrun on node_rank=${JOB_COMPLETION_INDEX}"
+              torchrun \
+                --nproc_per_node=2 \
+                --nnodes=2 \
+                --node_rank=${JOB_COMPLETION_INDEX} \
+                --master_addr=pytorch-master-svc.default.svc.cluster.local \
+                --master_port=29500 \
+                /tmp/train_multinode.py
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "512Mi"
+            limits:
+              cpu: "1"
+              memory: "1Gi"
+              # For GPU production, uncomment:
+              # nvidia.com/gpu: "2"
