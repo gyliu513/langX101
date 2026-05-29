@@ -1,0 +1,41 @@
+## Kind-specific resource overrides for llm-d router
+## Reduces EPP and proxy resources to fit a local kind cluster
+
+router:
+  epp:
+    replicas: 1
+    resources:
+      requests:
+        cpu: "500m"
+        memory: "512Mi"
+      limits:
+        cpu: "2"
+        memory: "2Gi"
+    flags:
+      v: 2
+
+  proxy:
+    resources:
+      requests:
+        cpu: "200m"
+        memory: "256Mi"
+      limits:
+        cpu: "1"
+        memory: "512Mi"
+    args:
+      - "--service-node"
+      - "envoy-sidecar"
+      - "--log-level"
+      - "warn"
+      - "--concurrency"
+      - "2"
+      - "--drain-strategy"
+      - "immediate"
+      - "--drain-time-s"
+      - "60"
+      - "-c"
+      - "/etc/envoy/envoy.yaml"
+
+  modelServers:
+    matchLabels:
+      llm-d.ai/guide: "optimized-baseline"

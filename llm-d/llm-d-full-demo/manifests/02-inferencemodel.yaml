@@ -1,0 +1,16 @@
+---
+# InferenceObjective defines scheduling priority for requests in the pool.
+# GAIE v1.5.0 replaced InferenceModel with InferenceObjective (priority-based flow control).
+# Routing to model servers is done automatically by the EPP based on pod labels.
+# InferencePool name = helm release name = "llm-d"
+apiVersion: inference.networking.x-k8s.io/v1alpha2
+kind: InferenceObjective
+metadata:
+  name: llm-d-standard
+  namespace: llm-d
+  labels:
+    app.kubernetes.io/part-of: llm-d
+spec:
+  poolRef:
+    name: llm-d
+  priority: 0

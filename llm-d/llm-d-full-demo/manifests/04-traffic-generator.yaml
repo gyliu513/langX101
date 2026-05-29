@@ -1,0 +1,90 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: llm-d-traffic-gen-script
+  namespace: llm-d
+data:
+  generate.sh: |
+    #!/bin/sh
+    set -e
+
+    # Route all traffic through the llm-d EPP endpoint (Envoy proxy port 8081)
+    ROUTER_URL="${ROUTER_URL:-http://llm-d-epp:80}"
+    MODEL="${MODEL:-Qwen/Qwen2.5-0.5B-Instruct}"
+    INTERVAL="${INTERVAL:-3}"
+
+    echo "=== llm-d Full Stack Traffic Generator ==="
+    echo "Router (EPP/Envoy): $ROUTER_URL"
+    echo "Model: $MODEL"
+    echo ""
+
+    PROMPTS="What is Kubernetes?|Explain distributed inference.|How does KV cache work?|What is prefix caching?|Describe transformer architecture.|How does load balancing work?|What is Prefill-Decode disaggregation?|Explain llm-d routing."
+
+    req=0
+    while true; do
+      req=$((req + 1))
+      idx=$(( (req - 1) % 8 + 1 ))
+      prompt=$(echo "$PROMPTS" | tr '|' '\n' | sed -n "${idx}p")
+
+      # Normal inference request through the EPP router
+      result=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$ROUTER_URL/v1/chat/completions" \
+        -H "Content-Type: application/json" \
+        -d "{\"model\":\"$MODEL\",\"messages\":[{\"role\":\"user\",\"content\":\"$prompt\"}],\"max_tokens\":64}" 2>/dev/null)
+      echo "req=$req [${result}] $prompt"
+
+      # Inject error every 8th request (bad model name)
+      if [ $((req % 8)) -eq 0 ]; then
+        curl -s -o /dev/null -w "  error[%{http_code}]\n" \
+          -X POST "$ROUTER_URL/v1/chat/completions" \
+          -H "Content-Type: application/json" \
+          -d "{\"model\":\"nonexistent-model\",\"messages\":[{\"role\":\"user\",\"content\":\"test\"}],\"max_tokens\":10}" 2>/dev/null || true
+      fi
+
+      sleep "$INTERVAL"
+    done
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: llm-d-traffic-gen
+  namespace: llm-d
+  labels:
+    app: llm-d-traffic-gen
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: llm-d-traffic-gen
+  template:
+    metadata:
+      labels:
+        app: llm-d-traffic-gen
+    spec:
+      containers:
+      - name: traffic-gen
+        image: curlimages/curl:8.7.1
+        imagePullPolicy: IfNotPresent
+        command: ["/bin/sh", "/scripts/generate.sh"]
+        env:
+        - name: ROUTER_URL
+          value: "http://llm-d-epp:80"
+        - name: MODEL
+          value: "Qwen/Qwen2.5-0.5B-Instruct"
+        - name: INTERVAL
+          value: "3"
+        volumeMounts:
+        - name: scripts
+          mountPath: /scripts
+        resources:
+          requests:
+            memory: "32Mi"
+            cpu: "50m"
+          limits:
+            memory: "64Mi"
+            cpu: "100m"
+      volumes:
+      - name: scripts
+        configMap:
+          name: llm-d-traffic-gen-script
+          defaultMode: 0755
