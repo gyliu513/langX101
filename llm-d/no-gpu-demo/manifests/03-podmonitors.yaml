@@ -1,0 +1,36 @@
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: llm-d-sim-prefill
+  namespace: llm-d-demo
+  labels:
+    app: llm-d-sim-prefill
+    app.kubernetes.io/part-of: llm-d
+spec:
+  selector:
+    matchLabels:
+      app: llm-d-sim-prefill
+  podMetricsEndpoints:
+  - port: http
+    path: /metrics
+    interval: 15s
+    scrapeTimeout: 10s
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: llm-d-sim-decode
+  namespace: llm-d-demo
+  labels:
+    app: llm-d-sim-decode
+    app.kubernetes.io/part-of: llm-d
+spec:
+  selector:
+    matchLabels:
+      app: llm-d-sim-decode
+  podMetricsEndpoints:
+  - port: http
+    path: /metrics
+    interval: 15s
+    scrapeTimeout: 10s
