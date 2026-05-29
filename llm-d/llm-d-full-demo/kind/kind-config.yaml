@@ -1,0 +1,14 @@
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: llm-d
+nodes:
+- role: control-plane
+  kubeadmConfigPatches:
+  - |
+    kind: KubeletConfiguration
+    maxPods: 250
+    evictionHard:
+      memory.available: "512Mi"
+  extraMounts:
+  - hostPath: /tmp/llm-d-cache
+    containerPath: /root/.cache

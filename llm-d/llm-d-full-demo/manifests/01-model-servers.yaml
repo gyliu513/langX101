@@ -1,0 +1,121 @@
+---
+# ServiceAccount required by the model server recipe base
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: sa
+  namespace: llm-d
+  labels:
+    app.kubernetes.io/part-of: llm-d
+automountServiceAccountToken: false
+---
+# inference-sim acting as the model server backend
+# Labels must match router.modelServers.matchLabels in the helm values
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: optimized-baseline-decode
+  namespace: llm-d
+  labels:
+    app: optimized-baseline-decode
+    llm-d.ai/role: decode
+    llm-d.ai/guide: optimized-baseline
+    llm-d.ai/model: Qwen2.5-0.5B-Instruct
+    app.kubernetes.io/part-of: llm-d
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: optimized-baseline-decode
+      llm-d.ai/guide: optimized-baseline
+  template:
+    metadata:
+      labels:
+        app: optimized-baseline-decode
+        llm-d.ai/role: decode
+        llm-d.ai/guide: optimized-baseline
+        llm-d.ai/model: Qwen2.5-0.5B-Instruct
+    spec:
+      serviceAccountName: sa
+      containers:
+      - name: modelserver
+        image: ghcr.io/llm-d/llm-d-inference-sim:v0.8.0-arm64
+        imagePullPolicy: IfNotPresent
+        args:
+        - "--model=Qwen/Qwen2.5-0.5B-Instruct"
+        - "--port=8000"
+        - "--kv-cache-size=4096"
+        - "--block-size=16"
+        env:
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: POD_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        # OpenTelemetry distributed tracing
+        - name: OTEL_SERVICE_NAME
+          value: "llm-d-model-server"
+        - name: OTEL_EXPORTER_OTLP_ENDPOINT
+          value: "http://otel-collector:4317"
+        - name: OTEL_TRACES_EXPORTER
+          value: "otlp"
+        - name: OTEL_TRACES_SAMPLER
+          value: "parentbased_traceidratio"
+        - name: OTEL_TRACES_SAMPLER_ARG
+          value: "1.0"
+        ports:
+        - name: modelserver
+          containerPort: 8000
+          protocol: TCP
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "200m"
+          limits:
+            memory: "1Gi"
+            cpu: "1"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: modelserver
+          initialDelaySeconds: 10
+          periodSeconds: 15
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /v1/models
+            port: modelserver
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        startupProbe:
+          httpGet:
+            path: /v1/models
+            port: modelserver
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          failureThreshold: 12
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: optimized-baseline-decode-svc
+  namespace: llm-d
+  labels:
+    app: optimized-baseline-decode
+    llm-d.ai/guide: optimized-baseline
+spec:
+  selector:
+    app: optimized-baseline-decode
+  ports:
+  - name: modelserver
+    port: 8000
+    targetPort: modelserver
+    protocol: TCP
+  type: ClusterIP
