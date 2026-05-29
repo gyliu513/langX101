@@ -1,0 +1,112 @@
+---
+# ConfigMap holding the traffic generation script
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: llm-d-traffic-gen-script
+  namespace: llm-d-demo
+data:
+  generate.sh: |
+    #!/bin/sh
+    set -e
+
+    PREFILL_URL="${PREFILL_URL:-http://llm-d-sim-prefill-svc:8000}"
+    DECODE_URL="${DECODE_URL:-http://llm-d-sim-decode-svc:8000}"
+    MODEL="${MODEL:-Qwen/Qwen2.5-0.5B-Instruct}"
+    INTERVAL="${INTERVAL:-3}"
+
+    echo "=== llm-d Traffic Generator ==="
+    echo "Prefill: $PREFILL_URL"
+    echo "Decode:  $DECODE_URL"
+    echo "Model:   $MODEL"
+
+    PROMPTS="
+    What is Kubernetes?
+    Explain machine learning in simple terms.
+    What are the benefits of distributed inference?
+    How does KV cache work in large language models?
+    What is prefill-decode disaggregation?
+    Describe the architecture of a transformer model.
+    What is the difference between batch and streaming inference?
+    How does load balancing work for LLM serving?
+    "
+
+    req=0
+    while true; do
+      req=$((req + 1))
+      prompt=$(echo "$PROMPTS" | grep -v '^$' | awk "NR==$(( (req % 8) + 1 ))")
+
+      # Send to decode endpoint (main serving path)
+      curl -s -o /dev/null -w "decode[%{http_code}] " \
+        -X POST "$DECODE_URL/v1/chat/completions" \
+        -H "Content-Type: application/json" \
+        -d "{\"model\":\"$MODEL\",\"messages\":[{\"role\":\"user\",\"content\":\"$prompt\"}],\"max_tokens\":64}" &
+
+      # Periodically send to prefill endpoint (simulate P/D routing)
+      if [ $((req % 3)) -eq 0 ]; then
+        curl -s -o /dev/null -w "prefill[%{http_code}] " \
+          -X POST "$PREFILL_URL/v1/chat/completions" \
+          -H "Content-Type: application/json" \
+          -d "{\"model\":\"$MODEL\",\"messages\":[{\"role\":\"user\",\"content\":\"$prompt\"}],\"max_tokens\":16}" &
+      fi
+
+      # Inject errors every 7th request
+      if [ $((req % 7)) -eq 0 ]; then
+        curl -s -o /dev/null -w "err[%{http_code}] " \
+          -X POST "$DECODE_URL/v1/chat/completions" \
+          -H "Content-Type: application/json" \
+          -d "{\"model\":\"nonexistent-model\",\"messages\":[{\"role\":\"user\",\"content\":\"test\"}],\"max_tokens\":10}" &
+      fi
+
+      wait
+      echo " req=$req"
+      sleep "$INTERVAL"
+    done
+---
+# Continuous traffic generator Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: llm-d-traffic-gen
+  namespace: llm-d-demo
+  labels:
+    app: llm-d-traffic-gen
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: llm-d-traffic-gen
+  template:
+    metadata:
+      labels:
+        app: llm-d-traffic-gen
+    spec:
+      containers:
+      - name: traffic-gen
+        image: curlimages/curl:8.7.1
+        imagePullPolicy: IfNotPresent
+        command: ["/bin/sh", "/scripts/generate.sh"]
+        env:
+        - name: PREFILL_URL
+          value: "http://llm-d-sim-prefill-svc:8000"
+        - name: DECODE_URL
+          value: "http://llm-d-sim-decode-svc:8000"
+        - name: MODEL
+          value: "Qwen/Qwen2.5-0.5B-Instruct"
+        - name: INTERVAL
+          value: "3"
+        volumeMounts:
+        - name: scripts
+          mountPath: /scripts
+        resources:
+          requests:
+            memory: "32Mi"
+            cpu: "50m"
+          limits:
+            memory: "64Mi"
+            cpu: "100m"
+      volumes:
+      - name: scripts
+        configMap:
+          name: llm-d-traffic-gen-script
+          defaultMode: 0755
