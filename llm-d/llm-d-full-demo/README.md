@@ -657,6 +657,13 @@ The only reason the CRDs are installed from the upstream GAIE repo (rather than 
 
 ## Installation Steps
 
+Set the version variables first — they are referenced in multiple steps below:
+
+```bash
+export GAIE_VERSION=v1.5.0
+export ROUTER_CHART_VERSION=v0
+```
+
 ### Step 1: Create Kind Cluster
 
 ```bash
@@ -711,7 +718,7 @@ bash docs/monitoring/scripts/install-prometheus-grafana.sh --crds-only
 # 3b. llm-d router CRDs — installs both GAIE CRDs (InferencePool) and
 #     llm-d.ai CRDs (InferenceObjective, InferenceModelRewrite)
 kubectl apply -k \
-  "https://github.com/llm-d/llm-d-router/config/crd"
+  "https://github.com/llm-d/llm-d-router/config/crd?ref=${ROUTER_CHART_VERSION}"
 ```
 
 > **Why `llm-d-router/config/crd` instead of the upstream GAIE repo?**
@@ -723,10 +730,13 @@ kubectl apply -k \
 Verify:
 ```bash
 kubectl get crd | grep -E "inferencep|monitoring.coreos|llm-d.ai"
-# Expected output (3 inference CRDs):
-# inferencemodelrewrites.llm-d.ai              ...
-# inferenceobjectives.llm-d.ai                 ...
-# inferencepools.inference.networking.k8s.io   ...
+# Expected output:
+# inferencemodelrewrites.llm-d.ai                    ...
+# inferenceobjectives.llm-d.ai                       ...
+# inferencepools.inference.networking.k8s.io         ...
+# podmonitors.monitoring.coreos.com                  ...
+# prometheusrules.monitoring.coreos.com              ...
+# servicemonitors.monitoring.coreos.com              ...
 ```
 
 ---
@@ -735,6 +745,16 @@ kubectl get crd | grep -E "inferencep|monitoring.coreos|llm-d.ai"
 
 ```bash
 bash docs/monitoring/scripts/install-prometheus-grafana.sh --enable-tls
+```
+
+Verify:
+```bash
+kubectl get pods -n llm-d-monitoring
+# NAME                                                           READY   STATUS
+# alertmanager-llmd-kube-prometheus-stack-alertmanager-0        2/2     Running
+# llmd-grafana-xxx                                              3/3     Running
+# llmd-kube-prometheus-stack-operator-xxx                       1/1     Running
+# prometheus-llmd-kube-prometheus-stack-prometheus-0            2/2     Running
 ```
 
 ---
@@ -752,10 +772,26 @@ helm install llm-d \
   -f docs/monitoring/llm-d-full-demo/helm-values/kind-overrides.values.yaml \
   -f docs/monitoring/llm-d-full-demo/helm-values/tracing.values.yaml \
   -n llm-d \
-  --version v0
+  --version ${ROUTER_CHART_VERSION}
 ```
 
 The `tracing.values.yaml` enables EPP to export spans to `http://otel-collector:4317`.
+
+Verify:
+```bash
+kubectl get deploy,svc,inferencepool,servicemonitor -n llm-d
+# NAME                          READY   UP-TO-DATE   AVAILABLE
+# deployment.apps/llm-d-epp     1/1     1            1
+#
+# NAME                TYPE        CLUSTER-IP   PORT(S)
+# service/llm-d-epp   ClusterIP   ...          80/TCP,9002/TCP,9090/TCP
+#
+# NAME                                               AGE
+# inferencepool.inference.networking.k8s.io/llm-d   ...
+#
+# NAME                                              AGE
+# servicemonitor.monitoring.coreos.com/llm-d-epp   ...
+```
 
 ---
 
@@ -770,6 +806,18 @@ bash docs/monitoring/scripts/install-otel-collector-jaeger.sh -n llm-d
 This deploys:
 - **OTel Collector** — receives OTLP gRPC on :4317, filters `/metrics` scrape spans, batches and forwards to Jaeger
 - **Jaeger** (all-in-one, in-memory) — trace storage + UI on :16686
+
+Verify:
+```bash
+kubectl get deploy,svc -n llm-d | grep -E "otel|jaeger"
+# NAME                              READY   UP-TO-DATE   AVAILABLE
+# deployment.apps/jaeger            1/1     1            1
+# deployment.apps/otel-collector    1/1     1            1
+#
+# NAME                       TYPE        CLUSTER-IP   PORT(S)
+# service/jaeger-collector   ClusterIP   ...          16686/TCP,4317/TCP
+# service/otel-collector     ClusterIP   ...          4317/TCP,4318/TCP
+```
 
 ---
 
@@ -809,12 +857,38 @@ optimized-baseline-decode-xxx (x2)          1/1     Running
 otel-collector-xxx                          1/1     Running
 ```
 
+Verify all resources:
+```bash
+kubectl get deploy,inferenceobjective,podmonitor -n llm-d
+# NAME                                           READY   UP-TO-DATE   AVAILABLE
+# deployment.apps/jaeger                         1/1     1            1
+# deployment.apps/llm-d-epp                      1/1     1            1
+# deployment.apps/optimized-baseline-decode      2/2     2            2
+# deployment.apps/otel-collector                 1/1     1            1
+#
+# NAME                                         AGE
+# inferenceobjective.llm-d.ai/llm-d-standard  ...
+#
+# NAME                                    AGE
+# podmonitor.monitoring.coreos.com/decode  ...
+```
+
 ---
 
 ### Step 8: Deploy Traffic Generator
 
 ```bash
 kubectl apply -f docs/monitoring/llm-d-full-demo/manifests/03-traffic-generator.yaml
+```
+
+Verify:
+```bash
+kubectl get deploy,configmap -n llm-d | grep traffic
+# NAME                               READY   UP-TO-DATE   AVAILABLE
+# deployment.apps/llm-d-traffic-gen  1/1     1            1
+#
+# NAME                              DATA
+# configmap/llm-d-traffic-gen-script  1
 ```
 
 ```bash
