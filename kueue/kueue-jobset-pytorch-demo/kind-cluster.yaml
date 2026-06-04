@@ -1,0 +1,11 @@
+# Multi-node kind cluster: 1 control-plane + 3 workers.
+# The PyTorch JobSet places one Pod per worker node (via podAntiAffinity),
+# so we need at least 2 worker nodes; 3 gives the scheduler some room.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: kueue-jobset-demo
+nodes:
+  - role: control-plane
+  - role: worker
+  - role: worker
+  - role: worker
