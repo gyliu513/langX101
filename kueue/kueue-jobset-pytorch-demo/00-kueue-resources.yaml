@@ -1,0 +1,40 @@
+---
+# ResourceFlavor: a single, untyped flavor that matches every node in the
+# kind cluster. For a real GPU cluster you would add
+# nodeLabels: { nvidia.com/gpu.present: "true" } here.
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: ResourceFlavor
+metadata:
+  name: default-flavor
+spec: {}
+---
+# ClusterQueue: the cluster-wide quota pool.
+# The JobSet asks for 2 Pods x (1 CPU + 1Gi) = 2 CPU + 2Gi.
+# Kueue admits the JobSet only when the WHOLE thing fits (gang admission),
+# so the quota below leaves comfortable headroom.
+# For GPU, add "nvidia.com/gpu" to coveredResources and give it a quota.
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: ClusterQueue
+metadata:
+  name: jobset-cluster-queue
+spec:
+  namespaceSelector: {}            # all namespaces may use this queue
+  resourceGroups:
+    - coveredResources: ["cpu", "memory"]
+      flavors:
+        - name: default-flavor
+          resources:
+            - name: cpu
+              nominalQuota: "8"
+            - name: memory
+              nominalQuota: "8Gi"
+---
+# LocalQueue: the namespaced entry point. Jobs/JobSets reference this queue
+# by name via the label kueue.x-k8s.io/queue-name.
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: LocalQueue
+metadata:
+  name: jobset-user-queue
+  namespace: default
+spec:
+  clusterQueue: jobset-cluster-queue
