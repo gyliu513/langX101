@@ -1,0 +1,37 @@
+---
+# Workload Variant Autoscaler (WVA) — VariantAutoscaling for the decode pool.
+#
+# WVA is a global autoscaler for inference model servers. It watches the target
+# Deployment, reads vLLM/queue/KV-cache metrics from Prometheus, computes a
+# desired replica count, and publishes it as the Prometheus metric
+# `wva_desired_replicas{variant_name=<this CR name>, exported_namespace=<ns>}`.
+# A standard HPA (06-hpa.yaml) consumes that metric to drive the scale subresource.
+#
+# Prerequisites (see README "Step 9 — Workload Variant Autoscaler"):
+#   - WVA controller + CRDs + service-class/accelerator ConfigMaps installed
+#     from the llm-d-workload-variant-autoscaler repo (kind-emulator profile).
+#   - Prometheus (already deployed by this demo) reachable by the controller.
+#   - prometheus-adapter (or KEDA) exposing `wva_desired_replicas` as an
+#     external metric so the HPA can read it.
+#
+# No-GPU note: the `inference.optimization/acceleratorName` label below names an
+# EMULATED accelerator so WVA can resolve a cost/performance profile. On a real
+# cluster set it to the node's actual accelerator. Saturation-based scaling
+# (KV-cache + queue depth) works without any GPU; GPU cost-optimization is
+# illustrative only here.
+apiVersion: llmd.ai/v1alpha1
+kind: VariantAutoscaling
+metadata:
+  name: optimized-baseline-decode
+  namespace: llm-d
+  labels:
+    inference.optimization/acceleratorName: A100
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: optimized-baseline-decode
+  modelID: "Qwen/Qwen2.5-0.5B-Instruct"
+  minReplicas: 1
+  maxReplicas: 4
+  variantCost: "10.0"
