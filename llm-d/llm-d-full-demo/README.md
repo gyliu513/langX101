@@ -1,6 +1,13 @@
 # llm-d Full Stack Observability Demo (No GPU)
 
-This guide deploys the **complete llm-d stack** — real EPP router, Envoy proxy, InferencePool, and inference-sim as model server — on a local Kind cluster **without GPU**. It provides end-to-end observability with **Prometheus** (metrics), **Grafana** (dashboards), and **Jaeger** (distributed tracing).
+This guide deploys the **complete llm-d stack** on a local Kind cluster **without GPU**, covering every key llm-d component: the **Envoy** data-plane proxy, the **EPP / llm-d Router** (Endpoint Picker), the **Inference Payload Processor (IPP)**, **InferencePool / InferenceObjective**, **inference-sim** model servers, the embedded **KV-cache indexer**, the **Workload Variant Autoscaler (WVA)**, and the optional **P/D disaggregation** path. It provides end-to-end observability with **Prometheus** (metrics), **Grafana** (dashboards), and **Jaeger** (distributed tracing).
+
+Each request is observable in Jaeger across **three trace sources** — the **Envoy** proxy, the **IPP**, and the **EPP** — so you can see and time every hop of the gateway. Envoy's own trace contains the `ingress` span plus **both `ext_proc` calls** (to the IPP and the EPP) as child spans, which is what proves the request really flows `Envoy → IPP → EPP → model server`.
+
+> [!IMPORTANT]
+> These are **separate traces**, not one stitched trace. The EPP and IPP each root their own trace (the llm-d EPP starts `gateway.request` from the gRPC stream and injects `traceparent` *downstream* to the model server by design; it does not adopt Envoy's `ext_proc` trace context). So you correlate the three by time and by the ext_proc spans in Envoy's trace, not by a shared trace ID. The EPP→model-server hop *would* share a trace ID with a trace-exporting model server (real vLLM with `--otlp-traces-endpoint`); the no-GPU `inference-sim` does not export traces. This behavior was verified on a live Kind cluster — see [Observed tracing behavior](#observed-tracing-behavior).
+
+> Envoy was always part of this stack; it runs as a sidecar inside the `llm-d-epp` pod (the standalone router chart's `proxy`). This revision makes it explicit, adds the IPP as a second `ext_proc` filter in front of the EPP, and enables Envoy's own OpenTelemetry tracing so the proxy hop (and the two ext_proc calls) become visible.
 
 > **中文版本：** [README-zh.md](./README-zh.md)
 
@@ -9,54 +16,70 @@ This guide deploys the **complete llm-d stack** — real EPP router, Envoy proxy
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│  Kind Cluster (single node, 14 CPU / 23 GB)                                │
-│                                                                             │
-│  ┌──────────────────────────────────────────────────────────────────────┐   │
-│  │  llm-d namespace                                                     │   │
-│  │                                                                      │   │
-│  │   Client                                                             │   │
-│  │     │ HTTP :80                                                       │   │
-│  │     ▼                                                                │   │
-│  │  ┌─────────────────────────────────────────────┐                    │   │
-│  │  │  llm-d-epp Pod (2 containers)               │                    │   │
-│  │  │                                             │                    │   │
-│  │  │  ┌─────────────┐   gRPC    ┌─────────────┐ │                    │   │
-│  │  │  │   Envoy     │◄─────────►│    EPP      │ │                    │   │
-│  │  │  │   Proxy     │  :9002    │  (Endpoint  │ │                    │   │
-│  │  │  │   :8081     │           │   Picker)   │ │                    │   │
-│  │  │  └──────┬──────┘           └──────┬──────┘ │                    │   │
-│  │  └─────────┼───────────────────────── ┼────────┘                    │   │
-│  │            │ route to selected pod    │ OTLP traces                 │   │
-│  │            │                          ▼                             │   │
-│  │            │              ┌────────────────────┐                   │   │
-│  │            │              │   OTel Collector   │                   │   │
-│  │            │              │      :4317         │                   │   │
-│  │            │              └─────────┬──────────┘                   │   │
-│  │            │                        │ OTLP forward                 │   │
-│  │            │                        ▼                             │   │
-│  │            │              ┌────────────────────┐                   │   │
-│  │            │              │      Jaeger        │                   │   │
-│  │            │              │    UI :16686       │                   │   │
-│  │            │              └────────────────────┘                   │   │
-│  │            │                                                       │   │
-│  │            ▼  InferencePool "llm-d"                                │   │
-│  │     ┌──────────┐    ┌──────────┐                                   │   │
-│  │     │ decode-0 │    │ decode-1 │  (inference-sim, port 8000)       │   │
-│  │     └──────────┘    └──────────┘                                   │   │
-│  │          │ OTLP traces                                              │   │
-│  │          └──────────────► OTel Collector ──► Jaeger               │   │
-│  └──────────────────────────────────────────────────────────────────────┘   │
-│                                                                             │
-│  ┌──────────────────────────────────────────────────────────────────────┐   │
-│  │  llm-d-monitoring namespace                                          │   │
-│  │                                                                      │   │
-│  │  Prometheus (HTTPS/TLS) ◄── ServiceMonitor (EPP :9090)              │   │
-│  │                         ◄── PodMonitor (model servers :8000)        │   │
-│  │  Grafana ◄── 5 llm-d dashboards                                     │   │
-│  └──────────────────────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────┐
+│  Kind Cluster (single node, 14 CPU / 23 GB)                                    │
+│                                                                                │
+│  ┌──────────────────────────────────────────────────────────────────────────┐ │
+│  │  llm-d namespace                                                         │ │
+│  │                                                                          │ │
+│  │   Client                                                                 │ │
+│  │     │ HTTP :80                                                           │ │
+│  │     ▼                                                                    │ │
+│  │  ┌─────────────────────────────────────────────┐    ┌─────────────────┐ │ │
+│  │  │  llm-d-epp Pod (2 containers)               │    │ payload-        │ │ │
+│  │  │                                             │    │ processor (IPP) │ │ │
+│  │  │  ┌─────────────┐   gRPC    ┌─────────────┐ │ ext │   :9004 (h2)    │ │ │
+│  │  │  │   Envoy     │◄─────────►│    EPP      │ │proc │  body→header    │ │ │
+│  │  │  │   Proxy     │  :9002    │  (Endpoint  │ │◄───►│  X-Gateway-     │ │ │
+│  │  │  │   :8081     │           │   Picker)   │ │     │  Model-Name     │ │ │
+│  │  │  └──┬───────┬──┘           └──────┬──────┘ │     └────────┬────────┘ │ │
+│  │  └─────┼───────┼─────────────────────┼────────┘              │          │ │
+│  │        │       │ root span + traceparent                     │ OTLP     │ │
+│  │        │       └──────────────┐      │ OTLP traces            │          │ │
+│  │        │ route to pod         ▼      ▼                        ▼          │ │
+│  │        │              ┌────────────────────┐ ◄───────────────┘          │ │
+│  │        │              │   OTel Collector   │                            │ │
+│  │        │              │      :4317         │──── OTLP ──► ┌───────────┐  │ │
+│  │        │              └────────────────────┘             │  Jaeger   │  │ │
+│  │        │                        ▲                         │  :16686   │  │ │
+│  │        ▼  InferencePool "llm-d" │ OTLP traces             └───────────┘  │ │
+│  │   ┌──────────┐  ┌──────────┐    │                                        │ │
+│  │   │ decode-0 │  │ decode-1 │────┘   (inference-sim, port 8000)           │ │
+│  │   └──────────┘  └──────────┘                                            │ │
+│  │                                                                          │ │
+│  │   WVA controller ── reads vLLM/queue/KV metrics ──► VariantAutoscaling   │ │
+│  │                  ── emits wva_desired_replicas ──► HPA ──► scales decode  │ │
+│  └──────────────────────────────────────────────────────────────────────────┘ │
+│                                                                                │
+│  ┌──────────────────────────────────────────────────────────────────────────┐ │
+│  │  llm-d-monitoring namespace                                              │ │
+│  │  Prometheus (HTTPS/TLS) ◄── ServiceMonitor (EPP :9090)                   │ │
+│  │                         ◄── PodMonitor (model servers :8000)             │ │
+│  │  Grafana ◄── 5 llm-d dashboards                                          │ │
+│  └──────────────────────────────────────────────────────────────────────────┘ │
+└────────────────────────────────────────────────────────────────────────────────┘
 ```
+
+The request path is: **Client → Envoy `:8081` → IPP `ext_proc` `:9004` → EPP `ext_proc` `:9002` → selected decode pod `:8000`.** Envoy calls the IPP first (it enriches the request — e.g. `model` body field → `X-Gateway-Model-Name`), then the EPP (which picks the target pod), then proxies to that pod.
+
+## llm-d Component Coverage
+
+Every key llm-d component is represented. "Baseline" components are wired into the always-on demo; "opt-in" require an extra documented step; "advanced" ship as caveated overlays under [`manifests/optional/`](./manifests/optional/).
+
+| Component | Repo / source | In this demo | No-GPU functional? |
+|---|---|---|---|
+| **Inference Gateway (Envoy)** | self-managed sidecar (router chart `proxy`) | Baseline — also the trace root | Yes |
+| **EPP / llm-d Router** | `llm-d-router` | Baseline | Yes |
+| **InferencePool / InferenceObjective** | GAIE + `llm-d.ai` CRDs | Baseline | Yes |
+| **Inference Payload Processor (IPP)** | `llm-d-inference-payload-processor` | Baseline (2nd `ext_proc`) | Yes |
+| **Model server (vLLM)** | `llm-d-inference-sim` | Baseline | Yes (simulated) |
+| **KV-cache indexer** | `llm-d-kv-cache` (library in EPP) | Baseline as prefix-cache index; precise KV-events routing is **advanced** | Prefix index yes; KV-events needs real vLLM |
+| **Workload Variant Autoscaler (WVA)** | `llm-d-workload-variant-autoscaler` | Opt-in (Step 9) | Yes (saturation scaling) |
+| **Routing sidecar / P/D disaggregation** | `llm-d-routing-sidecar` | Advanced overlay | Topology only (needs vLLM + NIXL) |
+| **Prometheus / Grafana** | kube-prometheus-stack | Baseline | Yes |
+| **Jaeger / OTel Collector** | upstream | Baseline | Yes |
+
+---
 
 ### Component Roles
 
@@ -64,8 +87,12 @@ This guide deploys the **complete llm-d stack** — real EPP router, Envoy proxy
 
 | Container | Role |
 |---|---|
-| **Envoy Proxy** (`:8081`) | Layer-7 HTTP gateway. Receives every inbound request and, before forwarding it, calls EPP over gRPC `ext_proc` (`:9002`) to ask "which pod should handle this?" Once EPP replies with a target pod IP, Envoy proxies the request directly to that pod and streams the response back. |
+| **Envoy Proxy** (`:8081`) | Layer-7 HTTP gateway. Receives every inbound request and calls two `ext_proc` servers in order — first the **IPP** (`:9004`) to enrich the request, then the **EPP** (`:9002`) to ask "which pod should handle this?" Once EPP replies with a target pod IP, Envoy proxies the request directly to that pod and streams the response back. Also has **OpenTelemetry tracing** enabled: it emits an `ingress` span plus one `ext_proc ... Process` child span per processor call, so the IPP and EPP hops are visible and timed from the proxy's side. (Envoy's spans form their own trace; the EPP/IPP do not adopt this context — see [Observed tracing behavior](#observed-tracing-behavior).) |
 | **EPP — Endpoint Picker** (`:9002`) | The scheduling brain. Runs a 4-plugin scoring pipeline on every request to select the best decode pod. Also owns the **Prefix Cache Index** (see KV Cache section below). Exposes Prometheus metrics on `:9090` and sends OTLP traces to the OTel Collector. |
+
+**`payload-processor` Pod — the Inference Payload Processor (IPP, `:9004`)**
+
+A separate Deployment running an Envoy `ext_proc` gRPC server (TLS/h2). It sits **before** the EPP in the filter chain and inspects/mutates the request payload. The default plugins extract the request body `model` field into the `X-Gateway-Model-Name` header (`body-field-to-header`) and resolve the base model (`base-model-to-header`), giving the gateway model-aware routing inputs without the EPP having to parse the body. It exports OTLP traces, so it appears as the `llm-d-inference-payload-processor` span in each request's trace. Envoy wires to it with `failure_mode_allow: true`, so an IPP outage degrades (no enrichment, no IPP span) rather than breaking requests.
 
 **EPP 4-plugin scoring pipeline (executed per request, in order):**
 
@@ -246,10 +273,23 @@ EPP kv-cache-utilization-scorer
 ```
 Step 1  Client → Envoy (:80)
         HTTP POST /v1/chat/completions arrives at Envoy on port 80.
+        Envoy starts an `ingress` span (its own trace).
 
-Step 2  Envoy → EPP ext_proc call (gRPC :9002)
-        Before routing, Envoy calls EPP via the gRPC external-processing API,
-        passing request headers/body. EPP runs the 4-plugin scoring pipeline:
+Step 2  Envoy → IPP ext_proc call (gRPC :9004, TLS/h2)
+        Envoy first calls the Inference Payload Processor, passing request
+        headers/body. The IPP runs its request plugins:
+        - body-field-to-header: copies the body `model` field into the
+                                X-Gateway-Model-Name header
+        - base-model-to-header: resolves the base model name
+        The IPP returns the (possibly mutated) headers to Envoy. Envoy records
+        this call as an `ext_proc ... Process egress` child span. The IPP also
+        emits its own span (service llm-d-inference-payload-processor) in a
+        SEPARATE trace.
+        failure_mode_allow=true: if the IPP is down, Envoy continues without it.
+
+Step 3  Envoy → EPP ext_proc call (gRPC :9002)
+        Envoy then calls the EPP (another `ext_proc ... Process egress` child
+        span), which runs the 4-plugin scoring pipeline:
 
         a. queue-scorer         reads each pod's live queue depth
         b. kv-cache-scorer      reads each pod's KV cache fill level
@@ -258,27 +298,29 @@ Step 2  Envoy → EPP ext_proc call (gRPC :9002)
         d. no-hit-lru-scorer    fallback if no prefix match
 
         EPP returns the winning pod's IP to Envoy and records the request
-        in the Prefix Cache Index (or updates an existing entry).
+        in the Prefix Cache Index. The EPP emits gateway.request +
+        gateway.request_orchestration in its OWN trace, and injects a fresh
+        traceparent DOWNSTREAM toward the selected pod.
 
-Step 3  Envoy → decode pod (:8000)
+Step 4  Envoy → decode pod (:8000)
         Envoy forwards the request directly to the selected pod (bypassing
         any kube-proxy load balancer) and streams the response back to the client.
 
-Step 4  decode pod → OTel Collector (OTLP gRPC :4317)
-        The model server pod emits an OTLP span covering the inference execution.
-
-Step 5  EPP → OTel Collector (OTLP gRPC :4317)
-        EPP emits two spans per request:
-        - gateway.request              full request lifecycle
-        - gateway.request_orchestration  the scheduling decision detail
+Step 5  Each component → OTel Collector (OTLP gRPC :4317)
+        Envoy (ingress + 2 ext_proc spans), IPP (gateway.request), and EPP
+        (gateway.request + gateway.request_orchestration) export their spans.
+        These are THREE separate traces (different trace IDs). The decode pod
+        (inference-sim) does NOT export traces.
 
 Step 6  OTel Collector processes & forwards
         Filter drops /metrics HTTP-polling spans (noise reduction).
         Batcher groups remaining spans → forwards to Jaeger over OTLP.
 
 Step 7  Jaeger stores + displays
-        Spans land in Jaeger's in-memory store.  UI at :16686 lets you
-        correlate EPP scheduling time with model-server execution time.
+        Spans land in Jaeger's in-memory store. UI at :16686 shows three llm-d
+        services (llm-d-envoy-proxy, llm-d-inference-payload-processor,
+        llm-d-router/epp). Envoy's trace is the one that shows BOTH ext_proc
+        hops in a single view. See "Observed tracing behavior".
 ```
 
 ### Step-by-Step: Metrics Path
@@ -302,11 +344,37 @@ Every 30 s:
 
 ---
 
+## Observed tracing behavior
+
+This section records what the tracing pipeline **actually does**, verified end-to-end on a live Kind cluster (not the idealized version).
+
+**What you get:** three llm-d services in Jaeger, each emitting its own trace per request:
+
+| Service | Spans per request | Notes |
+|---|---|---|
+| `llm-d-envoy-proxy` | `ingress` + 2× `async ...ExternalProcessor.Process egress` | The two ext_proc spans are the IPP call and the EPP call. This is the one trace that shows both hops together. |
+| `llm-d-inference-payload-processor` | `gateway.request` | IPP body/header processing. |
+| `llm-d-router/epp` | `gateway.request` + `gateway.request_orchestration` | EPP routing + scheduling decision. |
+| `llm-d-model-server` | (none) | `inference-sim:v0.8.0` does not export traces. |
+
+**Why they are NOT one stitched trace:**
+
+- The llm-d EPP starts `gateway.request` from the ext_proc **gRPC stream context** (`llm-d-router` `pkg/epp/handlers/server.go`), so it roots its own trace and never adopts an incoming `traceparent`. It then injects a fresh `traceparent` **downstream** toward the model server. Verified: sending a client `traceparent` does not pull the EPP (or IPP) into that trace.
+- The IPP likewise roots its own trace.
+- Envoy's OTLP tracing produces an independent trace for the proxy hop. Envoy only writes `traceparent` to the request when forwarding **upstream** (after the ext_proc filters), so the ext_proc servers never receive Envoy's context.
+
+**What it would take to get a single stitched trace** (out of scope for this demo — needs upstream changes): the EPP and IPP ext_proc servers would have to extract the incoming `traceparent` (from the ext_proc request headers) and parent their spans to it. The one stitch that *does* work by design is **EPP → model server** (EPP injects downstream), so swapping the sim for a trace-exporting vLLM (`--otlp-traces-endpoint`) yields a 2-service EPP+model trace.
+
+**Practical takeaway:** to follow a single request, open its **Envoy** trace — it shows the proxy hop plus the IPP and EPP ext_proc calls with timings — then jump to the IPP and EPP services for their internal detail.
+
+---
+
 ## Components
 
 | Component | Namespace | Kind | Description |
 |---|---|---|---|
-| `llm-d-epp` | `llm-d` | Pod (2 containers) | **Envoy proxy** (port 80→8081) + **EPP** (gRPC ext_proc :9002) |
+| `llm-d-epp` | `llm-d` | Pod (2 containers) | **Envoy proxy** (port 80→8081, trace root, 2× ext_proc) + **EPP** (gRPC ext_proc :9002) |
+| `payload-processor` | `llm-d` | Deployment | **IPP** — Envoy ext_proc (:9004, TLS/h2); body→header enrichment |
 | `InferencePool/llm-d` | `llm-d` | CR | Watches pods with label `llm-d.ai/guide=optimized-baseline` |
 | `InferenceObjective/llm-d-standard` | `llm-d` | CR | Priority=0 flow-control objective |
 | `optimized-baseline-decode` | `llm-d` | Deployment (2 replicas) | inference-sim acting as vLLM model server |
@@ -314,6 +382,7 @@ Every 30 s:
 | `jaeger` | `llm-d` | Deployment | Trace storage + UI (port 16686) |
 | `ServiceMonitor/llm-d-epp-monitor` | `llm-d` | CR | Prometheus scrapes EPP metrics (:9090) |
 | `PodMonitor/decode` | `llm-d` | CR | Prometheus scrapes model server metrics (:8000) — from `guides/recipes/modelserver/components/monitoring/` |
+| `VariantAutoscaling/optimized-baseline-decode` | `llm-d` | CR (opt-in) | **WVA** target; emits `wva_desired_replicas` → HPA |
 | Prometheus (HTTPS/TLS) | `llm-d-monitoring` | StatefulSet | Metrics storage |
 | Grafana | `llm-d-monitoring` | Deployment | 5 pre-loaded llm-d dashboards |
 
@@ -322,7 +391,7 @@ Every 30 s:
 | Signal | Tool | Sources | Count |
 |---|---|---|---|
 | **Metrics** | Prometheus + Grafana | EPP (ServiceMonitor) + model servers (PodMonitor) | 35+ EPP + 41 vLLM |
-| **Traces** | Jaeger + OTel Collector | EPP (`llm-d-router/epp`) + model servers | 2 spans/request |
+| **Traces** | Jaeger + OTel Collector | Envoy (`llm-d-envoy-proxy`) + IPP (`llm-d-inference-payload-processor`) + EPP (`llm-d-router/epp`); model server does not export (sim) | 3 services / 3 separate traces per request |
 
 ---
 
@@ -508,7 +577,10 @@ The llm-d EPP embeds the InferencePool/InferenceObjective controller logic direc
 
 ### Model Server OpenTelemetry Configuration (`01-model-servers.yaml`)
 
-The five `OTEL_*` environment variables in the model server manifest wire the inference-sim pods into the distributed tracing pipeline. Each variable maps to a standard OpenTelemetry SDK configuration knob.
+> [!NOTE]
+> Verified on a live cluster: `llm-d-inference-sim:v0.8.0` does **not** act on these `OTEL_*` variables — no `llm-d-model-server` service ever appears in Jaeger. The variables are kept because they are correct and forward-looking: a real vLLM (or a future sim build) that honors them will export an inference span that joins the EPP's downstream-propagated trace. The explanation below describes that intended behavior.
+
+The five `OTEL_*` environment variables in the model server manifest are meant to wire the model-server pods into the distributed tracing pipeline. Each variable maps to a standard OpenTelemetry SDK configuration knob.
 
 ```yaml
 # OpenTelemetry distributed tracing
@@ -560,22 +632,21 @@ parentbased_traceidratio
 
 **Why this matters in the llm-d flow:**
 
-The EPP is the trace originator. When EPP routes a request to a model server pod, it injects a W3C `traceparent` header carrying the root trace ID and a "sampled" flag. The model server's OTel SDK reads this header:
+The **EPP is the trace originator for the routing path** (this is by design in `llm-d-router`). For each request it starts `gateway.request` from the ext_proc gRPC stream — it does **not** read an incoming `traceparent` — and then **injects a fresh `traceparent` downstream** to the selected model server. So the EPP's trace is meant to extend to the model server, not back to Envoy:
 
 ```
-EPP (root span creator)
-  │  creates: gateway.request  [traceID=abc, spanID=001, sampled=true]
-  │  injects: traceparent: 00-abc-001-01  into the HTTP request to the model server
+EPP (root span creator for the routing trace)
+  │  creates: gateway.request  [traceID=abc, spanID=001]
+  │  injects: traceparent: 00-abc-001-01  into the request forwarded to the model server
   │
   ▼
-decode-0 (child span creator)
-  OTel SDK reads traceparent header
-  parentbased sampler: parent is sampled → sample this span
-  creates: inference.request  [traceID=abc, spanID=002, parentSpanID=001]
-  exports to OTel Collector → Jaeger
+decode-0 (would-be child span creator)
+  IF the model server exports traces (real vLLM with --otlp-traces-endpoint),
+  its OTel SDK reads traceparent → inference span under traceID=abc.
+  The no-GPU inference-sim does NOT export traces, so this child never appears.
 ```
 
-Result: every request that EPP traces also produces a model server span **with the same trace ID**, so Jaeger can stitch them into a single end-to-end trace. If EPP had decided not to sample a request (e.g. at 10% rate), the model server would also drop its span — no orphaned spans accumulate.
+This is why the EPP and a trace-exporting model server share a trace ID, while **Envoy and the IPP each produce their own independent traces** — Envoy starts `ingress` and the two `ext_proc` client spans on its own trace, and the IPP starts its `gateway.request` on its own trace. None of these three adopt each other's context. The `OTEL_TRACES_SAMPLER_ARG=1.0` below applies to whichever component is the root of its trace.
 
 **`OTEL_TRACES_SAMPLER_ARG=1.0`**
 
@@ -584,20 +655,23 @@ The ratio argument for the inner `traceidratio` sampler, used only when there is
 **End-to-end trace topology:**
 
 ```
-Request lifecycle in Jaeger:
+Three independent traces in Jaeger per request (verified on a live cluster):
 
-  traceID: abc123...
-  │
-  ├── [span 1]  gateway.request                service=llm-d-router/epp
-  │     duration: ~0.2ms (EPP scheduling time)
-  │     attributes: pod.selected=decode-0, plugin.scores=...
-  │     │
-  │     └── [span 2]  inference.request        service=llm-d-model-server
-  │           duration: ~50ms (model inference time)
-  │           attributes: pod=decode-0, model=Qwen2.5-0.5B-Instruct
+  Trace A  service=llm-d-envoy-proxy
+    └── ingress                                   (the proxy hop)
+        ├── async ...ExternalProcessor.Process egress   (the IPP ext_proc call)
+        └── async ...ExternalProcessor.Process egress   (the EPP ext_proc call)
+
+  Trace B  service=llm-d-inference-payload-processor
+    └── gateway.request                           (IPP body/header processing)
+
+  Trace C  service=llm-d-router/epp
+    ├── gateway.request                           (full request lifecycle)
+    └── gateway.request_orchestration             (EPP scheduling detail)
+    (would extend to the model server if it exported traces; the sim does not)
 ```
 
-Two services, two spans, one trace ID — correlated automatically via the `traceparent` header.
+Three services, three trace IDs. Trace A (Envoy) is the single view that shows BOTH ext_proc hops together, which is the practical way to see and time the IPP → EPP ordering for one request.
 
 ---
 
@@ -771,11 +845,15 @@ helm install llm-d \
   -f guides/recipes/router/features/monitoring.values.yaml \
   -f docs/monitoring/llm-d-full-demo/helm-values/kind-overrides.values.yaml \
   -f docs/monitoring/llm-d-full-demo/helm-values/tracing.values.yaml \
+  -f docs/monitoring/llm-d-full-demo/helm-values/proxy-tracing-ipp.values.yaml \
   -n llm-d \
   --version ${ROUTER_CHART_VERSION}
 ```
 
-The `tracing.values.yaml` enables EPP to export spans to `http://otel-collector:4317`.
+- `tracing.values.yaml` enables the **EPP** to export spans to `http://otel-collector:4317`.
+- `proxy-tracing-ipp.values.yaml` overrides the chart's **Envoy** config to (a) add the **IPP** as a second `ext_proc` filter in front of the EPP, (b) make Envoy the **OpenTelemetry trace root**, and (c) add the `ipp_ext_proc` and `otel_collector` clusters. It is a verbatim copy of the chart's Envoy preset plus those additions; re-sync it if you bump `ROUTER_CHART_VERSION`.
+
+> Envoy starts referencing the `payload-processor` Service before the IPP exists (Step 6b). Because the IPP filter is configured `failure_mode_allow: true`, requests still succeed in the meantime — the IPP simply doesn't contribute a span until it is running.
 
 Verify:
 ```bash
@@ -817,6 +895,49 @@ kubectl get deploy,svc -n llm-d | grep -E "otel|jaeger"
 # NAME                       TYPE        CLUSTER-IP   PORT(S)
 # service/jaeger-collector   ClusterIP   ...          16686/TCP,4317/TCP
 # service/otel-collector     ClusterIP   ...          4317/TCP,4318/TCP
+```
+
+---
+
+### Step 6b: Deploy the Inference Payload Processor (IPP)
+
+The IPP is the second `ext_proc` server in the Envoy chain (wired in Step 5). Deploy the workload now so Envoy's `ipp_ext_proc` cluster becomes healthy and IPP spans start appearing.
+
+Install from the chart in the [`llm-d-inference-payload-processor`](https://github.com/llm-d/llm-d-inference-payload-processor) repo:
+
+```bash
+git clone https://github.com/llm-d/llm-d-inference-payload-processor.git /tmp/ipp
+
+helm install payload-processor /tmp/ipp/config/charts/payload-processor \
+  -f docs/monitoring/llm-d-full-demo/helm-values/ipp.values.yaml \
+  -n llm-d
+```
+
+> If the published OCI chart is available in your environment, you can instead use
+> `helm install payload-processor oci://ghcr.io/llm-d/charts/payload-processor --version v0 -f ... -n llm-d`.
+
+`ipp.values.yaml` sets `provider.name=none` (the chart deploys only the IPP workload — Deployment, Service, ConfigMap, RBAC; Envoy wiring is done on the router side) and enables OTLP tracing to `http://otel-collector:4317`.
+
+> [!NOTE]
+> The IPP image `ghcr.io/llm-d/llm-d-inference-payload-processor:main` is currently **not anonymously pullable** (403). If the pod shows `ImagePullBackOff`, build it from the cloned repo and load it into Kind. On Apple Silicon, build for arm64:
+> ```bash
+> docker run --rm -v /tmp/ipp:/src -w /src/cmd -e CGO_ENABLED=0 -e GOOS=linux -e GOARCH=arm64 \
+>   golang:1.25 go build -o /src/payload-processor-bin .
+> printf 'FROM gcr.io/distroless/static:nonroot\nCOPY payload-processor-bin /payload-processor\nENTRYPOINT ["/payload-processor"]\n' > /tmp/ipp/Dockerfile.local
+> docker build --platform linux/arm64 -f /tmp/ipp/Dockerfile.local -t ghcr.io/llm-d/llm-d-inference-payload-processor:main /tmp/ipp
+> kind load docker-image ghcr.io/llm-d/llm-d-inference-payload-processor:main --name llm-d
+> kubectl delete pod -n llm-d -l app=payload-processor   # let it restart onto the loaded image
+> ```
+> (drop `--platform`/`GOARCH=arm64` for x86_64.)
+
+Verify:
+```bash
+kubectl get deploy,svc -n llm-d | grep payload-processor
+# NAME                                       READY   UP-TO-DATE   AVAILABLE
+# deployment.apps/payload-processor          1/1     1            1
+#
+# NAME                        TYPE        CLUSTER-IP   PORT(S)
+# service/payload-processor   ClusterIP   ...          9004/TCP
 ```
 
 ---
@@ -899,6 +1020,48 @@ kubectl logs -n llm-d deploy/llm-d-traffic-gen -f
 
 ---
 
+### Step 9: Workload Variant Autoscaler (WVA) — opt-in
+
+WVA is a global autoscaler for inference model servers. It watches the decode Deployment, reads vLLM/queue/KV-cache metrics from Prometheus, computes a desired replica count, and publishes it as the Prometheus metric `wva_desired_replicas`. A standard HPA consumes that metric and drives the scale subresource. On no-GPU Kind it runs in **saturation-scaling** mode (KV-cache + queue depth); GPU cost-optimization is illustrative only.
+
+WVA has more moving parts than the rest of the demo, so install its controller, CRDs, and service-class/accelerator ConfigMaps from the [`llm-d-workload-variant-autoscaler`](https://github.com/llm-d/llm-d-workload-variant-autoscaler) repo (the `kind-emulator` profile is purpose-built for this). Then apply the demo's glue:
+
+```bash
+# 9a. Controller + CRDs + config (from the WVA repo; kind-emulator profile)
+#     git clone https://github.com/llm-d/llm-d-workload-variant-autoscaler && cd it
+ENVIRONMENT=kind-emulator ./deploy/install.sh        # or: kubectl apply -k config/overlays/cluster-scoped/kubernetes
+
+# 9b. Point WVA's controller at this demo's Prometheus
+#     (PROMETHEUS_BASE_URL in its manager ConfigMap → the llm-d-monitoring Prometheus svc)
+
+# 9c. Expose wva_desired_replicas to the HPA as an external metric
+#     install prometheus-adapter (or KEDA) and map the series — see the WVA repo
+
+# 9d. Apply the VariantAutoscaling + HPA for the decode pool
+kubectl apply -f docs/monitoring/llm-d-full-demo/manifests/05-variantautoscaling.yaml
+kubectl apply -f docs/monitoring/llm-d-full-demo/manifests/06-hpa.yaml
+```
+
+Verify:
+```bash
+kubectl get variantautoscaling,hpa -n llm-d
+# NAME                                                      TARGET                       MIN   MAX
+# variantautoscaling.llmd.ai/optimized-baseline-decode      optimized-baseline-decode    1     4
+#
+# NAME                                                              REFERENCE
+# horizontalpodautoscaler.autoscaling/optimized-baseline-decode-hpa Deployment/optimized-baseline-decode
+```
+
+Raise traffic (lower the generator's `INTERVAL`, or loop `curl`) and watch the decode replica count move as `wva_desired_replicas` rises.
+
+---
+
+## Advanced layers (optional)
+
+The remaining components — **P/D disaggregation** (with the `llm-d-routing-sidecar`) and **precise prefix-cache / KV-cache-aware routing** (the embedded KV-cache indexer fed by ZMQ KV-events) — ship as caveated overlays under [`manifests/optional/`](./manifests/optional/). They deploy the topology and control/observability plane on the simulator, but the data-plane KV mechanics (real NIXL transfer, real KV-events, tokenization) require CPU/GPU vLLM. See [`manifests/optional/README.md`](./manifests/optional/README.md) for the exact steps, references to the canonical llm-d guides, and the no-GPU caveats.
+
+---
+
 ## Accessing the Observability Stack
 
 ### Prometheus (Metrics)
@@ -938,12 +1101,19 @@ kubectl port-forward -n llm-d svc/jaeger-collector 16686:16686
 
 Open: [http://localhost:16686](http://localhost:16686)
 
-In the Jaeger UI:
-1. **Service** → select `llm-d-router/epp`
-2. **Find Traces** → see real EPP routing spans
-3. Click any trace to see span details:
-   - `gateway.request` — full request lifecycle
-   - `gateway.request_orchestration` — EPP scheduling decision
+In the Jaeger UI the **Service** dropdown lists three llm-d services:
+`llm-d-envoy-proxy` (Envoy), `llm-d-inference-payload-processor` (IPP), and
+`llm-d-router/epp` (EPP). Each request produces one trace **per service** (they
+are not stitched together — see [Observed tracing behavior](#observed-tracing-behavior)).
+
+1. **Service** → select `llm-d-envoy-proxy`, **Find Traces**, open one. It has:
+   - `ingress` — the proxy hop
+   - two `async ...ExternalProcessor.Process egress` spans — the IPP call and the EPP call.
+     This is the single view that shows both ext_proc hops for one request.
+2. **Service** → `llm-d-inference-payload-processor` → the IPP's `gateway.request` span.
+3. **Service** → `llm-d-router/epp` → `gateway.request` + `gateway.request_orchestration`
+   (the scheduling decision).
+4. `llm-d-model-server` is absent — the no-GPU `inference-sim` does not export traces.
 
 ---
 
@@ -1073,6 +1243,52 @@ curl -s -X POST http://localhost:8081/v1/chat/completions \
 # Then check Jaeger for the failed trace
 ```
 
+#### TC-11: Three trace sources + Envoy shows both ext_proc hops
+
+Verify all three llm-d services appear, and that Envoy's trace contains the two
+`ext_proc` calls (IPP and EPP).
+
+```bash
+# All three services should be listed
+curl -s "http://localhost:16686/api/services" | python3 -c "import sys,json; print(sorted(json.load(sys.stdin)['data']))"
+# Expected to include: llm-d-envoy-proxy, llm-d-inference-payload-processor, llm-d-router/epp
+
+# Envoy's trace = ingress + two ext_proc 'Process egress' spans
+curl -s "http://localhost:16686/api/traces?service=llm-d-envoy-proxy&limit=3&lookback=1h" | \
+  python3 -c "
+import sys, json
+for t in (json.load(sys.stdin).get('data') or []):
+    ops = [s['operationName'] for s in t.get('spans', [])]
+    n_extproc = sum('ExternalProcessor.Process' in o for o in ops)
+    print(f'traceID={t[\"traceID\"][:16]}  spans={len(ops)}  ext_proc_calls={n_extproc}')
+"
+```
+
+**Expected:** each Envoy trace has 3 spans with `ext_proc_calls=2` (the IPP and EPP calls). These are **separate** traces from the IPP's and EPP's own traces — a single 4-service trace is not produced (see [Observed tracing behavior](#observed-tracing-behavior)). If the IPP service is missing, confirm Step 6b is deployed and the `ipp_ext_proc` cluster is healthy (`curl -s localhost:19000/clusters | grep ipp_ext_proc` against an Envoy admin port-forward).
+
+#### TC-12: IPP Header Enrichment
+
+Confirm the IPP processes each request body (extracting `model` → `X-Gateway-Model-Name`):
+
+```bash
+kubectl logs -n llm-d deploy/payload-processor | grep -iE "parsed field from body|base model header" | tail
+```
+
+**Expected** (verified on a live cluster) — one pair per request:
+```
+... "msg":"parsed field from body","field":"model","value":"Qwen/Qwen2.5-0.5B-Instruct"
+... "msg":"updated base model header based on the request target model","targetModel":"Qwen/Qwen2.5-0.5B-Instruct"
+```
+
+#### TC-13: WVA Desired Replicas (opt-in)
+
+If WVA is installed (Step 9), confirm it publishes a scaling signal:
+
+```promql
+wva_desired_replicas{variant_name="optimized-baseline-decode", exported_namespace="llm-d"}
+```
+**Expected:** a value ≥ 1 that rises with load; the HPA tracks it.
+
 ---
 
 ## Helm Values Layer Reference
@@ -1092,6 +1308,13 @@ docs/monitoring/llm-d-full-demo/helm-values/tracing.values.yaml
 
 docs/monitoring/llm-d-full-demo/helm-values/kind-overrides.values.yaml
   └── Reduced EPP/proxy resources for local kind cluster
+
+docs/monitoring/llm-d-full-demo/helm-values/proxy-tracing-ipp.values.yaml
+  └── Full Envoy config override: IPP ext_proc filter (before EPP),
+      OpenTelemetry trace root, ipp_ext_proc + otel_collector clusters
+
+docs/monitoring/llm-d-full-demo/helm-values/ipp.values.yaml   (payload-processor chart)
+  └── IPP workload only (provider.name=none) + OTLP tracing
 ```
 
 ---
@@ -1136,7 +1359,15 @@ The filter processor is important: Prometheus scrapes `/metrics` every 15–30 s
 ## Cleanup
 
 ```bash
-# Remove all workloads (OTel + Jaeger + model servers + EPP)
+# Remove the helm releases (router + IPP)
+helm uninstall llm-d -n llm-d
+helm uninstall payload-processor -n llm-d
+
+# Remove WVA if installed (Step 9) — from the WVA repo checkout:
+#   ENVIRONMENT=kind-emulator ./deploy/install.sh --uninstall
+#   (or: kubectl delete -k config/overlays/cluster-scoped/kubernetes)
+
+# Remove all remaining workloads (OTel + Jaeger + model servers + VA/HPA)
 kubectl delete namespace llm-d
 
 # Remove monitoring stack

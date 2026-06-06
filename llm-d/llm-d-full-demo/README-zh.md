@@ -1,6 +1,13 @@
 # llm-d 完整栈可观测性演示（无 GPU 环境）
 
-本指南在本地 Kind 集群上部署**完整的 llm-d 生产架构**，通过 **Prometheus**（指标）、**Grafana**（仪表盘）、**Jaeger**（分布式追踪）实现三位一体的端到端全链路可观测性，无需 GPU。
+本指南在本地 Kind 集群上部署**完整的 llm-d 生产架构**，覆盖 llm-d 的全部关键组件：**Envoy** 数据面代理、**EPP / llm-d Router**（端点选择器）、**Inference Payload Processor（IPP，推理负载处理器）**、**InferencePool / InferenceObjective**、**inference-sim** 模型服务器、内嵌的 **KV-cache 索引器**、**Workload Variant Autoscaler（WVA，工作负载变体自动扩缩器）**，以及可选的 **P/D 分离** 路径。通过 **Prometheus**（指标）、**Grafana**（仪表盘）、**Jaeger**（分布式追踪）实现端到端全链路可观测性，无需 GPU。
+
+每个请求在 Jaeger 中可通过**三个 trace 来源**观测——**Envoy** 代理、**IPP**、**EPP**——从而看到并测量网关的每一跳。Envoy 自身的 trace 包含 `ingress` span 以及**两次 `ext_proc` 调用**（对 IPP 和对 EPP）作为子 span，这正是证明请求确实按 `Envoy → IPP → EPP → 模型服务器` 流动的依据。
+
+> [!IMPORTANT]
+> 这是**三条独立的 trace**，并非一条拼接的 trace。EPP 与 IPP 各自开启自己的 trace（llm-d EPP 从 ext_proc 的 gRPC 流上下文开始 `gateway.request`，并把 `traceparent` 向**下游**注入到模型服务器，按设计不采纳 Envoy 的 ext_proc trace 上下文）。因此三者靠时间和 Envoy trace 中的 ext_proc span 关联，而非共享 trace ID。EPP→模型服务器这一跳**会**与一个能导出 trace 的模型服务器（真实 vLLM 配 `--otlp-traces-endpoint`）共享 trace ID；无 GPU 的 `inference-sim` 不导出 trace。该行为已在真实 Kind 集群上验证——见[实测追踪行为](#实测追踪行为)。
+
+> Envoy 一直是本栈的一部分；它作为 sidecar 运行在 `llm-d-epp` Pod 内（standalone router chart 的 `proxy`）。本次更新将其显式化，把 IPP 作为 EPP 之前的第二个 `ext_proc` 过滤器加入，并启用 Envoy 自身的 OpenTelemetry tracing，使代理这一跳（及两次 ext_proc 调用）变得可观测。
 
 > **English version:** [README.md](./README.md)
 
@@ -9,53 +16,61 @@
 ## 架构图
 
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│  Kind 集群（单节点，14 CPU / 23 GB）                                          │
-│                                                                             │
-│  ┌──────────────────────────────────────────────────────────────────────┐   │
-│  │  llm-d 命名空间                                                      │   │
-│  │                                                                      │   │
-│  │   客户端                                                              │   │
-│  │     │ HTTP :80                                                       │   │
-│  │     ▼                                                                │   │
-│  │  ┌─────────────────────────────────────────────┐                    │   │
-│  │  │  llm-d-epp Pod（2 个容器）                    │                    │   │
-│  │  │                                             │                    │   │
-│  │  │  ┌─────────────┐   gRPC    ┌─────────────┐ │                    │   │
-│  │  │  │   Envoy     │◄─────────►│    EPP      │ │                    │   │
-│  │  │  │   代理       │  :9002    │  （端点选择器）│ │                    │   │
-│  │  │  │   :8081     │           │             │ │                    │   │
-│  │  │  └──────┬──────┘           └──────┬──────┘ │                    │   │
-│  │  └─────────┼───────────────────────── ┼────────┘                    │   │
-│  │            │ 路由到选中的 Pod           │ OTLP traces                 │   │
-│  │            │                          ▼                             │   │
-│  │            │              ┌────────────────────┐                   │   │
-│  │            │              │   OTel Collector   │                   │   │
-│  │            │              │      :4317         │                   │   │
-│  │            │              └─────────┬──────────┘                   │   │
-│  │            │                        │ OTLP 转发                    │   │
-│  │            │                        ▼                             │   │
-│  │            │              ┌────────────────────┐                   │   │
-│  │            │              │      Jaeger        │                   │   │
-│  │            │              │    UI :16686       │                   │   │
-│  │            │              └────────────────────┘                   │   │
-│  │            │                                                       │   │
-│  │            ▼  InferencePool "llm-d"                                │   │
-│  │     ┌──────────┐    ┌──────────┐                                   │   │
-│  │     │ decode-0 │    │ decode-1 │  （inference-sim，port 8000）     │   │
-│  │     └──────────┘    └──────────┘                                   │   │
-│  │          │ OTLP traces                                              │   │
-│  │          └──────────────► OTel Collector ──► Jaeger               │   │
-│  └──────────────────────────────────────────────────────────────────────┘   │
-│                                                                             │
-│  ┌──────────────────────────────────────────────────────────────────────┐   │
-│  │  llm-d-monitoring 命名空间                                            │   │
-│  │  Prometheus（HTTPS/TLS）◄── ServiceMonitor（EPP :9090）              │   │
-│  │                         ◄── PodMonitor（model servers :8000）       │   │
-│  │  Grafana ◄── 5 个 llm-d 仪表盘                                      │   │
-│  └──────────────────────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────┐
+│  Kind 集群（单节点，14 CPU / 23 GB）                                            │
+│                                                                                │
+│  ┌──────────────────────────────────────────────────────────────────────────┐ │
+│  │  llm-d 命名空间                                                          │ │
+│  │   客户端 │ HTTP :80                                                      │ │
+│  │     ▼                                                                    │ │
+│  │  ┌─────────────────────────────────────────────┐    ┌─────────────────┐ │ │
+│  │  │  llm-d-epp Pod（2 个容器）                    │    │ payload-        │ │ │
+│  │  │  ┌─────────────┐   gRPC    ┌─────────────┐ │ ext │ processor (IPP)  │ │ │
+│  │  │  │   Envoy     │◄─────────►│    EPP      │ │proc │   :9004 (h2)     │ │ │
+│  │  │  │   代理       │  :9002    │ （端点选择器）│ │◄───►│  body→header     │ │ │
+│  │  │  │   :8081     │           │             │ │     │  X-Gateway-      │ │ │
+│  │  │  └──┬───────┬──┘           └──────┬──────┘ │     │  Model-Name      │ │ │
+│  │  └─────┼───────┼─────────────────────┼────────┘     └────────┬────────┘ │ │
+│  │        │       │ 根 span + traceparent                       │ OTLP     │ │
+│  │        │ 路由到 Pod                    │ OTLP traces           │          │ │
+│  │        │              ┌────────────────▼───┐ ◄───────────────┘          │ │
+│  │        │              │   OTel Collector   │──── OTLP ──► ┌───────────┐  │ │
+│  │        │              │      :4317         │             │  Jaeger   │  │ │
+│  │        ▼              └────────────────────┘             │  :16686   │  │ │
+│  │   InferencePool "llm-d"          ▲ OTLP traces           └───────────┘  │ │
+│  │   ┌──────────┐  ┌──────────┐     │                                      │ │
+│  │   │ decode-0 │  │ decode-1 │─────┘  （inference-sim，port 8000）         │ │
+│  │   └──────────┘  └──────────┘                                            │ │
+│  │   WVA 控制器 ── 读取 vLLM/队列/KV 指标 ──► VariantAutoscaling             │ │
+│  │             ── 输出 wva_desired_replicas ──► HPA ──► 扩缩 decode          │ │
+│  └──────────────────────────────────────────────────────────────────────────┘ │
+│  ┌──────────────────────────────────────────────────────────────────────────┐ │
+│  │  llm-d-monitoring 命名空间                                              │ │
+│  │  Prometheus（HTTPS/TLS）◄── ServiceMonitor（EPP :9090）                  │ │
+│  │                         ◄── PodMonitor（model servers :8000）           │ │
+│  │  Grafana ◄── 5 个 llm-d 仪表盘                                          │ │
+│  └──────────────────────────────────────────────────────────────────────────┘ │
+└────────────────────────────────────────────────────────────────────────────────┘
 ```
+
+请求路径为：**客户端 → Envoy `:8081` → IPP `ext_proc` `:9004` → EPP `ext_proc` `:9002` → 选中的 decode Pod `:8000`。** Envoy 先调用 IPP（对请求做增强，例如把请求体的 `model` 字段写入 `X-Gateway-Model-Name`），再调用 EPP（选出目标 Pod），最后把请求转发给该 Pod。
+
+## llm-d 组件覆盖
+
+llm-d 的每个关键组件均有体现。“基线”组件已接入常驻演示；“可选”需要额外的文档步骤；“进阶”以带注意事项的 overlay 形式提供，位于 [`manifests/optional/`](./manifests/optional/)。
+
+| 组件 | 仓库 / 来源 | 在本演示中 | 无 GPU 可用？ |
+|---|---|---|---|
+| **Inference Gateway（Envoy）** | 自管 sidecar（router chart `proxy`） | 基线——同时是 trace 根 | 是 |
+| **EPP / llm-d Router** | `llm-d-router` | 基线 | 是 |
+| **InferencePool / InferenceObjective** | GAIE + `llm-d.ai` CRDs | 基线 | 是 |
+| **Inference Payload Processor（IPP）** | `llm-d-inference-payload-processor` | 基线（第 2 个 `ext_proc`） | 是 |
+| **模型服务器（vLLM）** | `llm-d-inference-sim` | 基线 | 是（模拟） |
+| **KV-cache 索引器** | `llm-d-kv-cache`（EPP 内库） | 基线为前缀缓存索引；精确 KV-events 路由为**进阶** | 前缀索引可；KV-events 需真实 vLLM |
+| **Workload Variant Autoscaler（WVA）** | `llm-d-workload-variant-autoscaler` | 可选（第 9 步） | 是（饱和度扩缩） |
+| **路由 sidecar / P/D 分离** | `llm-d-routing-sidecar` | 进阶 overlay | 仅拓扑（需 vLLM + NIXL） |
+| **Prometheus / Grafana** | kube-prometheus-stack | 基线 | 是 |
+| **Jaeger / OTel Collector** | 上游 | 基线 | 是 |
 
 ### 各组件职责说明
 
@@ -63,8 +78,12 @@
 
 | 容器 | 职责 |
 |---|---|
-| **Envoy Proxy**（`:8081`） | 七层 HTTP 网关。接收所有入站请求，在转发之前通过 gRPC `ext_proc` 协议（`:9002`）调用 EPP 询问"该把这个请求发给哪个 Pod？"。收到 EPP 返回的目标 Pod IP 后，Envoy 直接将请求代理到该 Pod 并将响应流回客户端。 |
+| **Envoy Proxy**（`:8081`） | 七层 HTTP 网关。接收所有入站请求，并按顺序调用两个 `ext_proc` 服务——先是 **IPP**（`:9004`）对请求增强，再是 **EPP**（`:9002`）询问"该把请求发给哪个 Pod？"。收到 EPP 返回的目标 Pod IP 后，直接代理到该 Pod 并将响应流回客户端。同时启用了 **OpenTelemetry tracing**：每个请求发出一个 `ingress` span，外加每次处理器调用一个 `ext_proc ... Process` 子 span，因此从代理侧可见并可测量 IPP 与 EPP 两跳。（Envoy 的 span 自成一条 trace；EPP/IPP 不采纳此上下文——见[实测追踪行为](#实测追踪行为)。） |
 | **EPP — Endpoint Picker**（`:9002`） | 调度大脑。对每个请求运行 4 插件评分流水线来选出最优的 decode Pod。同时维护**前缀缓存索引**（详见下方 KV Cache 章节）。在 `:9090` 暴露 Prometheus 指标，并将 OTLP trace 发送到 OTel Collector。 |
+
+**`payload-processor` Pod — Inference Payload Processor（IPP，`:9004`）**
+
+一个独立的 Deployment，运行 Envoy `ext_proc` gRPC 服务（TLS/h2）。它位于 EPP **之前**，检查并改写请求负载。默认插件把请求体的 `model` 字段写入 `X-Gateway-Model-Name` 头（`body-field-to-header`）并解析基础模型（`base-model-to-header`），从而让网关在不解析请求体的情况下获得按模型路由的输入。它导出 OTLP trace，因此在每条请求 trace 中以 `llm-d-inference-payload-processor` span 出现。Envoy 以 `failure_mode_allow: true` 连接它，故 IPP 故障只会降级（无增强、无 IPP span）而不会中断请求。
 
 **EPP 4 插件评分流水线（每个请求按顺序执行）：**
 
@@ -245,10 +264,22 @@ EPP kv-cache-utilization-scorer
 ```
 第 1 步  客户端 → Envoy（:80）
          HTTP POST /v1/chat/completions 请求到达 Envoy 的 80 端口。
+         Envoy 开启一个 `ingress` span（属于它自己的 trace）。
 
-第 2 步  Envoy → EPP ext_proc 调用（gRPC :9002）
-         Envoy 在转发之前调用 EPP 的 gRPC 外部处理接口，
-         传入请求头和请求体。EPP 运行 4 插件评分流水线：
+第 2 步  Envoy → IPP ext_proc 调用（gRPC :9004，TLS/h2）
+         Envoy 先调用 Inference Payload Processor，传入请求头和请求体。
+         IPP 运行其请求插件：
+         - body-field-to-header：把请求体 `model` 字段复制到
+                                 X-Gateway-Model-Name 头
+         - base-model-to-header：解析基础模型名
+         IPP 把（可能改写后的）请求头返回给 Envoy。Envoy 把这次调用记为一个
+         `ext_proc ... Process egress` 子 span。IPP 还会在一条**独立的 trace**
+         中发出自己的 span（服务 llm-d-inference-payload-processor）。
+         failure_mode_allow=true：IPP 不可用时，Envoy 跳过它继续处理。
+
+第 3 步  Envoy → EPP ext_proc 调用（gRPC :9002）
+         Envoy 接着调用 EPP（又一个 `ext_proc ... Process egress` 子 span），
+         运行 4 插件评分流水线：
 
          a. queue-scorer           读取各 Pod 实时队列深度
          b. kv-cache-scorer        读取各 Pod KV Cache 占用率
@@ -256,28 +287,28 @@ EPP kv-cache-utilization-scorer
                                    → 找到已有 KV Cache 的 Pod
          d. no-hit-lru-scorer      无前缀命中时的 LRU 兜底
 
-         EPP 将获胜 Pod 的 IP 返回给 Envoy，并将本次请求
-         记入前缀缓存索引（或更新已有条目）。
+         EPP 将获胜 Pod 的 IP 返回给 Envoy 并记入前缀缓存索引。EPP 在它**自己的**
+         trace 中发出 gateway.request + gateway.request_orchestration，并向
+         **下游**注入一个全新的 traceparent 指向选中的 Pod。
 
-第 3 步  Envoy → decode Pod（:8000）
+第 4 步  Envoy → decode Pod（:8000）
          Envoy 直接将请求转发到目标 Pod（绕过 kube-proxy 负载均衡），
          并将响应流回客户端。
 
-第 4 步  decode Pod → OTel Collector（OTLP gRPC :4317）
-         模型服务器 Pod 发送涵盖推理执行过程的 OTLP span。
-
-第 5 步  EPP → OTel Collector（OTLP gRPC :4317）
-         EPP 每个请求发送 2 个 span：
-         - gateway.request               完整请求生命周期
-         - gateway.request_orchestration  调度决策详情
+第 5 步  各组件 → OTel Collector（OTLP gRPC :4317）
+         Envoy（ingress + 2 个 ext_proc span）、IPP（gateway.request）、
+         EPP（gateway.request + gateway.request_orchestration）各自导出 span。
+         它们是**三条独立的 trace**（不同 trace ID）。decode Pod（inference-sim）
+         **不导出** trace。
 
 第 6 步  OTel Collector 处理并转发
          过滤器丢弃 /metrics HTTP 轮询 span（降噪）。
          批处理器将剩余 span 打包 → 通过 OTLP 转发给 Jaeger。
 
 第 7 步  Jaeger 存储并展示
-         span 进入 Jaeger 的内存存储。
-         通过 :16686 的 UI，可将 EPP 调度耗时与模型服务器执行耗时关联分析。
+         :16686 的 UI 显示三个 llm-d 服务（llm-d-envoy-proxy、
+         llm-d-inference-payload-processor、llm-d-router/epp）。Envoy 的 trace
+         是唯一能在一个视图里看到两次 ext_proc 跳的。详见"实测追踪行为"。
 ```
 
 ### 逐步解析：指标路径
@@ -301,11 +332,37 @@ EPP kv-cache-utilization-scorer
 
 ---
 
+## 实测追踪行为
+
+本节记录追踪流水线**实际**的行为，已在真实 Kind 集群上端到端验证（而非理想化版本）。
+
+**你得到的：** Jaeger 中有三个 llm-d 服务，每个请求各自发出一条 trace：
+
+| 服务 | 每请求 span | 说明 |
+|---|---|---|
+| `llm-d-envoy-proxy` | `ingress` + 2× `async ...ExternalProcessor.Process egress` | 两个 ext_proc span 即对 IPP 和对 EPP 的调用。这是唯一能同时看到两跳的 trace。 |
+| `llm-d-inference-payload-processor` | `gateway.request` | IPP 的请求体/请求头处理。 |
+| `llm-d-router/epp` | `gateway.request` + `gateway.request_orchestration` | EPP 路由 + 调度决策。 |
+| `llm-d-model-server` | （无） | `inference-sim:v0.8.0` 不导出 trace。 |
+
+**为什么不是一条拼接的 trace：**
+
+- llm-d EPP 从 ext_proc 的 **gRPC 流上下文**开始 `gateway.request`（`llm-d-router` 的 `pkg/epp/handlers/server.go`），故自成一条 trace，从不采纳传入的 `traceparent`；它把全新的 `traceparent` 向**下游**注入到模型服务器。已验证：客户端发送 `traceparent` 也不会把 EPP（或 IPP）拉入该 trace。
+- IPP 同样自成一条 trace。
+- Envoy 的 OTLP tracing 为代理这一跳产生独立 trace。Envoy 仅在向**上游**转发时（即 ext_proc 过滤器之后）才写入 `traceparent`，所以 ext_proc 服务收不到 Envoy 的上下文。
+
+**要做到单条拼接的 trace 需要什么**（超出本演示范围——需上游改动）：EPP 与 IPP 这两个 ext_proc 服务需从 ext_proc 请求头中提取传入的 `traceparent`，并将各自的 span 挂到其下。按设计**确实**生效的一处拼接是 **EPP → 模型服务器**（EPP 向下游注入），因此把 sim 换成能导出 trace 的 vLLM（`--otlp-traces-endpoint`）可得到 EPP+模型服务器的 2 服务 trace。
+
+**实用建议：** 要跟踪单个请求，打开它的 **Envoy** trace——其中包含代理这一跳以及 IPP、EPP 两次 ext_proc 调用及耗时——再跳转到 IPP 和 EPP 服务查看各自内部细节。
+
+---
+
 ## 组件说明
 
 | 组件 | 命名空间 | 类型 | 描述 |
 |---|---|---|---|
-| `llm-d-epp` | `llm-d` | Pod（2 容器） | **Envoy 代理**（port 80→8081）+ **EPP**（gRPC :9002） |
+| `llm-d-epp` | `llm-d` | Pod（2 容器） | **Envoy 代理**（port 80→8081，trace 根，2× ext_proc）+ **EPP**（gRPC :9002） |
+| `payload-processor` | `llm-d` | Deployment | **IPP**——Envoy ext_proc（:9004，TLS/h2）；请求体→请求头增强 |
 | `InferencePool/llm-d` | `llm-d` | CR | 监听带 `llm-d.ai/guide=optimized-baseline` 标签的 Pod |
 | `InferenceObjective/llm-d-standard` | `llm-d` | CR | Priority=0 流控目标 |
 | `optimized-baseline-decode` | `llm-d` | Deployment（2 副本） | inference-sim 模拟 vLLM 模型服务器 |
@@ -313,6 +370,7 @@ EPP kv-cache-utilization-scorer
 | `jaeger` | `llm-d` | Deployment | Trace 存储 + UI（port 16686） |
 | `ServiceMonitor/llm-d-epp-monitor` | `llm-d` | CR | Prometheus 抓取 EPP 指标（:9090） |
 | `PodMonitor/decode` | `llm-d` | CR | Prometheus 抓取模型服务器指标（:8000）——来自 `guides/recipes/modelserver/components/monitoring/` |
+| `VariantAutoscaling/optimized-baseline-decode` | `llm-d` | CR（可选） | **WVA** 目标；输出 `wva_desired_replicas` → HPA |
 | Prometheus（HTTPS/TLS） | `llm-d-monitoring` | StatefulSet | 指标存储 |
 | Grafana | `llm-d-monitoring` | Deployment | 5 个预装 llm-d 仪表盘 |
 
@@ -321,7 +379,7 @@ EPP kv-cache-utilization-scorer
 | 信号类型 | 工具 | 来源 | 数量 |
 |---|---|---|---|
 | **指标（Metrics）** | Prometheus + Grafana | EPP（ServiceMonitor）+ 模型服务器（PodMonitor） | 35+ EPP + 41 vLLM |
-| **追踪（Traces）** | Jaeger + OTel Collector | EPP（`llm-d-router/epp`）+ 模型服务器 | 每请求 2 个 span |
+| **追踪（Traces）** | Jaeger + OTel Collector | Envoy（`llm-d-envoy-proxy`）+ IPP（`llm-d-inference-payload-processor`）+ EPP（`llm-d-router/epp`）；模型服务器不导出（sim） | 每请求 3 个服务 / 3 条独立 trace |
 
 ---
 
@@ -507,7 +565,10 @@ llm-d EPP 将 InferencePool/InferenceObjective 的控制器逻辑直接内嵌其
 
 ### 模型服务器 OpenTelemetry 配置（`01-model-servers.yaml`）
 
-模型服务器 manifest 中的五个 `OTEL_*` 环境变量将 inference-sim Pod 接入分布式追踪管道。每个变量对应 OpenTelemetry SDK 的一个标准配置项。
+> [!NOTE]
+> 已在真实集群验证：`llm-d-inference-sim:v0.8.0` **不会**响应这些 `OTEL_*` 变量——Jaeger 中从未出现 `llm-d-model-server` 服务。保留这些变量是因为它们本身正确且具前瞻性：一个遵循这些变量的真实 vLLM（或未来的 sim 版本）会导出一个推理 span，并接入 EPP 向下游传播的 trace。下文描述的是这一**预期**行为。
+
+模型服务器 manifest 中的五个 `OTEL_*` 环境变量旨在将模型服务器 Pod 接入分布式追踪管道。每个变量对应 OpenTelemetry SDK 的一个标准配置项。
 
 ```yaml
 # OpenTelemetry 分布式追踪
@@ -559,22 +620,21 @@ parentbased_traceidratio
 
 **在 llm-d 流程中的重要性：**
 
-EPP 是 trace 的发起者。当 EPP 将请求路由到模型服务器 Pod 时，它会在 HTTP 请求中注入一个 W3C `traceparent` 头，携带根 trace ID 和"已采样"标志。模型服务器的 OTel SDK 读取该头部：
+**EPP 是路由路径的 trace 发起者**（这是 `llm-d-router` 的设计）。每个请求它从 ext_proc 的 gRPC 流开始 `gateway.request`——**不**读取传入的 `traceparent`——随后把一个全新的 `traceparent` 向**下游**注入到选中的模型服务器。因此 EPP 的 trace 旨在延伸到模型服务器，而非回连到 Envoy：
 
 ```
-EPP（根 span 创建者）
-  │  创建：gateway.request  [traceID=abc, spanID=001, sampled=true]
-  │  注入：traceparent: 00-abc-001-01  到发往模型服务器的 HTTP 请求中
+EPP（路由 trace 的根 span 创建者）
+  │  创建：gateway.request  [traceID=abc, spanID=001]
+  │  注入：traceparent: 00-abc-001-01  到转发给模型服务器的请求中
   │
   ▼
-decode-0（子 span 创建者）
-  OTel SDK 读取 traceparent 头
-  parentbased 采样器：父 span 已采样 → 采样本 span
-  创建：inference.request  [traceID=abc, spanID=002, parentSpanID=001]
-  导出到 OTel Collector → Jaeger
+decode-0（本应成为子 span 的一跳）
+  若模型服务器导出 trace（真实 vLLM 配 --otlp-traces-endpoint），
+  其 OTel SDK 读取 traceparent → 在 traceID=abc 下生成推理 span。
+  无 GPU 的 inference-sim 不导出 trace，因此该子 span 从不出现。
 ```
 
-最终效果：EPP 追踪的每个请求都会产生一个**具有相同 trace ID** 的模型服务器 span，Jaeger 因此能将它们拼合成一条完整的端到端 trace。如果 EPP 决定不采样某个请求（例如在 10% 采样率下），模型服务器也会丢弃其 span——不会出现孤立的 span 堆积。
+这就是为什么 EPP 与一个能导出 trace 的模型服务器共享 trace ID，而 **Envoy 与 IPP 各自产生独立的 trace**——Envoy 在自己的 trace 上开启 `ingress` 与两个 `ext_proc` 客户端 span，IPP 在自己的 trace 上开启 `gateway.request`。这三者互不采纳彼此的上下文。下方的 `OTEL_TRACES_SAMPLER_ARG=1.0` 作用于各自 trace 的根。
 
 **`OTEL_TRACES_SAMPLER_ARG=1.0`**
 
@@ -583,20 +643,23 @@ decode-0（子 span 创建者）
 **端到端 trace 拓扑：**
 
 ```
-Jaeger 中的请求生命周期：
+Jaeger 中每个请求是三条独立 trace（已在真实集群验证）：
 
-  traceID: abc123...
-  │
-  ├── [span 1]  gateway.request            service=llm-d-router/epp
-  │     duration: ~0.2ms（EPP 调度耗时）
-  │     attributes: pod.selected=decode-0, plugin.scores=...
-  │     │
-  │     └── [span 2]  inference.request    service=llm-d-model-server
-  │           duration: ~50ms（模型推理耗时）
-  │           attributes: pod=decode-0, model=Qwen2.5-0.5B-Instruct
+  Trace A  service=llm-d-envoy-proxy
+    └── ingress                                   （代理这一跳）
+        ├── async ...ExternalProcessor.Process egress   （对 IPP 的 ext_proc 调用）
+        └── async ...ExternalProcessor.Process egress   （对 EPP 的 ext_proc 调用）
+
+  Trace B  service=llm-d-inference-payload-processor
+    └── gateway.request                           （IPP 请求体/请求头处理）
+
+  Trace C  service=llm-d-router/epp
+    ├── gateway.request                           （完整请求生命周期）
+    └── gateway.request_orchestration             （EPP 调度详情）
+    （若模型服务器导出 trace 则会延伸过去；sim 不导出）
 ```
 
-两个服务，两个 span，同一个 trace ID——通过 `traceparent` 头自动关联。
+三个服务，三个 trace ID。Trace A（Envoy）是唯一能同时看到两次 ext_proc 跳的视图，也是实践中查看并测量单个请求 IPP → EPP 顺序的方式。
 
 ---
 
@@ -756,11 +819,15 @@ helm install llm-d \
   -f guides/recipes/router/features/monitoring.values.yaml \
   -f docs/monitoring/llm-d-full-demo/helm-values/kind-overrides.values.yaml \
   -f docs/monitoring/llm-d-full-demo/helm-values/tracing.values.yaml \
+  -f docs/monitoring/llm-d-full-demo/helm-values/proxy-tracing-ipp.values.yaml \
   -n llm-d \
   --version ${ROUTER_CHART_VERSION}
 ```
 
-`tracing.values.yaml` 配置 EPP 将 trace 发送到 `http://otel-collector:4317`。
+- `tracing.values.yaml` 配置 **EPP** 将 trace 发送到 `http://otel-collector:4317`。
+- `proxy-tracing-ipp.values.yaml` 覆盖 chart 的 **Envoy** 配置：(a) 把 **IPP** 作为 EPP 之前的第二个 `ext_proc` 过滤器加入；(b) 让 Envoy 成为 **OpenTelemetry trace 根**；(c) 新增 `ipp_ext_proc` 与 `otel_collector` 两个 cluster。该文件是 chart Envoy 预设的逐字拷贝加上述改动；升级 `ROUTER_CHART_VERSION` 时需重新同步。
+
+> Envoy 会在 IPP（第 6b 步）存在之前就引用 `payload-processor` Service。由于 IPP 过滤器配置了 `failure_mode_allow: true`，期间请求仍能成功——只是在 IPP 运行前不产生 IPP span。
 
 ---
 
@@ -775,6 +842,46 @@ bash docs/monitoring/scripts/install-otel-collector-jaeger.sh -n llm-d
 部署内容：
 - **OTel Collector** — 接收 OTLP gRPC（:4317），过滤 `/metrics` 轮询 span，批量转发给 Jaeger
 - **Jaeger**（all-in-one，内存存储）— Trace 存储 + UI（:16686）
+
+---
+
+### 第 6b 步：部署 Inference Payload Processor（IPP）
+
+IPP 是 Envoy 链路中的第二个 `ext_proc` 服务（已在第 5 步接好）。现在部署该工作负载，使 Envoy 的 `ipp_ext_proc` cluster 变为健康并开始产生 IPP span。
+
+从 [`llm-d-inference-payload-processor`](https://github.com/llm-d/llm-d-inference-payload-processor) 仓库的 chart 安装：
+
+```bash
+git clone https://github.com/llm-d/llm-d-inference-payload-processor.git /tmp/ipp
+
+helm install payload-processor /tmp/ipp/config/charts/payload-processor \
+  -f docs/monitoring/llm-d-full-demo/helm-values/ipp.values.yaml \
+  -n llm-d
+```
+
+> 若你的环境能访问已发布的 OCI chart，也可改用
+> `helm install payload-processor oci://ghcr.io/llm-d/charts/payload-processor --version v0 -f ... -n llm-d`。
+
+`ipp.values.yaml` 设置 `provider.name=none`（chart 只部署 IPP 工作负载——Deployment、Service、ConfigMap、RBAC；Envoy 接线在 router 侧完成），并启用到 `http://otel-collector:4317` 的 OTLP tracing。
+
+> [!NOTE]
+> 镜像 `ghcr.io/llm-d/llm-d-inference-payload-processor:main` 目前**无法匿名拉取**（403）。若 Pod 出现 `ImagePullBackOff`，请从克隆的仓库本地构建并加载进 Kind。Apple Silicon 上按 arm64 构建：
+> ```bash
+> docker run --rm -v /tmp/ipp:/src -w /src/cmd -e CGO_ENABLED=0 -e GOOS=linux -e GOARCH=arm64 \
+>   golang:1.25 go build -o /src/payload-processor-bin .
+> printf 'FROM gcr.io/distroless/static:nonroot\nCOPY payload-processor-bin /payload-processor\nENTRYPOINT ["/payload-processor"]\n' > /tmp/ipp/Dockerfile.local
+> docker build --platform linux/arm64 -f /tmp/ipp/Dockerfile.local -t ghcr.io/llm-d/llm-d-inference-payload-processor:main /tmp/ipp
+> kind load docker-image ghcr.io/llm-d/llm-d-inference-payload-processor:main --name llm-d
+> kubectl delete pod -n llm-d -l app=payload-processor   # 让其在已加载镜像上重启
+> ```
+> （x86_64 去掉 `--platform`/`GOARCH=arm64`。）
+
+验证：
+```bash
+kubectl get deploy,svc -n llm-d | grep payload-processor
+# deployment.apps/payload-processor   1/1   1   1
+# service/payload-processor   ClusterIP   ...   9004/TCP
+```
 
 ---
 
@@ -830,6 +937,44 @@ kubectl logs -n llm-d deploy/llm-d-traffic-gen -f
 
 ---
 
+### 第 9 步：Workload Variant Autoscaler（WVA）——可选
+
+WVA 是面向推理模型服务器的全局自动扩缩器。它监听 decode Deployment，从 Prometheus 读取 vLLM/队列/KV-cache 指标，计算期望副本数，并以 Prometheus 指标 `wva_desired_replicas` 输出。标准 HPA 消费该指标驱动 scale 子资源。在无 GPU 的 Kind 上以**饱和度扩缩**模式（KV-cache + 队列深度）运行；GPU 成本优化仅作演示。
+
+WVA 的组成比演示其余部分更复杂，请从 [`llm-d-workload-variant-autoscaler`](https://github.com/llm-d/llm-d-workload-variant-autoscaler) 仓库安装其控制器、CRD 和 service-class/accelerator ConfigMap（`kind-emulator` 配置专为此场景设计），然后应用本演示的衔接清单：
+
+```bash
+# 9a. 控制器 + CRD + 配置（来自 WVA 仓库；kind-emulator 配置）
+ENVIRONMENT=kind-emulator ./deploy/install.sh        # 或：kubectl apply -k config/overlays/cluster-scoped/kubernetes
+
+# 9b. 让 WVA 控制器指向本演示的 Prometheus
+#     （其 manager ConfigMap 的 PROMETHEUS_BASE_URL → llm-d-monitoring 的 Prometheus svc）
+
+# 9c. 把 wva_desired_replicas 作为外部指标暴露给 HPA
+#     安装 prometheus-adapter（或 KEDA）并映射该序列——参见 WVA 仓库
+
+# 9d. 为 decode 池应用 VariantAutoscaling + HPA
+kubectl apply -f docs/monitoring/llm-d-full-demo/manifests/05-variantautoscaling.yaml
+kubectl apply -f docs/monitoring/llm-d-full-demo/manifests/06-hpa.yaml
+```
+
+验证：
+```bash
+kubectl get variantautoscaling,hpa -n llm-d
+# variantautoscaling.llmd.ai/optimized-baseline-decode   optimized-baseline-decode   1   4
+# horizontalpodautoscaler.autoscaling/optimized-baseline-decode-hpa  Deployment/optimized-baseline-decode
+```
+
+提高流量（降低生成器的 `INTERVAL`，或循环 `curl`），观察 `wva_desired_replicas` 上升时 decode 副本数随之变化。
+
+---
+
+## 进阶层（可选）
+
+其余组件——**P/D 分离**（配合 `llm-d-routing-sidecar`）与**精确前缀缓存 / KV-cache 感知路由**（由 ZMQ KV-events 喂养的 EPP 内嵌 KV-cache 索引器）——以带注意事项的 overlay 形式提供，位于 [`manifests/optional/`](./manifests/optional/)。它们在模拟器上部署拓扑与控制/可观测性平面，但数据面 KV 机制（真实 NIXL 传输、真实 KV-events、分词）需要 CPU/GPU 版 vLLM。详见 [`manifests/optional/README.md`](./manifests/optional/README.md)：包含具体步骤、对应的 llm-d 官方 guide 引用，以及无 GPU 注意事项。
+
+---
+
 ## 访问可观测性工具
 
 ### Prometheus（指标）
@@ -869,12 +1014,17 @@ kubectl port-forward -n llm-d svc/jaeger-collector 16686:16686
 
 打开：[http://localhost:16686](http://localhost:16686)
 
-在 Jaeger UI 中：
-1. **Service** → 选择 `llm-d-router/epp`
-2. **Find Traces** → 查看真实的 EPP 路由 span
-3. 点击任意 trace 查看详情：
-   - `gateway.request` — 完整请求生命周期
-   - `gateway.request_orchestration` — EPP 调度决策（选 Pod）
+Jaeger UI 的 **Service** 下拉框列出三个 llm-d 服务：
+`llm-d-envoy-proxy`（Envoy）、`llm-d-inference-payload-processor`（IPP）、
+`llm-d-router/epp`（EPP）。每个请求**每个服务各产生一条 trace**（它们不会拼接在一起——见[实测追踪行为](#实测追踪行为)）。
+
+1. **Service** → 选 `llm-d-envoy-proxy`，**Find Traces**，打开一条。它包含：
+   - `ingress`——代理这一跳
+   - 两个 `async ...ExternalProcessor.Process egress` span——对 IPP 和对 EPP 的调用。
+     这是唯一能在一个视图里看到单个请求两次 ext_proc 跳的地方。
+2. **Service** → `llm-d-inference-payload-processor` → IPP 的 `gateway.request` span。
+3. **Service** → `llm-d-router/epp` → `gateway.request` + `gateway.request_orchestration`（调度决策）。
+4. `llm-d-model-server` 不存在——无 GPU 的 `inference-sim` 不导出 trace。
 
 ---
 
@@ -1004,6 +1154,51 @@ curl -s -X POST http://localhost:8081/v1/chat/completions \
 # 然后在 Jaeger 中查找该失败请求的 trace
 ```
 
+#### TC-11：三个 trace 来源 + Envoy 含两次 ext_proc 跳
+
+验证三个 llm-d 服务都出现，且 Envoy 的 trace 含两次 `ext_proc` 调用（IPP 与 EPP）。
+
+```bash
+# 三个服务都应列出
+curl -s "http://localhost:16686/api/services" | python3 -c "import sys,json; print(sorted(json.load(sys.stdin)['data']))"
+# 预期包含：llm-d-envoy-proxy、llm-d-inference-payload-processor、llm-d-router/epp
+
+# Envoy 的 trace = ingress + 两个 ext_proc 'Process egress' span
+curl -s "http://localhost:16686/api/traces?service=llm-d-envoy-proxy&limit=3&lookback=1h" | \
+  python3 -c "
+import sys, json
+for t in (json.load(sys.stdin).get('data') or []):
+    ops = [s['operationName'] for s in t.get('spans', [])]
+    n_extproc = sum('ExternalProcessor.Process' in o for o in ops)
+    print(f'traceID={t[\"traceID\"][:16]}  spans={len(ops)}  ext_proc_calls={n_extproc}')
+"
+```
+
+**预期：** 每条 Envoy trace 有 3 个 span 且 `ext_proc_calls=2`（IPP 与 EPP 调用）。它们与 IPP、EPP 各自的 trace 是**独立**的——不会产生单条 4 服务 trace（见[实测追踪行为](#实测追踪行为)）。若缺少 IPP 服务，确认第 6b 步已部署且 `ipp_ext_proc` cluster 健康（端口转发 Envoy admin 后 `curl -s localhost:19000/clusters | grep ipp_ext_proc`）。
+
+#### TC-12：IPP 请求头增强
+
+确认 IPP 处理了每个请求体（把 `model` 提取到 `X-Gateway-Model-Name`）：
+
+```bash
+kubectl logs -n llm-d deploy/payload-processor | grep -iE "parsed field from body|base model header" | tail
+```
+
+**预期**（已在真实集群验证）——每个请求一对：
+```
+... "msg":"parsed field from body","field":"model","value":"Qwen/Qwen2.5-0.5B-Instruct"
+... "msg":"updated base model header based on the request target model","targetModel":"Qwen/Qwen2.5-0.5B-Instruct"
+```
+
+#### TC-13：WVA 期望副本数（可选）
+
+若已安装 WVA（第 9 步），确认它输出扩缩信号：
+
+```promql
+wva_desired_replicas{variant_name="optimized-baseline-decode", exported_namespace="llm-d"}
+```
+**预期：** 值 ≥ 1 且随负载上升；HPA 跟踪该值。
+
 ---
 
 ## Helm Values 叠加顺序
@@ -1023,6 +1218,13 @@ docs/monitoring/llm-d-full-demo/helm-values/tracing.values.yaml
 
 docs/monitoring/llm-d-full-demo/helm-values/kind-overrides.values.yaml
   └── Kind 环境资源缩减（EPP/Envoy）
+
+docs/monitoring/llm-d-full-demo/helm-values/proxy-tracing-ipp.values.yaml
+  └── 完整 Envoy 配置覆盖：IPP ext_proc 过滤器（在 EPP 之前）、
+      OpenTelemetry trace 根、ipp_ext_proc + otel_collector 两个 cluster
+
+docs/monitoring/llm-d-full-demo/helm-values/ipp.values.yaml   （payload-processor chart）
+  └── 仅部署 IPP 工作负载（provider.name=none）+ OTLP tracing
 ```
 
 ---
@@ -1080,7 +1282,15 @@ GAIE v1.5.0 不再包含 `InferenceModel` CRD，已改为：
 ## 清理
 
 ```bash
-# 删除所有工作负载（OTel + Jaeger + 模型服务器 + EPP）
+# 卸载 helm release（router + IPP）
+helm uninstall llm-d -n llm-d
+helm uninstall payload-processor -n llm-d
+
+# 若安装了 WVA（第 9 步）——在 WVA 仓库检出目录中：
+#   ENVIRONMENT=kind-emulator ./deploy/install.sh --uninstall
+#   （或：kubectl delete -k config/overlays/cluster-scoped/kubernetes）
+
+# 删除其余所有工作负载（OTel + Jaeger + 模型服务器 + VA/HPA）
 kubectl delete namespace llm-d
 
 # 卸载监控栈

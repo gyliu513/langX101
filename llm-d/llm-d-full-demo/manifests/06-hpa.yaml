@@ -1,0 +1,48 @@
+---
+# HPA that scales the decode pool from WVA's published desired-replica metric.
+#
+# WVA does not touch the scale subresource directly; it emits
+# `wva_desired_replicas` and this HPA acts on it. The `target.averageValue: "1"`
+# with an AverageValue external metric makes the HPA converge the replica count
+# to exactly what WVA asked for (desired / 1, averaged per pod).
+#
+# Requires `wva_desired_replicas` to be available as a Kubernetes external
+# metric — install prometheus-adapter (or KEDA) and map the Prometheus series.
+# See README "Step 9 — Workload Variant Autoscaler".
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: optimized-baseline-decode-hpa
+  namespace: llm-d
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: optimized-baseline-decode
+  minReplicas: 1
+  maxReplicas: 4
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 0
+      policies:
+        - type: Pods
+          value: 10
+          periodSeconds: 15
+    scaleDown:
+      stabilizationWindowSeconds: 30
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 30
+  metrics:
+    - type: External
+      external:
+        metric:
+          name: wva_desired_replicas
+          selector:
+            matchLabels:
+              variant_name: optimized-baseline-decode
+              exported_namespace: llm-d
+        target:
+          type: AverageValue
+          averageValue: "1"

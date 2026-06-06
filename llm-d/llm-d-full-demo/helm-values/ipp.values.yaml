@@ -1,0 +1,25 @@
+## llm-d-inference-payload-processor (IPP) values
+##
+## The IPP is an Envoy ext_proc gRPC server (:9004, TLS/h2). It runs BEFORE the
+## EPP in the Envoy filter chain and extracts request body fields into headers
+## (default plugins: body-field-to-header `model` -> X-Gateway-Model-Name, and
+## base-model-to-header).
+##
+## provider.name=none means the chart only deploys the IPP workload
+## (Deployment + Service + ConfigMap + RBAC + ServiceAccount). The Envoy wiring
+## (the second ext_proc filter + cluster) is done in proxy-tracing-ipp.values.yaml
+## on the router side, because this demo uses the router's self-managed Envoy
+## sidecar rather than Istio/GKE.
+provider:
+  name: none
+
+payloadProcessor:
+  ## Export spans to the shared OTel Collector so the IPP appears as a span in
+  ## the same Jaeger trace as Envoy, EPP, and the model server.
+  tracing:
+    enabled: true
+    otelServiceName: "llm-d-inference-payload-processor"
+    otelExporterEndpoint: "http://otel-collector:4317"
+    sampling:
+      sampler: "parentbased_traceidratio"
+      samplerArg: "1.0"   # 100% sampling for the demo; use 0.1 in production
