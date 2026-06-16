@@ -1,0 +1,9 @@
+apiVersion: authentication.open-cluster-management.io/v1beta1
+kind: ManagedServiceAccount
+metadata:
+  name: kueue-multikueue
+  namespace: cluster1
+spec:
+  rotation:
+    enabled: true
+    validity: 8640h0m0s
