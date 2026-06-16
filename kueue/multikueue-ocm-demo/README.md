@@ -73,7 +73,30 @@ clusteradm	version	:v1.3.1-0-g90bdc31
 
 ---
 
+## Step 1.5 — Clean up any previous run (optional)
+
+If you already have `hub` / `managed` kind clusters from an earlier attempt, delete them
+first so ports, CSR state, and leftover Secrets do not interfere.
+
+```console
+gyliu-cary@Mac multikueue-ocm-demo % kind delete cluster --name hub 2>/dev/null || true
+gyliu-cary@Mac multikueue-ocm-demo % kind delete cluster --name managed 2>/dev/null || true
+gyliu-cary@Mac multikueue-ocm-demo % kind get clusters
+No kind clusters found.
+```
+
+Also remove locally generated credentials from a prior run (they are gitignored):
+
+```console
+gyliu-cary@Mac multikueue-ocm-demo % rm -f hub-ca.crt worker1.kubeconfig
+```
+
+---
+
 ## Step 2 — Create the two kind clusters
+
+Wait until both nodes report `Ready` before continuing (kind may show `NotReady` for a few
+seconds right after creation).
 
 ```console
 gyliu-cary@Mac multikueue-ocm-demo % kind create cluster --name hub
@@ -176,6 +199,10 @@ gyliu-cary@Mac multikueue-ocm-demo % kubectl --context kind-managed get secret -
 
 ## Step 5 — Accept the registration on the hub
 
+`clusteradm join` only **requests** registration; the hub must approve the CSR. If you run
+`accept` immediately and see `managedcluster cluster1 not found` / `no csr is approved yet`,
+wait a few seconds and retry — the klusterlet needs a moment to create the CSR on the hub.
+
 ```console
 gyliu-cary@Mac multikueue-ocm-demo % clusteradm accept --clusters cluster1 --context kind-hub
 Starting approve csrs for the cluster cluster1
@@ -191,6 +218,9 @@ NAME                                             READY   STATUS    RESTARTS   AG
 klusterlet-registration-agent-6f8894f78d-qxxfg   1/1     Running   0          20m
 klusterlet-work-agent-679f75967d-nl9ck           1/1     Running   0          19m
 ```
+
+> `JOINED=True` appears right after accept. `AVAILABLE=True` can take another minute while
+> the work agent starts; later steps do not need to wait for it.
 
 ---
 
@@ -305,8 +335,9 @@ kueue-multikueue   Opaque   2      13m
 
 The OCM-created SA (`open-cluster-management-agent-addon/kueue-multikueue` on the worker)
 has no permissions yet. Bind it to a ClusterRole that can manage Jobs/JobSets/Workloads.
-See [`manifests/managed-rbac.yaml`](./manifests/managed-rbac.yaml) (ClusterRole) and
-[`manifests/crb.yaml`](./manifests/crb.yaml) (binding).
+Apply the **ClusterRole** and **ClusterRoleBinding** as two separate manifests:
+[`manifests/managed-rbac.yaml`](./manifests/managed-rbac.yaml) and
+[`manifests/crb.yaml`](./manifests/crb.yaml).
 
 ```console
 gyliu-cary@Mac multikueue-ocm-demo % kubectl --context kind-managed apply -f manifests/managed-rbac.yaml
@@ -461,12 +492,20 @@ done
 
 ## Helper scripts
 
-These do **not** replace the steps above — they assume the clusters are already built.
-
 | Script | Purpose |
 |---|---|
+| [`setup-and-run.sh`](./setup-and-run.sh) | **One-shot**: tear-down not included — from empty kind clusters through a completed demo JobSet (retries flaky OCM accept / status sync) |
 | [`status.sh`](./status.sh) | print OCM + MultiKueue health and the queues on both clusters |
 | [`run-demo.sh`](./run-demo.sh) | (re)submit the sample JobSet and watch it execute on the worker |
+
+For a clean re-run from scratch:
+
+```console
+gyliu-cary@Mac multikueue-ocm-demo % kind delete cluster --name hub 2>/dev/null || true
+gyliu-cary@Mac multikueue-ocm-demo % kind delete cluster --name managed 2>/dev/null || true
+gyliu-cary@Mac multikueue-ocm-demo % rm -f hub-ca.crt worker1.kubeconfig
+gyliu-cary@Mac multikueue-ocm-demo % ./setup-and-run.sh
+```
 
 ```console
 gyliu-cary@Mac multikueue-ocm-demo % ./status.sh
@@ -495,10 +534,12 @@ gyliu-cary@Mac multikueue-ocm-demo % kind delete cluster --name managed
 1. **OCM join on macOS** — host can't route to docker IPs; use host `127.0.0.1:<port>`
    for preflight **+ `--force-internal-endpoint-lookup`** so the klusterlet uses
    `hub-control-plane:6443`.
-2. **MultiKueue connection failure** — trim `integrations.frameworks` on both clusters to
+2. **`clusteradm accept` timing** — run it on the hub **after** join finishes; if CSR is
+   not ready yet, wait a few seconds and retry.
+3. **MultiKueue connection failure** — trim `integrations.frameworks` on both clusters to
    only the installed frameworks, otherwise it fails on missing CRDs (e.g. `XGBoostJob`).
-3. **kubeconfig server address** — must be hub-pod-reachable: use
+4. **kubeconfig server address** — must be hub-pod-reachable: use
    `https://managed-control-plane:6443`.
-4. **v1beta2 API changes** — `MultiKueueCluster.spec.clusterSource.kubeConfig` (nested),
+5. **v1beta2 API changes** — `MultiKueueCluster.spec.clusterSource.kubeConfig` (nested),
    and `ClusterQueue.spec.admissionChecksStrategy.admissionChecks[].name` (the flat
    `spec.admissionChecks` was removed).

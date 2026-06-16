@@ -71,7 +71,28 @@ clusteradm	version	:v1.3.1-0-g90bdc31
 
 ---
 
+## 第 1.5 步 — 清理旧环境（可选）
+
+如果之前已经创建过 `hub` / `managed` kind 集群，先删掉，避免端口、CSR、Secret 残留干扰。
+
+```console
+gyliu-cary@Mac multikueue-ocm-demo % kind delete cluster --name hub 2>/dev/null || true
+gyliu-cary@Mac multikueue-ocm-demo % kind delete cluster --name managed 2>/dev/null || true
+gyliu-cary@Mac multikueue-ocm-demo % kind get clusters
+No kind clusters found.
+```
+
+同时删除上次运行生成的本地凭据（已在 `.gitignore` 中）：
+
+```console
+gyliu-cary@Mac multikueue-ocm-demo % rm -f hub-ca.crt worker1.kubeconfig
+```
+
+---
+
 ## 第 2 步 — 创建两个 kind 集群
+
+创建后节点可能短暂显示 `NotReady`，等两边都变成 `Ready` 再继续。
 
 ```console
 gyliu-cary@Mac multikueue-ocm-demo % kind create cluster --name hub
@@ -173,6 +194,10 @@ gyliu-cary@Mac multikueue-ocm-demo % kubectl --context kind-managed get secret -
 
 ## 第 5 步 — 在 hub 上接受注册
 
+`clusteradm join` 只是**发起**注册，hub 还需要批准 CSR。如果立刻执行 `accept` 报
+`managedcluster cluster1 not found` 或 `no csr is approved yet`，等几秒后重试即可——
+klusterlet 需要一点时间才能在 hub 上创建 CSR。
+
 ```console
 gyliu-cary@Mac multikueue-ocm-demo % clusteradm accept --clusters cluster1 --context kind-hub
 Starting approve csrs for the cluster cluster1
@@ -188,6 +213,9 @@ NAME                                             READY   STATUS    RESTARTS   AG
 klusterlet-registration-agent-6f8894f78d-qxxfg   1/1     Running   0          20m
 klusterlet-work-agent-679f75967d-nl9ck           1/1     Running   0          19m
 ```
+
+> `JOINED=True` 在 accept 后很快出现；`AVAILABLE=True` 可能还要再等约一分钟（work agent
+> 启动中）。后续步骤**不必**等 `AVAILABLE`。
 
 ---
 
@@ -298,9 +326,9 @@ kueue-multikueue   Opaque   2      13m
 ## 第 11 步 — 给 worker SA 授予 MultiKueue RBAC
 
 OCM 创建的 SA（worker 上的 `open-cluster-management-agent-addon/kueue-multikueue`）此时还
-没有任何权限。把它绑定到一个能管理 Jobs/JobSets/Workloads 的 ClusterRole。见
-[`manifests/managed-rbac.yaml`](./manifests/managed-rbac.yaml)（ClusterRole）和
-[`manifests/crb.yaml`](./manifests/crb.yaml)（绑定）。
+没有任何权限。分别应用 **ClusterRole** 与 **ClusterRoleBinding** 两个 manifest：
+[`manifests/managed-rbac.yaml`](./manifests/managed-rbac.yaml) 和
+[`manifests/crb.yaml`](./manifests/crb.yaml)。
 
 ```console
 gyliu-cary@Mac multikueue-ocm-demo % kubectl --context kind-managed apply -f manifests/managed-rbac.yaml
@@ -454,12 +482,22 @@ done
 
 ## 辅助脚本
 
-这些脚本**不替代**上面的步骤，它们假设集群已经搭好。
-
 | 脚本 | 用途 |
 |---|---|
+| [`setup-and-run.sh`](./setup-and-run.sh) | **一键跑通**：从空 kind 集群到 demo JobSet 完成（含 OCM accept / 状态同步重试） |
 | [`status.sh`](./status.sh) | 打印两个集群的 OCM + MultiKueue 健康状态及队列 |
 | [`run-demo.sh`](./run-demo.sh) | （重新）提交示例 JobSet 并观察在 worker 上的执行 |
+
+从零干净重跑：
+
+```console
+gyliu-cary@Mac multikueue-ocm-demo % kind delete cluster --name hub 2>/dev/null || true
+gyliu-cary@Mac multikueue-ocm-demo % kind delete cluster --name managed 2>/dev/null || true
+gyliu-cary@Mac multikueue-ocm-demo % rm -f hub-ca.crt worker1.kubeconfig
+gyliu-cary@Mac multikueue-ocm-demo % ./setup-and-run.sh
+```
+
+`status.sh` 示例输出：
 
 ```console
 gyliu-cary@Mac multikueue-ocm-demo % ./status.sh
@@ -487,9 +525,20 @@ gyliu-cary@Mac multikueue-ocm-demo % kind delete cluster --name managed
 
 1. **macOS 上 OCM join** —— 宿主机路由不到 docker IP；预检用宿主机 `127.0.0.1:<端口>`
    **加 `--force-internal-endpoint-lookup`**，让 klusterlet 用 `hub-control-plane:6443`。
-2. **MultiKueue 连接失败** —— 把两个集群的 `integrations.frameworks` 裁剪为只含已安装的
+2. **`clusteradm accept` 时机** —— join 完成后在 hub 上执行；若 CSR 尚未就绪，等几秒重试。
+3. **MultiKueue 连接失败** —— 把两个集群的 `integrations.frameworks` 裁剪为只含已安装的
    框架，否则会因缺少 CRD（如 `XGBoostJob`）而失败。
-3. **kubeconfig 的 server 地址** —— 必须 hub-pod 可达：用 `https://managed-control-plane:6443`。
-4. **v1beta2 API 变化** —— `MultiKueueCluster.spec.clusterSource.kubeConfig`（嵌套），以及
+4. **kubeconfig 的 server 地址** —— 必须 hub-pod 可达：用 `https://managed-control-plane:6443`。
+5. **v1beta2 API 变化** —— `MultiKueueCluster.spec.clusterSource.kubeConfig`（嵌套），以及
    `ClusterQueue.spec.admissionChecksStrategy.admissionChecks[].name`（旧的扁平
    `spec.admissionChecks` 已移除）。
+
+## Tips
+
+```console
+cd kueue/multikueue-ocm-demo
+kind delete cluster --name hub 2>/dev/null || true
+kind delete cluster --name managed 2>/dev/null || true
+rm -f hub-ca.crt worker1.kubeconfig
+./setup-and-run.sh
+```
