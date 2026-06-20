@@ -1,0 +1,109 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: precise-prefix-vllm
+  namespace: llm-d
+  labels:
+    llm-d.ai/role: decode
+    llm-d.ai/guide: precise-prefix-cache-routing
+    llm-d.ai/model: Qwen2.5-0.5B-Instruct
+    app.kubernetes.io/part-of: llm-d
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      llm-d.ai/guide: precise-prefix-cache-routing
+      llm-d.ai/role: decode
+  template:
+    metadata:
+      labels:
+        llm-d.ai/role: decode
+        llm-d.ai/guide: precise-prefix-cache-routing
+        llm-d.ai/model: Qwen2.5-0.5B-Instruct
+        app.kubernetes.io/part-of: llm-d
+    spec:
+      serviceAccountName: sa
+      containers:
+        - name: modelserver
+          image: docker.io/vllm/vllm-openai-cpu:v0.19.1
+          imagePullPolicy: IfNotPresent
+          command: ["vllm", "serve"]
+          args:
+            - "Qwen/Qwen2.5-0.5B-Instruct"
+            - "--port=8000"
+            - "--block-size=64"
+            - "--max-model-len=8192"
+            - "--enforce-eager"
+            - "--disable-hybrid-kv-cache-manager"
+            - "--disable-access-log-for-endpoints=/health,/metrics,/v1/models"
+            - "--kv-events-config"
+            - '{"enable_kv_cache_events":true,"publisher":"zmq","endpoint":"tcp://*:5556","topic":"kv@$(POD_IP):8000@Qwen/Qwen2.5-0.5B-Instruct"}'
+          ports:
+            - name: modelserver
+              containerPort: 8000
+              protocol: TCP
+            - name: kv-events
+              containerPort: 5556
+              protocol: TCP
+          env:
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            - name: HF_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: llm-d-hf-token
+                  key: HF_TOKEN
+            - name: HF_HOME
+              value: /tmp/hf
+            - name: DO_NOT_TRACK
+              value: "1"
+            - name: VLLM_CPU_KVCACHE_SPACE
+              value: "4"
+            # Kind/Docker-on-Mac exposes no NUMA topology; pin OMP threads
+            # manually to bypass vLLM CPU autobind (Allowed NUMA nodes are []).
+            - name: VLLM_CPU_OMP_THREADS_BIND
+              value: "0-3"
+            - name: VLLM_LOGGING_LEVEL
+              value: "INFO"
+          securityContext:
+            seccompProfile:
+              type: Unconfined
+            capabilities:
+              add:
+                - SYS_NICE
+          resources:
+            requests:
+              cpu: "4"
+              memory: 6Gi
+            limits:
+              cpu: "8"
+              memory: 12Gi
+          volumeMounts:
+            - mountPath: /dev/shm
+              name: dshm
+            - mountPath: /tmp
+              name: tmp
+          startupProbe:
+            httpGet:
+              path: /health
+              port: modelserver
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 90
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: modelserver
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+      volumes:
+        - name: dshm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 2Gi
+        - name: tmp
+          emptyDir: {}

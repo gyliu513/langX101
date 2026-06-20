@@ -1,0 +1,16 @@
+router:
+  epp:
+    replicas: 1
+    image:
+      registry: ghcr.io/llm-d
+      repository: llm-d-router-endpoint-picker-dev
+      tag: main
+      pullPolicy: IfNotPresent
+    resources:
+      requests: { cpu: "500m", memory: "512Mi" }
+      limits:   { cpu: "2", memory: "2Gi" }
+    flags:
+      v: 2
+  modelServers:
+    matchLabels:
+      llm-d.ai/guide: "precise-prefix-cache-routing"
