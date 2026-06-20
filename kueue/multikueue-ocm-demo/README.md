@@ -543,3 +543,13 @@ gyliu-cary@Mac multikueue-ocm-demo % kind delete cluster --name managed
 5. **v1beta2 API changes** — `MultiKueueCluster.spec.clusterSource.kubeConfig` (nested),
    and `ClusterQueue.spec.admissionChecksStrategy.admissionChecks[].name` (the flat
    `spec.admissionChecks` was removed).
+
+## Tips
+
+```console
+cd kueue/multikueue-ocm-demo
+kind delete cluster --name hub 2>/dev/null || true
+kind delete cluster --name managed 2>/dev/null || true
+rm -f hub-ca.crt worker1.kubeconfig
+./setup-and-run.sh
+```
