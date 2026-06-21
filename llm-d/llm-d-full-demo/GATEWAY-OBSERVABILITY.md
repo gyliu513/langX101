@@ -162,9 +162,23 @@ Use **`precise-prefix-router.values.yaml`** (not `optimized-baseline.values.yaml
 EPP runs `precise-prefix-cache-producer` + `token-producer` against the real vLLM KV-events
 on ZMQ `:5556`. The chart deploys a `vllm-render` sidecar in the EPP pod for tokenization.
 
-Install monitoring CRDs first (the chart creates a `ServiceMonitor`):
+> **Important ordering:** the chart deploys the `vllm-render` sidecar in the EPP pod, which
+> needs the vLLM image **and** the `llm-d-hf-token` secret at startup. Load/create both
+> **before** installing the chart, otherwise the EPP pod stays at
+> `1/2 CreateContainerConfigError` (`secret "llm-d-hf-token" not found`).
 
 ```console
+gyliu-cary@Mac llm-d % # (a) vLLM image -- kind load fails for this multi-arch manifest list,
+gyliu-cary@Mac llm-d %  #     so import it into the node via ctr:
+gyliu-cary@Mac llm-d % docker pull --platform linux/arm64 docker.io/vllm/vllm-openai-cpu:v0.19.1
+gyliu-cary@Mac llm-d % docker save docker.io/vllm/vllm-openai-cpu:v0.19.1 | \
+  docker exec -i llm-d-control-plane ctr -n k8s.io images import -
+gyliu-cary@Mac llm-d % # (b) HF token secret (copy .env.example -> .env, set HF_TOKEN)
+gyliu-cary@Mac llm-d % cp $DEMO/.env.example $DEMO/.env   # then edit HF_TOKEN
+gyliu-cary@Mac llm-d % set -a && source $DEMO/.env && set +a
+gyliu-cary@Mac llm-d % kubectl create secret generic llm-d-hf-token -n llm-d \
+  --from-literal=HF_TOKEN="$HF_TOKEN" --dry-run=client -o yaml | kubectl apply -f -
+gyliu-cary@Mac llm-d % # (c) monitoring CRDs (the chart creates a ServiceMonitor)
 gyliu-cary@Mac llm-d % bash $LLMD_REPO/guides/recipes/observability/install-prometheus-grafana.sh --crds-only
 gyliu-cary@Mac llm-d % helm install llm-d oci://ghcr.io/llm-d/charts/llm-d-router-gateway-dev \
   -f $LLMD_REPO/guides/recipes/router/base.values.yaml \
@@ -181,7 +195,7 @@ NAME                                        HOSTNAMES   AGE
 httproute.gateway.networking.k8s.io/llm-d               5s
 NAME                                              AGE
 inferencepool.inference.networking.k8s.io/llm-d   5s
-gyliu-cary@Mac llm-d % kubectl get pod -n llm-d -l app.kubernetes.io/name=llm-d-epp \
+gyliu-cary@Mac llm-d % kubectl get pod -n llm-d -l llm-d-router-gateway=llm-d-epp \
   -o jsonpath='EPP containers: {.items[0].spec.containers[*].name}{"\n"}'
 EPP containers: epp vllm-render
 ```
@@ -209,23 +223,16 @@ router:
 
 The `vllm/vllm-openai-cpu:v0.19.1` image has an **arm64** variant (native, no emulation).
 Serves `Qwen2.5-0.5B-Instruct`, block-size 64, publishing KV-events on ZMQ `:5556`.
+The image and the `llm-d-hf-token` secret were already prepared in Step 3.7; here we only
+create the ServiceAccount and the Deployment.
 
 ```console
-gyliu-cary@Mac llm-d % docker pull --platform linux/arm64 docker.io/vllm/vllm-openai-cpu:v0.19.1
-gyliu-cary@Mac llm-d % kind load docker-image docker.io/vllm/vllm-openai-cpu:v0.19.1 --name llm-d
-# If kind load fails with "content digest ... not found" (multi-arch manifest list on
-# Docker Desktop), import via ctr instead:
-# docker save docker.io/vllm/vllm-openai-cpu:v0.19.1 | \
-#   docker exec -i llm-d-control-plane ctr -n k8s.io images import -
-gyliu-cary@Mac llm-d % cp $DEMO/.env.example $DEMO/.env   # then edit HF_TOKEN
-gyliu-cary@Mac llm-d % set -a && source $DEMO/.env && set +a
-gyliu-cary@Mac llm-d % kubectl create secret generic llm-d-hf-token -n llm-d \
-  --from-literal=HF_TOKEN="$HF_TOKEN" --dry-run=client -o yaml | kubectl apply -f -
-# Model-server manifest references serviceAccountName: sa — create it before the Deployment
-# (the gateway chart with provider.name=none does not create it):
+gyliu-cary@Mac llm-d % # Model-server manifest references serviceAccountName: sa -- create it
+gyliu-cary@Mac llm-d %  #     first (the gateway chart with provider.name=none does not):
 gyliu-cary@Mac llm-d % kubectl apply -f $LLMD_REPO/guides/recipes/modelserver/common/sa.yaml -n llm-d
 gyliu-cary@Mac llm-d % kubectl apply -f $DEMO/manifests/optional/cpu-vllm/model-server.yaml
 gyliu-cary@Mac llm-d % kubectl rollout status deploy/precise-prefix-vllm -n llm-d --timeout=600s
+deployment "precise-prefix-vllm" successfully rolled out
 ```
 
 > **Rollout stuck at `0 out of 1 new replicas`?** Check events:

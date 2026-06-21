@@ -160,9 +160,22 @@ chart 还会创建到 Gateway 的 `HTTPRoute`。
 让 EPP 运行 `precise-prefix-cache-producer` + `token-producer`，对接 vLLM 在 ZMQ `:5556`
 上的 KV-events。chart 会在 EPP Pod 里部署 `vllm-render` sidecar 做分词。
 
-先安装 monitoring CRDs（Helm chart 会创建 `ServiceMonitor`）：
+> **顺序很重要：** chart 会在 EPP Pod 里部署 `vllm-render` sidecar，它在启动时**就**需要
+> vLLM 镜像**和** `llm-d-hf-token` secret。务必在装 chart **之前**把两者准备好，否则 EPP Pod
+> 会卡在 `1/2 CreateContainerConfigError`（`secret "llm-d-hf-token" not found`）。
 
 ```console
+gyliu-cary@Mac llm-d % # (a) vLLM 镜像 —— kind load 对这个多架构 manifest list 会失败，
+gyliu-cary@Mac llm-d %  #     改用 ctr 导入到节点：
+gyliu-cary@Mac llm-d % docker pull --platform linux/arm64 docker.io/vllm/vllm-openai-cpu:v0.19.1
+gyliu-cary@Mac llm-d % docker save docker.io/vllm/vllm-openai-cpu:v0.19.1 | \
+  docker exec -i llm-d-control-plane ctr -n k8s.io images import -
+gyliu-cary@Mac llm-d % # (b) HF token secret（先 cp .env.example -> .env 并填好 HF_TOKEN）
+gyliu-cary@Mac llm-d % cp $DEMO/.env.example $DEMO/.env   # 编辑 HF_TOKEN
+gyliu-cary@Mac llm-d % set -a && source $DEMO/.env && set +a
+gyliu-cary@Mac llm-d % kubectl create secret generic llm-d-hf-token -n llm-d \
+  --from-literal=HF_TOKEN="$HF_TOKEN" --dry-run=client -o yaml | kubectl apply -f -
+gyliu-cary@Mac llm-d % # (c) monitoring CRDs（chart 会创建 ServiceMonitor）
 gyliu-cary@Mac llm-d % bash $LLMD_REPO/guides/recipes/observability/install-prometheus-grafana.sh --crds-only
 gyliu-cary@Mac llm-d % helm install llm-d oci://ghcr.io/llm-d/charts/llm-d-router-gateway-dev \
   -f $LLMD_REPO/guides/recipes/router/base.values.yaml \
@@ -179,7 +192,7 @@ NAME                                        HOSTNAMES   AGE
 httproute.gateway.networking.k8s.io/llm-d               5s
 NAME                                              AGE
 inferencepool.inference.networking.k8s.io/llm-d   5s
-gyliu-cary@Mac llm-d % kubectl get pod -n llm-d -l app.kubernetes.io/name=llm-d-epp \
+gyliu-cary@Mac llm-d % kubectl get pod -n llm-d -l llm-d-router-gateway=llm-d-epp \
   -o jsonpath='EPP containers: {.items[0].spec.containers[*].name}{"\n"}'
 EPP containers: epp vllm-render
 ```
@@ -207,22 +220,15 @@ router:
 
 `vllm/vllm-openai-cpu:v0.19.1` 镜像有 **arm64** 变体（原生，无需模拟）。
 服务 `Qwen2.5-0.5B-Instruct`，block-size 64，在 ZMQ `:5556` 发 KV-events。
+镜像和 `llm-d-hf-token` secret 已在 3.7 准备好；这里只建 ServiceAccount 和 Deployment。
 
 ```console
-gyliu-cary@Mac llm-d % docker pull --platform linux/arm64 docker.io/vllm/vllm-openai-cpu:v0.19.1
-gyliu-cary@Mac llm-d % kind load docker-image docker.io/vllm/vllm-openai-cpu:v0.19.1 --name llm-d
-# 若 kind load 报 "content digest ... not found"（Docker Desktop 多架构 manifest list），
-# 改用 ctr 导入：
-# docker save docker.io/vllm/vllm-openai-cpu:v0.19.1 | \
-#   docker exec -i llm-d-control-plane ctr -n k8s.io images import -
-gyliu-cary@Mac llm-d % cp $DEMO/.env.example $DEMO/.env   # 编辑 HF_TOKEN
-gyliu-cary@Mac llm-d % set -a && source $DEMO/.env && set +a
-gyliu-cary@Mac llm-d % kubectl create secret generic llm-d-hf-token -n llm-d \
-  --from-literal=HF_TOKEN="$HF_TOKEN" --dry-run=client -o yaml | kubectl apply -f -
-# model-server.yaml 引用 serviceAccountName: sa — 需先创建（provider.name=none 时 chart 不会创建）：
+gyliu-cary@Mac llm-d % # model-server.yaml 引用 serviceAccountName: sa —— 需先创建
+gyliu-cary@Mac llm-d %  #     （provider.name=none 时 chart 不会创建）：
 gyliu-cary@Mac llm-d % kubectl apply -f $LLMD_REPO/guides/recipes/modelserver/common/sa.yaml -n llm-d
 gyliu-cary@Mac llm-d % kubectl apply -f $DEMO/manifests/optional/cpu-vllm/model-server.yaml
 gyliu-cary@Mac llm-d % kubectl rollout status deploy/precise-prefix-vllm -n llm-d --timeout=600s
+deployment "precise-prefix-vllm" successfully rolled out
 ```
 
 > **Rollout 一直卡在 `0 out of 1 new replicas`？** 看事件：
