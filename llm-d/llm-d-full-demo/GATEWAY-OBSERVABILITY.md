@@ -364,6 +364,10 @@ for s in t['spans']:
   [llm-d-router/epp] llm_d.kv_cache.index.add <- llm-d-router/epp
 ```
 
+The gateway hop (`llm-d-inference-gateway`) and the EPP are stitched into one trace:
+
+![Jaeger stitched gateway → EPP trace](docs/screenshots/jaeger-stitched-trace.png)
+
 ### 4.3 Verify the metrics scrape loop in Prometheus
 
 ```console
@@ -379,6 +383,10 @@ gyliu-cary@Mac llm-d % curl -s "http://localhost:9091/api/v1/query?query=vllm:nu
 1 series
 ```
 
+The EPP `ServiceMonitor` and the vLLM `PodMonitor` are scraped (targets `up`):
+
+![Prometheus targets up](docs/screenshots/prometheus-targets.png)
+
 ### 4.4 View the Grafana dashboards
 
 ```console
@@ -386,6 +394,14 @@ gyliu-cary@Mac llm-d % kubectl port-forward -n llm-d-monitoring svc/llmd-grafana
 gyliu-cary@Mac llm-d % # open http://localhost:3000  (admin / admin)
 gyliu-cary@Mac llm-d % # Dashboards: "llm-d vLLM Overview", "llm-d Performance Dashboard", ...
 ```
+
+**llm-d Performance Dashboard** (TTFT, inter-token latency, KV-cache hit rate, request throughput):
+
+![Grafana llm-d Performance dashboard](docs/screenshots/grafana-performance.png)
+
+**llm-d vLLM Overview** (E2E latency, token throughput, scheduler state, cache utilization):
+
+![Grafana llm-d vLLM Overview dashboard](docs/screenshots/grafana-vllm-overview.png)
 
 ---
 

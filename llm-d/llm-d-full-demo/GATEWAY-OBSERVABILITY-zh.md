@@ -360,6 +360,10 @@ for s in t['spans']:
   [llm-d-router/epp] llm_d.kv_cache.index.add <- llm-d-router/epp
 ```
 
+gateway 这一跳（`llm-d-inference-gateway`）和 EPP 串进了同一条 trace：
+
+![Jaeger 中 gateway → EPP 串联的 trace](docs/screenshots/jaeger-stitched-trace.png)
+
 ### 4.3 在 Prometheus 验证 metrics 抓取闭环
 
 ```console
@@ -375,6 +379,10 @@ gyliu-cary@Mac llm-d % curl -s "http://localhost:9091/api/v1/query?query=vllm:nu
 1 series
 ```
 
+EPP 的 `ServiceMonitor` 和 vLLM 的 `PodMonitor` 都被抓取（targets `up`）：
+
+![Prometheus targets up](docs/screenshots/prometheus-targets.png)
+
 ### 4.4 查看 Grafana 看板
 
 ```console
@@ -382,6 +390,14 @@ gyliu-cary@Mac llm-d % kubectl port-forward -n llm-d-monitoring svc/llmd-grafana
 gyliu-cary@Mac llm-d % # 打开 http://localhost:3000  (admin / admin)
 gyliu-cary@Mac llm-d % # 看板："llm-d vLLM Overview"、"llm-d Performance Dashboard" ...
 ```
+
+**llm-d Performance Dashboard**（TTFT、inter-token 延迟、KV-cache 命中率、请求吞吐）：
+
+![Grafana llm-d Performance 看板](docs/screenshots/grafana-performance.png)
+
+**llm-d vLLM Overview**（E2E 延迟、token 吞吐、scheduler 状态、cache 利用率）：
+
+![Grafana llm-d vLLM Overview 看板](docs/screenshots/grafana-vllm-overview.png)
 
 ---
 
