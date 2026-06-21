@@ -114,8 +114,13 @@ gyliu-cary@Mac llm-d % kubectl create namespace llm-d
 
 ```console
 gyliu-cary@Mac llm-d % kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.5.1/standard-install.yaml
-gyliu-cary@Mac llm-d % kubectl apply -k "https://github.com/llm-d/llm-d-router/config/crd?ref=v0"
+gyliu-cary@Mac llm-d % kubectl apply -k "$ROUTER_REPO/config/crd"
+# or, without a local checkout:
+# kubectl apply -k "https://github.com/llm-d/llm-d-router/config/crd?ref=v0.9.0"
 ```
+
+> The git ref `v0` does not exist on `llm-d-router` — use a local checkout or `ref=v0.9.0`
+> (or any recent release tag).
 
 ### 3.4 Install the agentgateway control plane
 
@@ -153,10 +158,17 @@ gyliu-cary@Mac llm-d % bash $LLMD_REPO/guides/recipes/observability/install-otel
 `pullPolicy: IfNotPresent` (so Kind uses the locally-built image) and the model-server
 selector. The chart also creates the `HTTPRoute` to the Gateway.
 
+Use **`precise-prefix-router.values.yaml`** (not `optimized-baseline.values.yaml`) so the
+EPP runs `precise-prefix-cache-producer` + `token-producer` against the real vLLM KV-events
+on ZMQ `:5556`. The chart deploys a `vllm-render` sidecar in the EPP pod for tokenization.
+
+Install monitoring CRDs first (the chart creates a `ServiceMonitor`):
+
 ```console
+gyliu-cary@Mac llm-d % bash $LLMD_REPO/guides/recipes/observability/install-prometheus-grafana.sh --crds-only
 gyliu-cary@Mac llm-d % helm install llm-d oci://ghcr.io/llm-d/charts/llm-d-router-gateway-dev \
   -f $LLMD_REPO/guides/recipes/router/base.values.yaml \
-  -f $LLMD_REPO/guides/optimized-baseline/router/optimized-baseline.values.yaml \
+  -f $DEMO/manifests/optional/precise-prefix/precise-prefix-router.values.yaml \
   -f $LLMD_REPO/guides/recipes/router/features/monitoring.values.yaml \
   -f $DEMO/helm-values/tracing.values.yaml \
   -f $DEMO/helm-values/gw-kind.values.yaml \
@@ -169,6 +181,9 @@ NAME                                        HOSTNAMES   AGE
 httproute.gateway.networking.k8s.io/llm-d               5s
 NAME                                              AGE
 inferencepool.inference.networking.k8s.io/llm-d   5s
+gyliu-cary@Mac llm-d % kubectl get pod -n llm-d -l app.kubernetes.io/name=llm-d-epp \
+  -o jsonpath='EPP containers: {.items[0].spec.containers[*].name}{"\n"}'
+EPP containers: epp vllm-render
 ```
 
 `$DEMO/helm-values/gw-kind.values.yaml`:
@@ -198,10 +213,25 @@ Serves `Qwen2.5-0.5B-Instruct`, block-size 64, publishing KV-events on ZMQ `:555
 ```console
 gyliu-cary@Mac llm-d % docker pull --platform linux/arm64 docker.io/vllm/vllm-openai-cpu:v0.19.1
 gyliu-cary@Mac llm-d % kind load docker-image docker.io/vllm/vllm-openai-cpu:v0.19.1 --name llm-d
-gyliu-cary@Mac llm-d % kubectl create secret generic llm-d-hf-token -n llm-d --from-literal=HF_TOKEN=<your-hf-token>
+# If kind load fails with "content digest ... not found" (multi-arch manifest list on
+# Docker Desktop), import via ctr instead:
+# docker save docker.io/vllm/vllm-openai-cpu:v0.19.1 | \
+#   docker exec -i llm-d-control-plane ctr -n k8s.io images import -
+gyliu-cary@Mac llm-d % cp $DEMO/.env.example $DEMO/.env   # then edit HF_TOKEN
+gyliu-cary@Mac llm-d % set -a && source $DEMO/.env && set +a
+gyliu-cary@Mac llm-d % kubectl create secret generic llm-d-hf-token -n llm-d \
+  --from-literal=HF_TOKEN="$HF_TOKEN" --dry-run=client -o yaml | kubectl apply -f -
+# Model-server manifest references serviceAccountName: sa — create it before the Deployment
+# (the gateway chart with provider.name=none does not create it):
+gyliu-cary@Mac llm-d % kubectl apply -f $LLMD_REPO/guides/recipes/modelserver/common/sa.yaml -n llm-d
 gyliu-cary@Mac llm-d % kubectl apply -f $DEMO/manifests/optional/cpu-vllm/model-server.yaml
-gyliu-cary@Mac llm-d % kubectl rollout status deploy/precise-prefix-vllm -n llm-d --timeout=300s
+gyliu-cary@Mac llm-d % kubectl rollout status deploy/precise-prefix-vllm -n llm-d --timeout=600s
 ```
+
+> **Rollout stuck at `0 out of 1 new replicas`?** Check events:
+> `kubectl get events -n llm-d | grep precise-prefix`. If you see
+> `serviceaccount "sa" not found`, apply `sa.yaml` above, then
+> `kubectl rollout restart deploy/precise-prefix-vllm -n llm-d`.
 
 > **Kind/Docker-on-Mac gotcha:** vLLM CPU crashes with
 > `AssertionError: Not enough allowed NUMA nodes ... Allowed NUMA nodes are []`
@@ -240,6 +270,7 @@ EOF
 
 ```console
 gyliu-cary@Mac llm-d % bash $LLMD_REPO/guides/recipes/observability/install-prometheus-grafana.sh
+gyliu-cary@Mac llm-d % kubectl apply -k $LLMD_REPO/guides/recipes/modelserver/components/monitoring/ -n llm-d
 gyliu-cary@Mac llm-d % kubectl get pods -n llm-d-monitoring
 NAME                                                     READY   STATUS    RESTARTS   AGE
 llmd-grafana-c855676f5-rrsh6                             3/3     Running   0          75s
@@ -293,13 +324,37 @@ gyliu-cary@Mac llm-d % # the trace contains both services, gateway → EPP:
 [llm-d-inference-gateway] POST /*
   [llm-d-router/epp] gateway.request
     [llm-d-router/epp] gateway.request_orchestration
+    [llm-d-router/epp] produce_precise_prefix_cache
+    [llm-d-router/epp] llm_d.kv_cache.index
+    [llm-d-router/epp] llm_d.kv_cache.index.add
 ```
 
 Confirm the EPP span is no longer an orphan root (it has the gateway as parent):
 
 ```console
 gyliu-cary@Mac llm-d % curl -s "http://localhost:16686/api/services" | python3 -c "import sys,json;print(sorted(json.load(sys.stdin)['data']))"
-['jaeger', 'llm-d-inference-gateway', 'llm-d-router/epp', ...]
+['jaeger', 'llm-d-inference-gateway', 'llm-d-router/epp']
+
+gyliu-cary@Mac llm-d % curl -s "http://localhost:16686/api/traces?service=llm-d-inference-gateway&limit=1&lookback=1h" | python3 -c "
+import sys, json
+t = json.load(sys.stdin)['data'][0]
+procs = t['processes']
+span_by_id = {s['spanID']: s for s in t['spans']}
+for s in t['spans']:
+    svc = procs[s['processID']]['serviceName']
+    refs = [r for r in (s.get('references') or []) if r.get('refType')=='CHILD_OF']
+    parent = 'ROOT'
+    if refs:
+        ps = span_by_id.get(refs[0]['spanID'])
+        if ps: parent = procs[ps['processID']]['serviceName']
+    print(f'  [{svc}] {s[\"operationName\"]} <- {parent}')
+"
+  [llm-d-inference-gateway] POST /* <- ROOT
+  [llm-d-router/epp] gateway.request <- llm-d-inference-gateway
+  [llm-d-router/epp] gateway.request_orchestration <- llm-d-router/epp
+  [llm-d-router/epp] produce_precise_prefix_cache <- llm-d-router/epp
+  [llm-d-router/epp] llm_d.kv_cache.index <- llm-d-router/epp
+  [llm-d-router/epp] llm_d.kv_cache.index.add <- llm-d-router/epp
 ```
 
 ### 4.3 Verify the metrics scrape loop in Prometheus
@@ -332,11 +387,15 @@ gyliu-cary@Mac llm-d % # Dashboards: "llm-d vLLM Overview", "llm-d Performance D
 | Item | How verified | Result |
 | --- | --- | --- |
 | EPP metric rename (`llm_d_router_epp` → `llm_d_epp`, #1661) | `llm_d_epp_request_total` in Prometheus TSDB | ✅ live |
-| IPP standardized OTel naming (#164) | Jaeger service `llm-d-inference-payload-processor` | ✅ live |
+| IPP standardized OTel naming (#164) | Jaeger service `llm-d-inference-payload-processor` | N/A — Gateway mode has no IPP |
 | EPP span namespace `llm_d.epp.*` (#1670) | `produce_precise_prefix_cache` span attrs (precise-prefix path) | ✅ live |
 | kv-cache index tracing (#653 / #637) | `llm_d.kv_cache.index{,.add}` spans with real vLLM KV-events | ✅ live |
 | Upstream traceparent adoption (#1514) | gateway → EPP stitched trace (Gateway API mode) | ✅ live |
 | Metrics scrape loop | Prometheus targets UP + TSDB + Grafana dashboards | ✅ closed loop |
+
+> Requires `precise-prefix-router.values.yaml` in Step 3.7 (not `optimized-baseline`).
+> Without it the vLLM KV-events ZMQ socket is wired but the EPP runs the baseline
+> prefix-cache-scorer only — no `llm_d.kv_cache.*` or `produce_precise_prefix_cache` spans.
 
 > The standalone (self-managed Envoy) chart **cannot** stitch the proxy hop to the EPP
 > (Envoy injects `traceparent` only at the router, after `ext_proc`; it sends no trace

@@ -113,8 +113,12 @@ gyliu-cary@Mac llm-d % kubectl create namespace llm-d
 
 ```console
 gyliu-cary@Mac llm-d % kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.5.1/standard-install.yaml
-gyliu-cary@Mac llm-d % kubectl apply -k "https://github.com/llm-d/llm-d-router/config/crd?ref=v0"
+gyliu-cary@Mac llm-d % kubectl apply -k "$ROUTER_REPO/config/crd"
+# 若无本地 checkout，可用：
+# kubectl apply -k "https://github.com/llm-d/llm-d-router/config/crd?ref=v0.9.0"
 ```
+
+> `llm-d-router` 仓库没有 git ref `v0` — 请用本地 checkout 或 `ref=v0.9.0`（及更新的 release tag）。
 
 ### 3.4 安装 agentgateway 控制面
 
@@ -152,10 +156,17 @@ gyliu-cary@Mac llm-d % bash $LLMD_REPO/guides/recipes/observability/install-otel
 `pullPolicy: IfNotPresent`（让 Kind 用本地构建的镜像）并设置模型服务 selector。
 chart 还会创建到 Gateway 的 `HTTPRoute`。
 
+请使用 **`precise-prefix-router.values.yaml`**（不要用 `optimized-baseline.values.yaml`），
+让 EPP 运行 `precise-prefix-cache-producer` + `token-producer`，对接 vLLM 在 ZMQ `:5556`
+上的 KV-events。chart 会在 EPP Pod 里部署 `vllm-render` sidecar 做分词。
+
+先安装 monitoring CRDs（Helm chart 会创建 `ServiceMonitor`）：
+
 ```console
+gyliu-cary@Mac llm-d % bash $LLMD_REPO/guides/recipes/observability/install-prometheus-grafana.sh --crds-only
 gyliu-cary@Mac llm-d % helm install llm-d oci://ghcr.io/llm-d/charts/llm-d-router-gateway-dev \
   -f $LLMD_REPO/guides/recipes/router/base.values.yaml \
-  -f $LLMD_REPO/guides/optimized-baseline/router/optimized-baseline.values.yaml \
+  -f $DEMO/manifests/optional/precise-prefix/precise-prefix-router.values.yaml \
   -f $LLMD_REPO/guides/recipes/router/features/monitoring.values.yaml \
   -f $DEMO/helm-values/tracing.values.yaml \
   -f $DEMO/helm-values/gw-kind.values.yaml \
@@ -168,6 +179,9 @@ NAME                                        HOSTNAMES   AGE
 httproute.gateway.networking.k8s.io/llm-d               5s
 NAME                                              AGE
 inferencepool.inference.networking.k8s.io/llm-d   5s
+gyliu-cary@Mac llm-d % kubectl get pod -n llm-d -l app.kubernetes.io/name=llm-d-epp \
+  -o jsonpath='EPP containers: {.items[0].spec.containers[*].name}{"\n"}'
+EPP containers: epp vllm-render
 ```
 
 `$DEMO/helm-values/gw-kind.values.yaml`：
@@ -197,10 +211,24 @@ router:
 ```console
 gyliu-cary@Mac llm-d % docker pull --platform linux/arm64 docker.io/vllm/vllm-openai-cpu:v0.19.1
 gyliu-cary@Mac llm-d % kind load docker-image docker.io/vllm/vllm-openai-cpu:v0.19.1 --name llm-d
-gyliu-cary@Mac llm-d % kubectl create secret generic llm-d-hf-token -n llm-d --from-literal=HF_TOKEN=<your-hf-token>
+# 若 kind load 报 "content digest ... not found"（Docker Desktop 多架构 manifest list），
+# 改用 ctr 导入：
+# docker save docker.io/vllm/vllm-openai-cpu:v0.19.1 | \
+#   docker exec -i llm-d-control-plane ctr -n k8s.io images import -
+gyliu-cary@Mac llm-d % cp $DEMO/.env.example $DEMO/.env   # 编辑 HF_TOKEN
+gyliu-cary@Mac llm-d % set -a && source $DEMO/.env && set +a
+gyliu-cary@Mac llm-d % kubectl create secret generic llm-d-hf-token -n llm-d \
+  --from-literal=HF_TOKEN="$HF_TOKEN" --dry-run=client -o yaml | kubectl apply -f -
+# model-server.yaml 引用 serviceAccountName: sa — 需先创建（provider.name=none 时 chart 不会创建）：
+gyliu-cary@Mac llm-d % kubectl apply -f $LLMD_REPO/guides/recipes/modelserver/common/sa.yaml -n llm-d
 gyliu-cary@Mac llm-d % kubectl apply -f $DEMO/manifests/optional/cpu-vllm/model-server.yaml
-gyliu-cary@Mac llm-d % kubectl rollout status deploy/precise-prefix-vllm -n llm-d --timeout=300s
+gyliu-cary@Mac llm-d % kubectl rollout status deploy/precise-prefix-vllm -n llm-d --timeout=600s
 ```
+
+> **Rollout 一直卡在 `0 out of 1 new replicas`？** 看事件：
+> `kubectl get events -n llm-d | grep precise-prefix`。若是
+> `serviceaccount "sa" not found`，先 apply `sa.yaml`，再执行
+> `kubectl rollout restart deploy/precise-prefix-vllm -n llm-d`。
 
 > **Kind / Docker-on-Mac 的坑：** vLLM CPU 会崩
 > `AssertionError: Not enough allowed NUMA nodes ... Allowed NUMA nodes are []`，
@@ -239,6 +267,7 @@ EOF
 
 ```console
 gyliu-cary@Mac llm-d % bash $LLMD_REPO/guides/recipes/observability/install-prometheus-grafana.sh
+gyliu-cary@Mac llm-d % kubectl apply -k $LLMD_REPO/guides/recipes/modelserver/components/monitoring/ -n llm-d
 gyliu-cary@Mac llm-d % kubectl get pods -n llm-d-monitoring
 NAME                                                     READY   STATUS    RESTARTS   AGE
 llmd-grafana-c855676f5-rrsh6                             3/3     Running   0          75s
@@ -292,13 +321,37 @@ gyliu-cary@Mac llm-d % # trace 里同时有两个 service，gateway → EPP：
 [llm-d-inference-gateway] POST /*
   [llm-d-router/epp] gateway.request
     [llm-d-router/epp] gateway.request_orchestration
+    [llm-d-router/epp] produce_precise_prefix_cache
+    [llm-d-router/epp] llm_d.kv_cache.index
+    [llm-d-router/epp] llm_d.kv_cache.index.add
 ```
 
 确认 EPP 的 span 不再是孤立 root（它的 parent 是 gateway）：
 
 ```console
 gyliu-cary@Mac llm-d % curl -s "http://localhost:16686/api/services" | python3 -c "import sys,json;print(sorted(json.load(sys.stdin)['data']))"
-['jaeger', 'llm-d-inference-gateway', 'llm-d-router/epp', ...]
+['jaeger', 'llm-d-inference-gateway', 'llm-d-router/epp']
+
+gyliu-cary@Mac llm-d % curl -s "http://localhost:16686/api/traces?service=llm-d-inference-gateway&limit=1&lookback=1h" | python3 -c "
+import sys, json
+t = json.load(sys.stdin)['data'][0]
+procs = t['processes']
+span_by_id = {s['spanID']: s for s in t['spans']}
+for s in t['spans']:
+    svc = procs[s['processID']]['serviceName']
+    refs = [r for r in (s.get('references') or []) if r.get('refType')=='CHILD_OF']
+    parent = 'ROOT'
+    if refs:
+        ps = span_by_id.get(refs[0]['spanID'])
+        if ps: parent = procs[ps['processID']]['serviceName']
+    print(f'  [{svc}] {s[\"operationName\"]} <- {parent}')
+"
+  [llm-d-inference-gateway] POST /* <- ROOT
+  [llm-d-router/epp] gateway.request <- llm-d-inference-gateway
+  [llm-d-router/epp] gateway.request_orchestration <- llm-d-router/epp
+  [llm-d-router/epp] produce_precise_prefix_cache <- llm-d-router/epp
+  [llm-d-router/epp] llm_d.kv_cache.index <- llm-d-router/epp
+  [llm-d-router/epp] llm_d.kv_cache.index.add <- llm-d-router/epp
 ```
 
 ### 4.3 在 Prometheus 验证 metrics 抓取闭环
@@ -331,11 +384,15 @@ gyliu-cary@Mac llm-d % # 看板："llm-d vLLM Overview"、"llm-d Performance Das
 | 项 | 验证方式 | 结果 |
 | --- | --- | --- |
 | EPP 指标改名（`llm_d_router_epp` → `llm_d_epp`，#1661） | Prometheus TSDB 里的 `llm_d_epp_request_total` | ✅ 运行时 |
-| IPP 标准化 OTel 命名（#164） | Jaeger service `llm-d-inference-payload-processor` | ✅ 运行时 |
+| IPP 标准化 OTel 命名（#164） | Jaeger service `llm-d-inference-payload-processor` | N/A — Gateway 模式无 IPP |
 | EPP span 命名空间 `llm_d.epp.*`（#1670） | `produce_precise_prefix_cache` span 属性（precise-prefix 路径） | ✅ 运行时 |
 | kv-cache index 追踪（#653 / #637） | 真实 vLLM KV-events 下的 `llm_d.kv_cache.index{,.add}` span | ✅ 运行时 |
 | 上游 traceparent adoption（#1514） | gateway → EPP 串起来的 trace（Gateway API 模式） | ✅ 运行时 |
 | Metrics 抓取闭环 | Prometheus targets UP + TSDB + Grafana 看板 | ✅ 闭环 |
+
+> 步骤 3.7 必须使用 `precise-prefix-router.values.yaml`（不能用 `optimized-baseline`）。
+> 否则 vLLM 的 KV-events ZMQ 虽已接通，EPP 仍只跑 baseline 的 prefix-cache-scorer，
+> Jaeger 里不会出现 `llm_d.kv_cache.*` 或 `produce_precise_prefix_cache` span。
 
 > standalone（自管 Envoy）chart **无法**把代理这一跳和 EPP 串起来（Envoy 只在 router——
 > 即 `ext_proc` 之后——才注入 `traceparent`；它不向 EPP 传任何 trace context，HTTP 头和
