@@ -1,0 +1,95 @@
+# A RayJob managed by Kueue.
+#
+# Total quota footprint: head (1 CPU / 5Gi) + 2 workers (1 CPU / 2Gi each)
+#                        + submitter (0.5 CPU / 200Mi) = 3.5 CPU / ~9.2Gi
+#
+# Lifecycle:
+#   1. Kueue sees the queue-name label, creates a Workload and suspends the job.
+#   2. When the ClusterQueue has quota for head + all workers, Kueue admits it
+#      and flips spec.suspend to false.
+#   3. The KubeRay operator then creates an ephemeral RayCluster (1 head +
+#      2 workers) plus a small "submitter" k8s Job that runs the entrypoint.
+#   4. shutdownAfterJobFinishes deletes the RayCluster when the job ends,
+#      which releases the Kueue quota for the next workload in line.
+apiVersion: ray.io/v1
+kind: RayJob
+metadata:
+  name: rayjob-pi
+  labels:
+    kueue.x-k8s.io/queue-name: rayjob-user-queue   # <-- hands the job to Kueue
+spec:
+  entrypoint: python /home/ray/samples/sample_code.py
+  # Batch semantics required by Kueue: the ephemeral cluster must be torn
+  # down at the end so its quota is released (RayJobs cannot reuse clusters).
+  shutdownAfterJobFinishes: true
+  ttlSecondsAfterFinished: 30
+  rayClusterSpec:
+    rayVersion: "2.46.0"
+    headGroupSpec:
+      rayStartParams:
+        dashboard-host: "0.0.0.0"   # the submitter reaches the Job API via the head svc
+        # Pin the object store size. Without this, Ray auto-sizes it from
+        # "available memory" read from cgroup memory.current, which includes
+        # page cache — right after image unpack that leaves ~nothing free and
+        # ray start dies with "Attempting to cap object store memory usage
+        # at ... bytes, but the minimum allowed is 78643200 bytes".
+        object-store-memory: "268435456"   # 256Mi
+        # Best practice: the head is control-plane only (GCS/dashboard/driver);
+        # with 0 logical CPUs Ray schedules all tasks onto the workers, which
+        # also keeps memory pressure off the busy head.
+        num-cpus: "0"
+      template:
+        spec:
+          containers:
+            - name: ray-head
+              # Multi-arch image (amd64 + arm64) — works on Apple Silicon kind too.
+              image: rayproject/ray:2.46.0
+              resources:
+                # requests are what Kueue charges against the ClusterQueue;
+                # limits are what Ray uses to size --num-cpus.
+                # NOTE: the Ray 2.46 head is memory-hungry — GCS + dashboard
+                # (~10 python subprocesses at ~300MB RSS each) idle at ~3.8GB
+                # measured. Below 4Gi it gets OOMKilled outright; at exactly
+                # 4Gi Ray's own memory monitor (95% threshold) kills the job
+                # driver. 5Gi leaves the needed headroom.
+                requests:
+                  cpu: "1"
+                  memory: 5Gi
+                limits:
+                  cpu: "1"
+                  memory: 5Gi
+              ports:
+                - containerPort: 6379    # GCS
+                  name: gcs-server
+                - containerPort: 8265    # Dashboard / Job API
+                  name: dashboard
+                - containerPort: 10001   # Ray Client
+                  name: client
+              volumeMounts:
+                - name: code
+                  mountPath: /home/ray/samples
+          volumes:
+            - name: code
+              configMap:
+                name: rayjob-pi-code
+    workerGroupSpecs:
+      # Fixed size (no autoscaling): Kueue admits the whole gang at once.
+      # For autoscaling see the ElasticJobsViaWorkloadSlices feature gate.
+      - groupName: cpu-workers
+        replicas: 2
+        minReplicas: 2
+        maxReplicas: 2
+        rayStartParams:
+          object-store-memory: "268435456"   # same reason as the head
+        template:
+          spec:
+            containers:
+              - name: ray-worker
+                image: rayproject/ray:2.46.0
+                resources:
+                  requests:
+                    cpu: "1"
+                    memory: 2Gi
+                  limits:
+                    cpu: "1"
+                    memory: 2Gi

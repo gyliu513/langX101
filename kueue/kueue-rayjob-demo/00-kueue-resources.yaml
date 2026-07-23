@@ -1,0 +1,45 @@
+---
+# ResourceFlavor: a single, untyped flavor that matches every node in the
+# kind cluster. For a real GPU cluster you would add
+# nodeLabels: { nvidia.com/gpu.present: "true" } here.
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: ResourceFlavor
+metadata:
+  name: default-flavor
+spec: {}
+---
+# ClusterQueue: the cluster-wide quota pool.
+# One RayJob asks for:
+#   head       1 CPU + 5Gi
+#   worker     2 x (1 CPU + 2Gi)
+#   submitter  0.5 CPU + 200Mi   (yes — Kueue counts the submitter pod too!)
+#   total      3.5 CPU + ~9.2Gi
+# Kueue admits the RayJob only when the WHOLE Ray cluster fits (gang-style
+# admission over head + worker PodSets). The quota below fits exactly one
+# such job at a time — submit a second one and watch it queue (see README).
+# For GPU, add "nvidia.com/gpu" to coveredResources and give it a quota.
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: ClusterQueue
+metadata:
+  name: rayjob-cluster-queue
+spec:
+  namespaceSelector: {}            # all namespaces may use this queue
+  resourceGroups:
+    - coveredResources: ["cpu", "memory"]
+      flavors:
+        - name: default-flavor
+          resources:
+            - name: cpu
+              nominalQuota: "4"
+            - name: memory
+              nominalQuota: "10Gi"
+---
+# LocalQueue: the namespaced entry point. RayJobs reference this queue
+# by name via the label kueue.x-k8s.io/queue-name.
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: LocalQueue
+metadata:
+  name: rayjob-user-queue
+  namespace: default
+spec:
+  clusterQueue: rayjob-cluster-queue
