@@ -191,9 +191,13 @@ kuberay-operator-5dff8cd9d5-5mbq6   1/1     Running   0          1m
 
 $ kubectl get crd | grep ray.io
 rayclusters.ray.io
+raycronjobs.ray.io
 rayjobs.ray.io
 rayservices.ray.io
 ```
+
+（KubeRay 1.6 有 4 个 CRD，`raycronjobs` 是 1.6 新增的定时任务类型，
+本 demo 不用它。）
 
 ---
 
@@ -369,7 +373,8 @@ SUCC cli.py:66 -- Job 'rayjob-pi-8gxpr' succeeded
 
 - `CPU: 2.0`：集群总共 2 个逻辑 CPU——head 配了 `num-cpus: "0"`
   （最佳实践：head 只当控制面），所以只有 2 个 worker 各出 1 CPU；
-- 24 个 task 恰好 **12/12 均分**在两个 worker 上，head 上 0 个。
+- 24 个 task 分布在两个 worker 上、head 上 0 个。每次运行的分布会略有
+  浮动（比如 12/12 或 14/10），取决于调度时机，属正常现象。
 
 ---
 
@@ -403,10 +408,16 @@ rayjob-rayjob-pi-665b4   rayjob-user-queue   rayjob-cluster-queue   True       T
 还在跑时提交第二个：
 
 ```bash
-kubectl apply -f 02-rayjob.yaml        # 第一个（如果上一步的已删除）
+kubectl delete rayjob rayjob-pi        # 先删掉第 9 步已完成的那个！
+sleep 5
+kubectl apply -f 02-rayjob.yaml        # 重新提交第一个（开始跑）
 sleep 10
-kubectl apply -f 03-rayjob-second.yaml # 第二个
+kubectl apply -f 03-rayjob-second.yaml # 趁第一个在跑，提交第二个
 ```
+
+> **为什么要先 delete？** 已经 `Complete` 的 RayJob 再 apply 一遍**不会
+> 重跑**（状态保持 Complete、不占配额），第二个任务会被直接放行，
+> 你就看不到排队现象了。
 
 第二个进不来，**排队**（真实输出）：
 

@@ -197,9 +197,13 @@ kuberay-operator-5dff8cd9d5-5mbq6   1/1     Running   0          1m
 
 $ kubectl get crd | grep ray.io
 rayclusters.ray.io
+raycronjobs.ray.io
 rayjobs.ray.io
 rayservices.ray.io
 ```
+
+(KubeRay 1.6 registers 4 CRDs — `raycronjobs` is the scheduled-job type
+added in 1.6; this demo doesn't use it.)
 
 ---
 
@@ -381,7 +385,9 @@ Notes:
 - `CPU: 2.0`: the cluster has 2 logical CPUs total — the head runs with
   `num-cpus: "0"` (best practice: control-plane only), so only the 2 workers
   contribute 1 CPU each;
-- the 24 tasks split **12/12** across the two workers, 0 on the head.
+- the 24 tasks land on the two workers only, 0 on the head. The exact split
+  varies a little between runs (12/12, 14/10, ...) depending on scheduling
+  timing — that's normal.
 
 ---
 
@@ -416,10 +422,16 @@ The quota (4 CPU / 10Gi) fits exactly one RayJob (3.5 CPU / 9.2Gi). Submit a
 second one while the first is still running:
 
 ```bash
-kubectl apply -f 02-rayjob.yaml        # first job (if you deleted the previous run)
+kubectl delete rayjob rayjob-pi        # delete the finished job from step 9 first!
+sleep 5
+kubectl apply -f 02-rayjob.yaml        # resubmit the first job (starts running)
 sleep 10
-kubectl apply -f 03-rayjob-second.yaml # second job
+kubectl apply -f 03-rayjob-second.yaml # submit the second while the first runs
 ```
+
+> **Why delete first?** Re-applying a RayJob that is already `Complete` does
+> **not** re-run it (it stays Complete and holds no quota), so the second job
+> would be admitted immediately and you'd never see it queue.
 
 The second one can't get in — it **queues** (real output):
 
