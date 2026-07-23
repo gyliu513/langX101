@@ -1,0 +1,61 @@
+# OPTIONAL: a second, identical RayJob used to demonstrate queueing.
+#
+# The ClusterQueue quota (4 CPU / 8Gi) fits only ONE RayJob (3 CPU / 6Gi)
+# at a time. Submit this while rayjob-pi is still running and it will sit
+# suspended in the queue; once rayjob-pi finishes and its cluster is torn
+# down, Kueue admits this one automatically. See README "Watching jobs queue".
+apiVersion: ray.io/v1
+kind: RayJob
+metadata:
+  name: rayjob-pi-2
+  labels:
+    kueue.x-k8s.io/queue-name: rayjob-user-queue
+spec:
+  entrypoint: python /home/ray/samples/sample_code.py
+  shutdownAfterJobFinishes: true
+  ttlSecondsAfterFinished: 30
+  rayClusterSpec:
+    rayVersion: "2.46.0"
+    headGroupSpec:
+      rayStartParams:
+        dashboard-host: "0.0.0.0"
+        object-store-memory: "268435456"
+        num-cpus: "0"
+      template:
+        spec:
+          containers:
+            - name: ray-head
+              image: rayproject/ray:2.46.0
+              resources:
+                requests:
+                  cpu: "1"
+                  memory: 5Gi
+                limits:
+                  cpu: "1"
+                  memory: 5Gi
+              volumeMounts:
+                - name: code
+                  mountPath: /home/ray/samples
+          volumes:
+            - name: code
+              configMap:
+                name: rayjob-pi-code
+    workerGroupSpecs:
+      - groupName: cpu-workers
+        replicas: 2
+        minReplicas: 2
+        maxReplicas: 2
+        rayStartParams:
+          object-store-memory: "268435456"
+        template:
+          spec:
+            containers:
+              - name: ray-worker
+                image: rayproject/ray:2.46.0
+                resources:
+                  requests:
+                    cpu: "1"
+                    memory: 2Gi
+                  limits:
+                    cpu: "1"
+                    memory: 2Gi

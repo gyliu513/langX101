@@ -1,0 +1,54 @@
+# The Ray driver script, mounted into the head pod at /home/ray/samples/.
+# The RayJob entrypoint runs it with plain `python` — no pip installs needed.
+#
+# It estimates pi with a Monte Carlo simulation fanned out as Ray tasks
+# (num_cpus=0.5 each), then prints which pod each task ran on so you can
+# see the work spreading across the head + 2 worker pods.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rayjob-pi-code
+data:
+  sample_code.py: |
+    import random
+    import socket
+    import time
+    from collections import Counter
+
+    import ray
+
+    ray.init()
+
+    print("=== Ray cluster resources ===")
+    print(ray.cluster_resources())
+
+    @ray.remote(num_cpus=0.5)
+    def sample_pi(n: int):
+        inside = 0
+        for _ in range(n):
+            x, y = random.random(), random.random()
+            if x * x + y * y <= 1.0:
+                inside += 1
+        return inside, socket.gethostname()
+
+    NUM_TASKS = 24
+    SAMPLES_PER_TASK = 200_000
+
+    start = time.time()
+    results = ray.get([sample_pi.remote(SAMPLES_PER_TASK) for _ in range(NUM_TASKS)])
+    elapsed = time.time() - start
+
+    total_inside = sum(inside for inside, _ in results)
+    pi = 4.0 * total_inside / (NUM_TASKS * SAMPLES_PER_TASK)
+
+    print()
+    print("=== Result ===")
+    print(f"pi ~= {pi:.6f}  ({NUM_TASKS} tasks x {SAMPLES_PER_TASK:,} samples, {elapsed:.1f}s)")
+
+    print()
+    print("=== Task distribution across pods ===")
+    for host, count in sorted(Counter(host for _, host in results).items()):
+        print(f"  {host}: {count} tasks")
+
+    print()
+    print("SUCCESS")
