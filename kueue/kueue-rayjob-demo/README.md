@@ -135,7 +135,8 @@ Ray 镜像约 800MB（压缩后）。如果不预载，每个 kind 节点都会�
 Docker Hub 拉一遍。先拉到本机，再灌进两个 worker 节点：
 
 ```bash
-docker pull rayproject/ray:2.46.0
+# 本地已有镜像可跳过 pull（Docker Desktop 对已存在镜像再 pull 有时会长时间无输出）
+docker image inspect rayproject/ray:2.46.0 >/dev/null 2>&1 || docker pull rayproject/ray:2.46.0
 docker save rayproject/ray:2.46.0 -o /tmp/ray.tar
 for node in $(kind get nodes --name kueue-rayjob-demo | grep -v control-plane); do
   docker exec --privileged -i "$node" \
@@ -501,26 +502,31 @@ kind delete cluster --name kueue-rayjob-demo
 
 以下问题全部在本 demo 开发过程中真实踩到，方案已固化进 YAML/脚本：
 
-1. **`kind load docker-image` 报 `ctr: content digest ... not found`**
+1. **`docker pull` 长时间无输出（本地已有镜像）**
+   Docker Desktop 对已存在的镜像再执行 `docker pull` 时，可能长时间
+   向 registry 校验 metadata 而无任何输出。本地已有
+   `rayproject/ray:2.46.0` 时跳过 pull 即可（`setup.sh` 已自动检测）。
+
+2. **`kind load docker-image` 报 `ctr: content digest ... not found`**
    Docker 开启 containerd image store 后的已知问题（`--all-platforms`
    与多架构 attestation 冲突）。解法见第 2 步：手动 `ctr import`。
 
-2. **head Pod OOMKilled（2Gi/3Gi 都不够）**
+3. **head Pod OOMKilled（2Gi/3Gi 都不够）**
    Ray 2.46 的 head 空载就要 **~3.8GB**（GCS + Dashboard 会 spawn 约
    10 个各 ~300MB 的 python 子进程，实测 `memory.peak` 3.78GB）。
    head 至少给 **5Gi**。
 
-3. **`ValueError: Attempting to cap object store memory usage at ... bytes`**
+4. **`ValueError: Attempting to cap object store memory usage at ... bytes`**
    Ray 自动按 cgroup 的 `memory.current`（**含 page cache**）估算可用
    内存；镜像刚解压完 cache 把额度占满，object store 只分到 3MB（低于
    75MB 下限）直接崩溃。解法：`rayStartParams` 里显式
    `object-store-memory: "268435456"`。
 
-4. **任务被 Ray 杀掉：`Task was killed due to the node running low on memory`**
+5. **任务被 Ray 杀掉：`Task was killed due to the node running low on memory`**
    head 给 4Gi 时空载 3.81/4.00GB=95.2%，恰好越过 Ray 内存监控的 95%
    kill 阈值，job driver 一起被杀。解法同第 2 条：head 5Gi 留出余量。
 
-5. **RayJob 一直 Suspended，`describe workload` 说差 200Mi**
+6. **RayJob 一直 Suspended，`describe workload` 说差 200Mi**
    Kueue 把 **submitter Pod（0.5 CPU / 200Mi）也算进配额**，按
    head+workers 算的 8Gi 配额不够。配额按 3 个 PodSet 合计留余量。
 

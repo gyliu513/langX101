@@ -141,7 +141,8 @@ The Ray image is ~800MB compressed. Without pre-loading, every kind node
 pulls it separately. Pull once locally, then inject into both worker nodes:
 
 ```bash
-docker pull rayproject/ray:2.46.0
+# Skip pull if the image is already local (Docker Desktop can hang re-verifying)
+docker image inspect rayproject/ray:2.46.0 >/dev/null 2>&1 || docker pull rayproject/ray:2.46.0
 docker save rayproject/ray:2.46.0 -o /tmp/ray.tar
 for node in $(kind get nodes --name kueue-rayjob-demo | grep -v control-plane); do
   docker exec --privileged -i "$node" \
@@ -520,28 +521,34 @@ kind delete cluster --name kueue-rayjob-demo
 All of these were actually encountered; the fixes are baked into the
 YAML/scripts:
 
-1. **`kind load docker-image` fails with `ctr: content digest ... not found`**
+1. **`docker pull` hangs with no output (image already local)**
+   On Docker Desktop, re-running `docker pull` for an image that is already
+   present can sit silently for a long time while it re-checks metadata against
+   the registry. Skip the pull if you already have `rayproject/ray:2.46.0`
+   (`setup.sh` checks this automatically).
+
+2. **`kind load docker-image` fails with `ctr: content digest ... not found`**
    Known issue when Docker's containerd image store is enabled
    (`--all-platforms` vs. multi-arch attestation manifests). Fix: the manual
    `ctr import` shown in step 2.
 
-2. **Head pod OOMKilled (2Gi and 3Gi both insufficient)**
+3. **Head pod OOMKilled (2Gi and 3Gi both insufficient)**
    The Ray 2.46 head idles at **~3.8GB** (GCS + dashboard spawn ~10 python
    subprocesses at ~300MB each; measured `memory.peak` 3.78GB). Give the
    head at least **5Gi**.
 
-3. **`ValueError: Attempting to cap object store memory usage at ... bytes`**
+4. **`ValueError: Attempting to cap object store memory usage at ... bytes`**
    Ray auto-sizes the object store from cgroup `memory.current`, which
    **includes page cache**; right after image unpack that leaves almost
    nothing and the store gets 3MB (below the 75MB minimum) → crash. Fix:
    set `object-store-memory: "268435456"` explicitly in `rayStartParams`.
 
-4. **Job killed by Ray: `Task was killed due to the node running low on memory`**
+5. **Job killed by Ray: `Task was killed due to the node running low on memory`**
    With a 4Gi head the idle usage was 3.81/4.00GB = 95.2% — just over Ray's
    memory-monitor kill threshold (95%), so the job driver got killed. Same
    fix as #2: 5Gi head for headroom.
 
-5. **RayJob stuck `Suspended`; `describe workload` says 200Mi short**
+6. **RayJob stuck `Suspended`; `describe workload` says 200Mi short**
    Kueue **also charges the submitter pod** (0.5 CPU / 200Mi). A quota sized
    only for head+workers (8Gi) is not enough. Size the quota for all three
    PodSets plus headroom.

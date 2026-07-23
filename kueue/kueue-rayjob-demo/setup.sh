@@ -27,7 +27,11 @@ kubectl get nodes
 
 echo "==> [2/5] Pre-pulling ${RAY_IMAGE} and loading it into the kind worker nodes"
 echo "    (the Ray image is big — this one-time step avoids each node pulling it separately)"
-docker pull "${RAY_IMAGE}"
+if docker image inspect "${RAY_IMAGE}" >/dev/null 2>&1; then
+  echo "    image already present locally, skipping pull"
+else
+  docker pull "${RAY_IMAGE}"
+fi
 # NOTE: we import via ctr manually instead of `kind load docker-image`.
 # When Docker uses the containerd image store, `kind load` fails with
 # "ctr: content digest ... not found" because its hardcoded --all-platforms
