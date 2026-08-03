@@ -7,6 +7,13 @@ Kind cluster with `llm-d-inference-sim` they let you deploy the **topology and t
 control/observability plane**, but the data-plane KV mechanics are illustrative,
 not functional.
 
+> [!NOTE]
+> **Not re-verified in the 2026-08-02 `main` re-run.** Only the baseline path was executed
+> end-to-end on a fresh cluster. These overlays were updated *mechanically* to match what
+> that run proved necessary — inference-sim bumped to `v0.9.2` and `--force-dummy-tokenizer`
+> added (without it the sim crash-loops; see README Step 2) — but the overlays themselves
+> were not deployed. Treat them as untested against current `main`.
+
 > [!IMPORTANT]
 > No-GPU caveat. Real KV-cache transfer (P/D) needs vLLM + NIXL over RDMA/TCP, and
 > precise prefix-cache routing needs vLLM KV-cache events plus a tokenizer render
