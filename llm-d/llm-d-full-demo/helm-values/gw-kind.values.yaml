@@ -11,6 +11,13 @@ router:
       limits:   { cpu: "2", memory: "2Gi" }
     flags:
       v: 2
+  # The vllm-render sidecar only tokenizes for the token-producer, but the chart
+  # defaults it to 4 CPU / 8Gi -- on a single Kind node that alone blocks the
+  # second model-server replica from scheduling ("Insufficient memory").
+  tokenizer:
+    resources:
+      requests: { cpu: "500m", memory: "2Gi" }
+      limits:   { cpu: "2", memory: "4Gi" }
   modelServers:
     matchLabels:
       llm-d.ai/guide: "precise-prefix-cache-routing"

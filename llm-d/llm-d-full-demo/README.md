@@ -16,35 +16,41 @@ This document records a **no-GPU, Apple-Silicon (arm64) Kind** deployment of llm
 
 ## 1. System Architecture / 系统架构
 
+Two request paths share one Gateway. Plain requests go to the **precise-prefix** pool
+(2 real vLLM replicas); requests carrying `x-llm-d-pool: pd` go to the **P/D-disaggregated**
+pool. Both are fronted by the payload processor.
+
 ```text
-                          ┌──────────────────────── observability ────────────────────────┐
-                          │                                                                │
- client ─HTTP─▶ agentgateway ──ext_proc(W3C traceparent)──▶  EPP  ──route──▶ vLLM (Qwen2.5-0.5B, CPU)
-              (Gateway API,        (endpoint picker /                 │
-               trace ROOT)          InferencePool ext)                │  KV-events (ZMQ :5556)
-                   │                      │                           │
-   spans ──────────┼──────────────────────┼──────────── metrics ──────┼─────────────
-                   ▼                      ▼                           ▼
-         OTLP gRPC :4317           OTLP gRPC :4317            ServiceMonitor / PodMonitor
-                   └────────▶ otel-collector ───▶ Jaeger          │
-                                                                   ▼
-                                                            Prometheus ───▶ Grafana
+                                    ┌──────── default route ────────▶ InferencePool llm-d
+                                    │            (EPP: precise-prefix)      │
+                                    │                                       ├──▶ vLLM replica 1  ┐ KV-events
+ client ─HTTP─▶ agentgateway ─ext_proc─▶ IPP ─▶  (route)                    └──▶ vLLM replica 2  ┘ (ZMQ :5556)
+              (Gateway API,          (PreRouting)  │                                              │
+               trace ROOT)                         └── x-llm-d-pool: pd ──▶ InferencePool llm-d-pd│
+                                                            (EPP: P/D)             │              │
+                                                                                   ▼              │
+                                                            routing-sidecar ──prefill──▶ pd-prefill
+                                                             (in pd-decode)  ──decode───▶ pd-decode
+   spans ─────────────────────────── OTLP gRPC :4317 ─────▶ otel-collector ──▶ Jaeger
+   metrics ───────────────── ServiceMonitor / PodMonitor ─▶ Prometheus ──────▶ Grafana ◀───────────┘
 ```
 
 | Component | Namespace | Role |
 | --- | --- | --- |
 | `agentgateway` (control plane) | `agentgateway-system` | Gateway API + Inference Extension controller; provisions the data-plane proxy and pushes config via xDS |
-| `llm-d-inference-gateway` (data plane) | `llm-d` | The proxy. Trace **root** span `POST /*`; propagates W3C `traceparent` into the EPP `ext_proc` call |
-| `llm-d-epp` | `llm-d` | llm-d Router **Endpoint Picker** (Gateway API Inference Extension / `ext_proc`). Emits `gateway.request` + scheduling spans, exposes `llm_d_epp_*` metrics |
-| `precise-prefix-vllm` | `llm-d` | Real **vLLM CPU** model server (`Qwen2.5-0.5B-Instruct`); exposes `vllm:*` metrics, publishes KV-events on ZMQ `:5556` |
+| `llm-d-inference-gateway` (data plane) | `llm-d` | The proxy. Trace **root** span `POST /*`; propagates W3C `traceparent` into every `ext_proc` call |
+| `payload-processor` (IPP) | `llm-d` | llm-d **Inference Payload Processor**, attached as a `PreRouting` `ext_proc`. Rewrites body fields into routing headers (`model` → `X-Gateway-Model-Name`); adopts the gateway's trace context and re-injects it downstream |
+| `llm-d-epp` | `llm-d` | llm-d Router **Endpoint Picker** for the precise-prefix pool. Emits `gateway.request` + scheduling spans, exposes `llm_d_epp_*` metrics |
+| `llm-d-pd-epp` | `llm-d` | A **second** EPP release running the P/D plugin chain (`disagg-profile-handler`, prefill/decode filters). Emits `pick_disagg_profile` / `prepare_disaggregation` spans |
+| `precise-prefix-vllm` (×2) | `llm-d` | Real **vLLM CPU** model servers (`Qwen2.5-0.5B-Instruct`); expose `vllm:*` metrics, publish KV-events on ZMQ `:5556`. Two replicas so the prefix scorer has a real choice |
+| `pd-prefill` / `pd-decode` | `llm-d` | P/D pools on `llm-d-inference-sim`. `pd-decode` fronts the sim with the **`llm-d-routing-sidecar`** native sidecar, which drives the remote-prefill handshake |
 | `otel-collector` + `jaeger` | `llm-d` | Trace pipeline (OTLP gRPC → Jaeger) |
 | `kube-prometheus-stack` (`llmd` release) | `llm-d-monitoring` | Prometheus + Grafana + operator; scrapes the `ServiceMonitor`/`PodMonitor` |
-| `HTTPRoute` / `InferencePool` | `llm-d` | Gateway → InferencePool wiring; the InferencePool references the EPP as its endpoint-picker extension |
+| `HTTPRoute` / `InferencePool` | `llm-d` | Two routes on one Gateway: the chart's default `/` → pool `llm-d`, and a header-matched route → pool `llm-d-pd` |
 
 Images are **built from `upstream/main`** of the respective llm-d repos (arm64).
-Only the **EPP** image is required by this Gateway-mode demo; the sidecar and the
-payload processor belong to the optional P/D and IPP paths and are listed here
-because Step 3.1 builds them:
+All three are used: the EPP by both router releases, the payload processor by Step 3.11,
+and the routing sidecar by the P/D pool in Step 3.12:
 
 ```console
 gyliu-cary@Mac llm-d % docker images | grep main
@@ -352,33 +358,160 @@ prometheus-llmd-kube-prometheus-stack-prometheus-0       2/2     Running   0    
 > Confirm with
 > `curl -s http://localhost:9091/api/v1/status/config | grep -c 'podMonitor/llm-d/decode'`.
 
+### 3.11 Add the Inference Payload Processor (IPP) to the trace
+
+The IPP is a second `ext_proc` server. In Gateway API mode you attach it with an
+`AgentgatewayPolicy` — its own chart only templates `provider.name: istio | gke | none`,
+so there is no agentgateway wiring to reuse.
+
+It joins the trace **for free**: `pkg/handlers/server.go` starts its span from
+`extractTraceContext(ctx, v.RequestHeaders)` (a W3C propagator `Extract` over the
+`ext_proc` request headers), and `request.go` `Inject`s the context back into the headers
+it forwards. Running it at `PreRouting` therefore makes the EPP a **child of the IPP**.
+
+```console
+gyliu-cary@Mac llm-d % kind load docker-image ghcr.io/llm-d/llm-d-inference-payload-processor:main --name llm-d
+gyliu-cary@Mac llm-d % helm install ipp $IPP_REPO/config/charts/payload-processor -n llm-d \
+  --set provider.name=none \
+  --set payloadProcessor.image.tag=main \
+  --set payloadProcessor.image.pullPolicy=IfNotPresent \
+  --set payloadProcessor.tracing.enabled=true \
+  --set payloadProcessor.tracing.otelExporterEndpoint=http://otel-collector:4317 \
+  --set payloadProcessor.tracing.sampling.samplerArg=1.0 \
+  --set payloadProcessor.flags.secure-serving=false
+```
+
+> **`--secure-serving=false` is mandatory here.** The IPP defaults `SecureServing: true`
+> (`pkg/server/options.go`) and serves gRPC with a self-signed cert, while agentgateway's
+> `extProc` backendRef speaks plaintext h2. Leave it on and every request 500s with
+> `failed to initialize endpoint picker: ... connection reset ... failure_mode=FailClosed`
+> in the gateway log — note that a broken `ext_proc` takes down **all** traffic, not just
+> the IPP hop. (The chart's Istio path instead wraps it in a `DestinationRule` with
+> `tls.mode: SIMPLE, insecureSkipVerify: true`.)
+
+```console
+gyliu-cary@Mac llm-d % kubectl apply -f - <<'EOF'
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: ipp-extproc
+  namespace: llm-d
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: llm-d-inference-gateway
+  traffic:
+    phase: PreRouting
+    extProc:
+      backendRef:
+        kind: Service
+        name: payload-processor
+        port: 9004
+EOF
+gyliu-cary@Mac llm-d % kubectl get agentgatewaypolicy -n llm-d ipp-extproc \
+  -o jsonpath='{.status.ancestors[0].conditions[*].reason}{"\n"}'
+Valid Attached
+```
+
+### 3.12 Add the P/D-disaggregated pool
+
+**CPU vLLM cannot do P/D.** Prefill→decode KV transfer needs a connector (NIXL);
+`docker.io/vllm/vllm-openai-cpu:v0.19.1` has no `nixl` module
+(`python3 -c "import nixl"` → `ModuleNotFoundError`), and upstream only ships P/D
+model-server variants for `gpu` / `xpu` / `tpu`. The P/D pool therefore runs on
+`llm-d-inference-sim`, which fakes the handshake — the **scheduling and proxying
+components are real**, only the KV transfer is simulated.
+
+Because an EPP runs exactly one plugin config, P/D gets its **own router release**
+alongside the precise-prefix one. The chart namespaces everything by release name
+(`llm-d-pd-epp`, InferencePool `llm-d-pd`), so the two coexist cleanly.
+
+```console
+gyliu-cary@Mac llm-d % kind load docker-image ghcr.io/llm-d/llm-d-routing-sidecar:main --name llm-d
+gyliu-cary@Mac llm-d % kind load docker-image ghcr.io/llm-d/llm-d-inference-sim:v0.10.2-arm64 --name llm-d
+gyliu-cary@Mac llm-d % helm install llm-d-pd oci://ghcr.io/llm-d/charts/llm-d-router-gateway-dev --version v0 \
+  -f $LLMD_REPO/guides/recipes/router/base.values.yaml \
+  -f $DEMO/manifests/optional/pd/pd-router.values.yaml \
+  -f $LLMD_REPO/guides/recipes/router/features/monitoring.values.yaml \
+  -f $DEMO/helm-values/tracing.values.yaml \
+  -f $DEMO/helm-values/gw-kind-pd.values.yaml \
+  --set provider.name=none --set httpRoute.create=false -n llm-d
+gyliu-cary@Mac llm-d % kubectl apply -f $DEMO/manifests/optional/pd/model-servers-pd.yaml
+gyliu-cary@Mac llm-d % kubectl apply -f $DEMO/manifests/optional/pd/httproute-pd.yaml
+gyliu-cary@Mac llm-d % kubectl get inferencepool -n llm-d
+NAME       AGE
+llm-d      3h15m
+llm-d-pd   30s
+```
+
+`httproute-pd.yaml` matches on a header so both pools share one Gateway — a rule with a
+header match outranks the chart's bare `/` PathPrefix, so tagged requests go to the P/D
+pool and everything else still reaches the precise-prefix pool:
+
+```yaml
+  rules:
+    - matches:
+        - path: { type: PathPrefix, value: / }
+          headers:
+            - { type: Exact, name: x-llm-d-pool, value: pd }
+      backendRefs:
+        - { group: inference.networking.k8s.io, kind: InferencePool, name: llm-d-pd, weight: 1 }
+```
+
+> **routing-sidecar flags changed on `main`.** `--connector` was renamed
+> **`--kv-connector`** (unknown-flag crash-loop otherwise) and `--vllm-port` is deprecated
+> in favour of **`--model-server-port`**. `main` also adds **`--tracing`**, which is what
+> puts the sidecar's `prefill` / `decode` legs into the trace — set it plus the usual
+> `OTEL_*` env vars.
+
 ### Final state
 
 ```console
 gyliu-cary@Mac llm-d % kubectl get pod -A   # kube-system omitted
 NAMESPACE             NAME                                                     READY   STATUS    RESTARTS   AGE
-agentgateway-system   agentgateway-5448f46756-g7zmb                            1/1     Running   0          144m
-llm-d                 jaeger-587f6c758f-rdvp6                                  1/1     Running   0          142m
-llm-d                 llm-d-epp-7dc5b7f9f-qdl77                                2/2     Running   0          128m
-llm-d                 llm-d-inference-gateway-6bbf846c56-qxjhs                 1/1     Running   0          142m
-llm-d                 otel-collector-7fd7c98767-ng6nn                          1/1     Running   0          142m
-llm-d                 precise-prefix-vllm-5dfb5c8c89-49s6z                     1/1     Running   0          43m
-llm-d-monitoring      alertmanager-llmd-kube-prometheus-stack-alertmanager-0   2/2     Running   0          125m
-llm-d-monitoring      llmd-grafana-5c77cd47b4-nsnnt                            3/3     Running   0          126m
-llm-d-monitoring      llmd-kube-prometheus-stack-operator-f96fc6d6c-6qpkq      1/1     Running   0          126m
-llm-d-monitoring      llmd-kube-state-metrics-77cb8dbcf9-j7nbg                 1/1     Running   0          126m
-llm-d-monitoring      llmd-prometheus-node-exporter-xjqbl                      1/1     Running   0          126m
-llm-d-monitoring      prometheus-llmd-kube-prometheus-stack-prometheus-0       2/2     Running   0          125m
+agentgateway-system   agentgateway-5448f46756-g7zmb                            1/1     Running   0          3h51m
+llm-d                 jaeger-587f6c758f-rdvp6                                  1/1     Running   0          3h49m
+llm-d                 llm-d-epp-64b9497cd9-5mdzs                               2/2     Running   0          24m
+llm-d                 llm-d-inference-gateway-6bbf846c56-qxjhs                 1/1     Running   0          3h49m
+llm-d                 llm-d-pd-epp-59d77ccd8-94tbv                             1/1     Running   0          20m
+llm-d                 otel-collector-7fd7c98767-ng6nn                          1/1     Running   0          3h49m
+llm-d                 payload-processor-576ffd57bf-vp77g                       1/1     Running   0          41m
+llm-d                 pd-decode-5bb64c487f-rhh9s                               2/2     Running   0          6m52s
+llm-d                 pd-prefill-58c7555d5f-g5q5m                              1/1     Running   0          19m
+llm-d                 precise-prefix-vllm-5bdc47b459-8t7jm                     1/1     Running   0          38m
+llm-d                 precise-prefix-vllm-5bdc47b459-cjkfm                     1/1     Running   0          38m
+llm-d-monitoring      alertmanager-llmd-kube-prometheus-stack-alertmanager-0   2/2     Running   0          3h32m
+llm-d-monitoring      llmd-grafana-5c77cd47b4-99hgz                            3/3     Running   0          63m
+llm-d-monitoring      llmd-kube-prometheus-stack-operator-f96fc6d6c-6qpkq      1/1     Running   0          3h33m
+llm-d-monitoring      llmd-kube-state-metrics-77cb8dbcf9-j7nbg                 1/1     Running   0          3h33m
+llm-d-monitoring      llmd-prometheus-node-exporter-xjqbl                      1/1     Running   0          3h33m
+llm-d-monitoring      prometheus-llmd-kube-prometheus-stack-prometheus-0       2/2     Running   0          3h32m
 
 gyliu-cary@Mac llm-d % helm list -A
 NAME                NAMESPACE             CHART                          APP VERSION   STATUS
 agentgateway        agentgateway-system   agentgateway-v1.1.0            v1.1.0        deployed
 agentgateway-crds   agentgateway-system   agentgateway-crds-v1.1.0       v1.1.0        deployed
+ipp                 llm-d                 payload-processor-0.2.0        v0.2.0        deployed
 llm-d               llm-d                 llm-d-router-gateway-dev-v0    v0            deployed
+llm-d-pd            llm-d                 llm-d-router-gateway-dev-v0    v0            deployed
 llmd                llm-d-monitoring      kube-prometheus-stack-88.1.3   v0.93.0       deployed
+
+gyliu-cary@Mac llm-d % kubectl describe node llm-d-control-plane | grep -A4 'Allocated resources'
+Allocated resources:
+  Resource           Requests        Limits
+  cpu                7500m (53%)     20100m (143%)
+  memory             18538Mi (79%)   33414Mi (143%)
 ```
 
-> The EPP pod is `2/2` (`epp` + the `vllm-render` sidecar), and
+> Everything above fits on **one 14-CPU / 23Gi Kind node** only because two chart defaults
+> were cut down: the EPP's `vllm-render` sidecar (`router.tokenizer.resources`, 4 CPU/8Gi by
+> default — see `gw-kind.values.yaml`) and the model server itself (2 CPU/5Gi per replica).
+> Leave the tokenizer default in place and the second vLLM replica never schedules
+> (`0/1 nodes are available: 1 Insufficient memory`).
+
+> The precise-prefix EPP pod is `2/2` (`epp` + the `vllm-render` sidecar), the P/D EPP is
+> `1/1` (its plugin chain has no `token-producer`, so no sidecar), and
 > `llm-d-router-gateway-dev` only publishes the floating **`v0`** tag — there is no pinned
 > release, so the chart content can change under you. This run pulled digest
 > `sha256:4da0c96b8ecb4881ee72b29284f9da0b14d52494fd584f68c84f7d906f2eaab1`.
@@ -426,7 +559,8 @@ for s in t['spans']:
     print(f'  [{svc}] {s[\"operationName\"]} <- {parent}')
 "
   [llm-d-inference-gateway] POST /* <- ROOT
-  [llm-d-router/epp] gateway.request <- llm-d-inference-gateway
+  [inference.llm-d.ai/inference-payload-processor] gateway.request <- llm-d-inference-gateway
+  [llm-d-router/epp] gateway.request <- inference.llm-d.ai/inference-payload-processor
   [llm-d-router/epp] gateway.request_orchestration <- llm-d-router/epp
   [llm-d-router/epp] HTTP POST <- llm-d-router/epp
   [llm-d-router/epp] produce_precise_prefix_cache <- llm-d-router/epp
@@ -437,11 +571,18 @@ for s in t['spans']:
   [llm-d-router/epp] llm_d.kv_cache.index.add <- llm-d-router/epp
 ```
 
-A single `/v1/chat/completions` now produces a **10-span** trace across the two services —
-the gateway root, the EPP request/orchestration pair, the scheduler subtree
+A single `/v1/chat/completions` produces an **11-span, 3-service** trace: the gateway root,
+the IPP hop, the EPP request/orchestration pair, the scheduler subtree
 (`run_scheduler_profile` → `filter_endpoints`, `pick_endpoints`), the precise-prefix
 producer with its kv-cache index spans, and the `HTTP POST` the `token-producer` makes to
 the `vllm-render` sidecar.
+
+Note the parentage: because the IPP runs at `PreRouting` and re-injects the trace context
+into the headers it forwards, **the EPP is a child of the IPP**, not of the gateway.
+
+> `llm-d-kv-cache` never appears as its own Jaeger service — it is a Go library compiled
+> into the EPP (pinned at `v0.9.0` in the router's `go.mod`), and OTel service names are a
+> per-process resource attribute. Its spans are the `llm_d.kv_cache.*` ones above.
 
 ### 4.2.1 Drive a prefix-cache hit
 
@@ -478,11 +619,79 @@ pick_endpoints                  {'llm_d.epp.picker.candidate_endpoints': 1,
 closing: vLLM published the block over ZMQ, the EPP indexed it, and the next request
 matched it. An `llm_d.kv_cache.index.evict` span also appears once blocks age out.
 
-The gateway hop (`llm-d-inference-gateway`) and the EPP are stitched into one trace:
+**With two replicas the routing decision itself becomes visible.** `pick_endpoints` across
+a run of identical long prompts:
 
-![Jaeger stitched gateway → EPP trace](docs/screenshots/jaeger-stitched-trace.png)
+```console
+gyliu-cary@Mac llm-d % # llm_d.epp.picker.{candidate_endpoints,top_endpoints,top_scores}
+cand=1  top=...vllm-5dfb5c8c89-49s6z-rank-0  scores=[4]      # single replica: nothing to decide
+cand=2  top=...vllm-5bdc47b459-cjkfm-rank-0  scores=[4,4]    # both replicas cold, tied
+cand=2  top=...vllm-5bdc47b459-8t7jm-rank-0  scores=[7,4]    # prefix landed on 8t7jm
+cand=2  top=...vllm-5bdc47b459-8t7jm-rank-0  scores=[7,4]    # ...and every later request sticks to it
+```
 
-`Services 2 | Depth 5 | Total Spans 10` — one trace, rooted at the gateway.
+7 = `prefix-cache-scorer` (weight 3.0) on a hit + `kv-cache-utilization-scorer` (2.0) +
+`queue-scorer` (2.0); the replica without the prefix scores 4. This is the whole point of
+running **2 replicas** — with one endpoint the scorers have nothing to rank.
+
+The gateway, the IPP and the EPP are stitched into one trace:
+
+![Jaeger stitched gateway → IPP → EPP trace](docs/screenshots/jaeger-stitched-trace.png)
+
+`Services 3 | Depth 6 | Total Spans 11` — one trace, rooted at the gateway.
+
+### 4.2.2 Verify the P/D-disaggregated trace
+
+Tag the request with `x-llm-d-pool: pd` to take the second route:
+
+```console
+gyliu-cary@Mac llm-d % kubectl run tpd --rm -i --restart=Never --image=curlimages/curl:8.7.1 -n llm-d -- \
+  curl -sS -o /dev/null -w "pd http=%{http_code}\n" -X POST http://$GWIP:80/v1/chat/completions \
+  -H 'Content-Type: application/json' -H 'x-llm-d-pool: pd' \
+  -d '{"model":"Qwen/Qwen2.5-0.5B-Instruct","messages":[{"role":"user","content":"hello pd"}],"max_tokens":16}'
+pd http=200
+```
+
+That single request yields a **21-span, 4-service** trace:
+
+```console
+[llm-d-inference-gateway] POST /*
+  [inference.llm-d.ai/inference-payload-processor] gateway.request
+    [llm-d-router/epp] gateway.request
+      [llm-d-router/epp] gateway.request_orchestration
+        [llm-d-router/epp] pick_disagg_profile            # prefill profile
+        [llm-d-router/epp] run_scheduler_profile
+          [llm-d-router/epp] filter_endpoints
+          [llm-d-router/epp] pick_endpoints
+        [llm-d-router/epp] pick_disagg_profile            # decode profile
+        [llm-d-router/epp] run_scheduler_profile
+          [llm-d-router/epp] filter_endpoints
+          [llm-d-router/epp] pick_endpoints
+        [llm-d-router/epp] pick_disagg_profile
+        [llm-d-router/epp] prepare_disaggregation
+        [llm-d-router/epp] prepare_disaggregation
+    [llm-d-routing-sidecar] llm_d.pd_proxy.POST /v1/chat/completions
+      [llm-d-routing-sidecar] forward_request
+        [llm-d-routing-sidecar] prefill
+          [llm-d-routing-sidecar] HTTP POST               # -> pd-prefill
+          [llm-d-routing-sidecar] decode
+            [llm-d-routing-sidecar] HTTP POST             # -> pd-decode
+```
+
+![Jaeger P/D disaggregated trace](docs/screenshots/jaeger-pd-trace.png)
+
+`Services 4 | Depth 7 | Total Spans 21`. Two things worth reading off it:
+
+- The EPP runs the **disagg profile handler**: `pick_disagg_profile` fires once per profile
+  and each drives its own `run_scheduler_profile` → `filter_endpoints` / `pick_endpoints`
+  subtree, so you can see the prefill and the decode endpoint being chosen separately,
+  then `prepare_disaggregation` stitching the two legs together.
+- The **routing sidecar** contributes its own service and the actual two-leg proxying
+  (`prefill` → `decode`), which only shows up because `main` added `--tracing`.
+
+> The KV transfer itself is simulated (`llm-d-inference-sim`); scheduling, header
+> handling and proxying are the real components. See Step 3.12 for why CPU vLLM cannot
+> do the real thing.
 
 ### 4.3 Verify the metrics scrape loop in Prometheus
 
@@ -541,12 +750,16 @@ prompts of Step 4.2.1:
 | Item | How verified | Result |
 | --- | --- | --- |
 | EPP metric rename (`llm_d_router_epp` → `llm_d_epp`, #1661) | `llm_d_epp_request_total` in Prometheus TSDB | ✅ live |
-| IPP standardized OTel naming (#164) | Jaeger service `llm-d-inference-payload-processor` | N/A — Gateway mode has no IPP |
+| IPP standardized OTel naming (#164) | Jaeger service `inference.llm-d.ai/inference-payload-processor` | ✅ live (Step 3.11) |
+| IPP trace-context adoption | EPP span is a **child of the IPP** span | ✅ live |
 | EPP span namespace `llm_d.epp.*` (#1670) | `produce_precise_prefix_cache` + `pick_endpoints` span attrs | ✅ live |
 | kv-cache index tracing (#653 / #637) | `llm_d.kv_cache.index{,.add,.evict}` spans with real vLLM KV-events | ✅ live |
 | kv-cache **hit** on the routing path | `llm_d.kv_cache.lookup.cache_hit=true`, `max_match_blocks=1` | ✅ live |
+| KV-aware **routing decision** (2 replicas) | `pick_endpoints` `top_scores=[7,4]`, sticky to the prefix holder | ✅ live |
 | Scheduler subtree spans | `run_scheduler_profile` → `filter_endpoints` / `pick_endpoints` | ✅ live |
-| Upstream traceparent adoption (#1514) | gateway → EPP stitched trace (Gateway API mode) | ✅ live |
+| P/D disagg scheduling | `pick_disagg_profile` ×3 + `prepare_disaggregation` ×2, two scheduler profiles | ✅ live (sim) |
+| routing-sidecar tracing (`--tracing`, #1667) | `llm_d.pd_proxy.*` → `forward_request` → `prefill` → `decode` | ✅ live (sim) |
+| Upstream traceparent adoption (#1514) | gateway → IPP → EPP → sidecar stitched trace | ✅ live |
 | Metrics scrape loop | Prometheus targets UP + TSDB + Grafana dashboards | ✅ closed loop |
 
 > Requires `precise-prefix-router.values.yaml` in Step 3.7 (not `optimized-baseline`).
@@ -577,4 +790,13 @@ this document was re-executed. What changed since the previous run:
 | PodMonitor race | `podMonitor/llm-d/decode` can be missing from the generated scrape config if it is created exactly when the operator syncs; annotate it to force a resync (Step 3.10). |
 | Gateway CRDs | llm-d now ships `guides/recipes/gateway/install-gateway-crds.sh` (Gateway API v1.5.1 + GAIE v1.5.0) as an alternative to Step 3.3 — but it omits the `llm-d.ai` CRDs the router needs. |
 | Chart tag | `llm-d-router-gateway-dev` still publishes only the floating `v0` tag (no pinned release); this run used digest `sha256:4da0c96b…`. |
-| Screenshots | All four images under `docs/screenshots/` were re-captured from this run. |
+| Screenshots | All images under `docs/screenshots/` were re-captured from this run. |
+
+### Components added in this pass
+
+| Added | Why / what it buys |
+| --- | --- |
+| **IPP** (Step 3.11) | A third service in the trace. Needs `--secure-serving=false` and an `AgentgatewayPolicy` `traffic.extProc` — its own chart has no agentgateway template. |
+| **2 model-server replicas** | Turns the prefix scorer from a formality into a visible decision (`top_scores=[7,4]`). Required cutting `router.tokenizer.resources` (4 CPU/8Gi default) and the model-server requests, or the second replica cannot schedule. |
+| **P/D pool** (Step 3.12) | A fourth service and the richest trace in the demo (21 spans): disagg profile scheduling + the sidecar's prefill/decode legs. Runs on `llm-d-inference-sim` because CPU vLLM has no NIXL. |
+| Second router release `llm-d-pd` | An EPP runs one plugin config, so P/D needs its own release; the chart namespaces by release name and the two pools coexist on one Gateway via a header-matched `HTTPRoute`. |

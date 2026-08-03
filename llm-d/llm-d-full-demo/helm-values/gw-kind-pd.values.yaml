@@ -1,0 +1,20 @@
+## Kind overrides for the SECOND router release (`llm-d-pd`) that serves the
+## P/D-disaggregated pool. Layer after base.values.yaml + pd-router.values.yaml.
+##
+## Differences from gw-kind.values.yaml (the precise-prefix release):
+##   - no `tokenizer` (the P/D plugin chain has no token-producer, so the EPP pod
+##     stays 1/1 and does not need the 2Gi vllm-render sidecar)
+##   - smaller EPP footprint, since both releases share one Kind node
+router:
+  epp:
+    replicas: 1
+    image:
+      registry: ghcr.io/llm-d
+      repository: llm-d-router-endpoint-picker-dev
+      tag: main
+      pullPolicy: IfNotPresent
+    resources:
+      requests: { cpu: "250m", memory: "512Mi" }
+      limits:   { cpu: "1", memory: "1Gi" }
+    flags:
+      v: 2
