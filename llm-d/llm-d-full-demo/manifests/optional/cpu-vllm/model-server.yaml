@@ -10,6 +10,10 @@ metadata:
     app.kubernetes.io/part-of: llm-d
 spec:
   replicas: 1
+  # A second vLLM pod does not fit next to the first one on a single Kind node
+  # (4 CPU / 6Gi requested each), so a rolling update would deadlock at Pending.
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       llm-d.ai/guide: precise-prefix-cache-routing
@@ -55,8 +59,11 @@ spec:
                 secretKeyRef:
                   name: llm-d-hf-token
                   key: HF_TOKEN
+            # Persist the HF model cache on the Kind node (kind-config.yaml mounts
+            # host /tmp/llm-d-cache -> node /root/.cache), so the ~1 GB Qwen2.5-0.5B
+            # download survives pod restarts and cluster re-creation.
             - name: HF_HOME
-              value: /tmp/hf
+              value: /root/.cache/huggingface
             - name: DO_NOT_TRACK
               value: "1"
             - name: VLLM_CPU_KVCACHE_SPACE
@@ -85,6 +92,8 @@ spec:
               name: dshm
             - mountPath: /tmp
               name: tmp
+            - mountPath: /root/.cache/huggingface
+              name: hf-cache
           startupProbe:
             httpGet:
               path: /health
@@ -92,7 +101,11 @@ spec:
             initialDelaySeconds: 20
             periodSeconds: 10
             timeoutSeconds: 5
-            failureThreshold: 90
+            # 60 min. The first start downloads ~1 GB of weights from HF; on a
+            # slow link that alone takes ~1 h, and a shorter budget just restarts
+            # the container mid-download. Warm starts (node cache populated) take
+            # ~1 min. Pre-seed the cache to skip this -- see README step 3.8.
+            failureThreshold: 360
           readinessProbe:
             httpGet:
               path: /health
@@ -107,3 +120,9 @@ spec:
             sizeLimit: 2Gi
         - name: tmp
           emptyDir: {}
+        # Kind node path backed by the host dir declared in kind/kind-config.yaml
+        # (hostPath /tmp/llm-d-cache -> containerPath /root/.cache).
+        - name: hf-cache
+          hostPath:
+            path: /root/.cache/huggingface
+            type: DirectoryOrCreate
