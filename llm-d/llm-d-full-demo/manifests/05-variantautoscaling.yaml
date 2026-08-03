@@ -1,4 +1,20 @@
 ---
+# ============================================================================
+# DEPRECATED / LEGACY — DO NOT APPLY ON A CURRENT WVA INSTALL.
+#
+# The VariantAutoscaling CRD is deprecated upstream and WVA's current manifests
+# no longer ship it, so `kubectl apply -f` this file fails with:
+#   no matches for kind "VariantAutoscaling" in version "llmd.ai/v1alpha1"
+#
+# WVA now discovers workloads from `llm-d.ai/*` annotations placed directly on
+# the HPA (or a KEDA ScaledObject). Use 06-hpa.yaml instead — it is
+# self-sufficient and needs no CR. See the WVA repo's
+# docs/developer-guide/migrating-from-va-crd.md and README "Step 9".
+#
+# This file is kept only for reference / older WVA releases that still serve the
+# CRD.
+# ============================================================================
+#
 # Workload Variant Autoscaler (WVA) — VariantAutoscaling for the decode pool.
 #
 # WVA is a global autoscaler for inference model servers. It watches the target

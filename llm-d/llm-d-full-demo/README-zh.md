@@ -13,6 +13,26 @@
 
 ---
 
+## 基于 llm-d `main` 的重新验证（2026-08-02）
+
+本指南已在全新的 Kind 集群上、针对 `llm-d`、`llm-d-router`、
+`llm-d-inference-payload-processor`、`llm-d-workload-variant-autoscaler` 四个仓库当前的
+`main` 分支，从零完整重跑了一遍。下表是**实际发生变化**的内容。若你参考的是本 demo 的旧版本，
+以下就是会踩到的坑：
+
+| # | 变化 | 影响 |
+|---|---|---|
+| 1 | llm-d 仓库中的 `docs/monitoring/` 已被**删除**（PR #1542）。安装脚本与仪表盘迁移至 `guides/recipes/observability/`。 | 第 3/4/6 步的命令会 404。路径现为 `$LLMD/guides/recipes/observability/...`。 |
+| 2 | `llm-d-router` 的浮动 **`v0` git 分支已被删除**（只保留 release tag）。 | `kubectl apply -k '...?ref=v0'` 报 `couldn't find remote ref v0`。新增 `ROUTER_CRD_REF` 变量并设为 release tag。`v0` 作为 *Helm* tag 仍然有效。 |
+| 3 | **inference-sim v0.8.0 → v0.9.2**，且 v0.9.x 默认的 `--mode random` 需要 tokenizer render 服务。 | 不加新的 `--force-dummy-tokenizer` 参数，model server 会**崩溃重启**。 |
+| 4 | IPP chart 的默认镜像改为已发布的 **`:v0.1.0`**，*可以*匿名拉取。 | 针对 `:main` 403 的旧「本地构建」变通方案不再需要。 |
+| 5 | router chart 的 Envoy 预设在**同一个浮动 `v0` tag 下**发生了漂移（IPv6 `additional_addresses`、显式 `failure_mode_allow`）。 | 已重新同步 `helm-values/proxy-tracing-ipp.values.yaml`。即使不升级版本号也要重新同步。 |
+| 6 | EPP 现在发出 **5 个 span 而非 2 个**，且在普通 optimized-baseline 路径上就带有 `llm_d.epp.*` 属性。 | 纯粹是增强——见[实测追踪行为](#实测追踪行为)。 |
+| 7 | WVA 的 **`VariantAutoscaling` CRD 已废弃**且不再随 manifests 发布，改为通过 HPA 上的 `llm-d.ai/*` 注解发现；其发布的 `:latest` 镜像已过期且会崩溃重启。 | `manifests/05-variantautoscaling.yaml` 变为遗留文件；注解写在 `manifests/06-hpa.yaml` 中。第 9 步给出了完整的实测步骤。 |
+| 8 | 可观测性安装脚本现在加载 **7** 个 Grafana 仪表盘，而非 5 个。 | 新增两个：Inference Gateway、SGLang Overview。 |
+
+---
+
 ## 架构图
 
 ```
@@ -342,8 +362,29 @@ EPP kv-cache-utilization-scorer
 |---|---|---|
 | `llm-d-envoy-proxy` | `ingress` + 2× `async ...ExternalProcessor.Process egress` | 两个 ext_proc span 即对 IPP 和对 EPP 的调用。这是唯一能同时看到两跳的 trace。 |
 | `llm-d-inference-payload-processor` | `gateway.request` | IPP 的请求体/请求头处理。 |
-| `llm-d-router/epp` | `gateway.request` + `gateway.request_orchestration` | EPP 路由 + 调度决策。 |
-| `llm-d-model-server` | （无） | `inference-sim:v0.8.0` 不导出 trace。 |
+| `llm-d-router/epp` | `gateway.request` → `gateway.request_orchestration` → `run_scheduler_profile` → （`filter_endpoints`、`pick_endpoints`） | EPP 路由**与完整调度流水线**——共 5 个 span，层级正确嵌套。 |
+| `llm-d-model-server` | （无） | `inference-sim` 在实测的所有版本（v0.8.0–v0.9.2）均不导出 trace。 |
+
+> [!TIP]
+> **EPP 的埋点比以前完善得多。** 本指南此前只记录到 2 个 EPP span（`gateway.request` +
+> `gateway.request_orchestration`），并指出 `llm_d.epp.*` 属性**只能**在 precise-prefix-cache
+> 路径上看到。现在已不再如此：在**本 demo 所用的普通 optimized-baseline 路径**上，调度器就会
+> 发出 `run_scheduler_profile`、`filter_endpoints`、`pick_endpoints`，并直接携带 `llm_d.epp.*`
+> 命名空间的属性。本次实测结果：
+>
+> ```
+> gateway.request
+> └─ gateway.request_orchestration      request_prio=0  target_model=Qwen/Qwen2.5-0.5B-Instruct
+>    └─ run_scheduler_profile           llm_d.epp.scheduling.profile.name=default
+>       ├─ filter_endpoints             llm_d.epp.filter.candidate_endpoints=2
+>       │                               llm_d.epp.filter.filtered_endpoints=1
+>       └─ pick_endpoints               llm_d.epp.picker.candidate_endpoints=1
+>                                       llm_d.epp.picker.top_endpoints=["llm-d/optimized-baseline-decode-...-rank-0"]
+>                                       llm_d.epp.picker.top_scores=[0.999997615814209]
+> ```
+> `filter_endpoints` 与 `pick_endpoints` 还带有 `gen_ai.request.id` 和 `gen_ai.request.model`，
+> 因此现在单看一条 EPP trace 就能解释**选中了哪个 endpoint**以及**为什么**——无需搭建 P/D 或
+> precise-prefix 环境。
 
 **为什么不是一条拼接的 trace：**
 
@@ -369,8 +410,8 @@ EPP kv-cache-utilization-scorer
 | `otel-collector` | `llm-d` | Deployment | 接收 OTLP traces，过滤噪声，转发给 Jaeger |
 | `jaeger` | `llm-d` | Deployment | Trace 存储 + UI（port 16686） |
 | `ServiceMonitor/llm-d-epp-monitor` | `llm-d` | CR | Prometheus 抓取 EPP 指标（:9090） |
-| `PodMonitor/decode` | `llm-d` | CR | Prometheus 抓取模型服务器指标（:8000）——来自 `guides/recipes/modelserver/components/monitoring/` |
-| `VariantAutoscaling/optimized-baseline-decode` | `llm-d` | CR（可选） | **WVA** 目标；输出 `wva_desired_replicas` → HPA |
+| `PodMonitor/decode` | `llm-d` | CR | Prometheus 抓取模型服务器指标（:8000）——来自 `$LLMD/guides/recipes/modelserver/components/monitoring/` |
+| `HorizontalPodAutoscaler/optimized-baseline-decode-hpa` | `llm-d` | HPA（可选） | **WVA** 目标，通过 `llm-d.ai/*` 注解被发现；WVA 输出 `wva_desired_replicas` → prometheus-adapter → 该 HPA。取代已废弃的 `VariantAutoscaling` CR。 |
 | Prometheus（HTTPS/TLS） | `llm-d-monitoring` | StatefulSet | 指标存储 |
 | Grafana | `llm-d-monitoring` | Deployment | 5 个预装 llm-d 仪表盘 |
 
@@ -444,10 +485,10 @@ done
 
 ### PodMonitor——内部工作原理
 
-本 Demo 复用了已有的 recipe component：`guides/recipes/modelserver/components/monitoring/`，通过以下命令应用：
+本 Demo 复用了已有的 recipe component：`$LLMD/guides/recipes/modelserver/components/monitoring/`，通过以下命令应用：
 
 ```bash
-kubectl apply -k guides/recipes/modelserver/components/monitoring/ -n llm-d
+kubectl apply -k $LLMD/guides/recipes/modelserver/components/monitoring/ -n llm-d
 ```
 
 **它创建的 CR：**
@@ -566,7 +607,7 @@ llm-d EPP 将 InferencePool/InferenceObjective 的控制器逻辑直接内嵌其
 ### 模型服务器 OpenTelemetry 配置（`01-model-servers.yaml`）
 
 > [!NOTE]
-> 已在真实集群验证：`llm-d-inference-sim:v0.8.0` **不会**响应这些 `OTEL_*` 变量——Jaeger 中从未出现 `llm-d-model-server` 服务。保留这些变量是因为它们本身正确且具前瞻性：一个遵循这些变量的真实 vLLM（或未来的 sim 版本）会导出一个推理 span，并接入 EPP 向下游传播的 trace。下文描述的是这一**预期**行为。
+> 已在真实集群验证：`llm-d-inference-sim`（v0.8.0 与 v0.9.2 均已实测）**不会**响应这些 `OTEL_*` 变量——Jaeger 中从未出现 `llm-d-model-server` 服务。保留这些变量是因为它们本身正确且具前瞻性：一个遵循这些变量的真实 vLLM（或未来的 sim 版本）会导出一个推理 span，并接入 EPP 向下游传播的 trace。下文描述的是这一**预期**行为。
 
 模型服务器 manifest 中的五个 `OTEL_*` 环境变量旨在将模型服务器 Pod 接入分布式追踪管道。每个变量对应 OpenTelemetry SDK 的一个标准配置项。
 
@@ -711,19 +752,37 @@ CRD 只是**Schema 注册**——它告诉 Kubernetes API Server "这种类型�
 
 - **Kind** v0.29+、**Docker Desktop**（已分配 14+ CPU、20+ GB RAM）
 - **kubectl**、**Helm** v3.10+
-- **jq**、**python3**
+- **jq**、**python3**、**yq**（`yq` 仅第 9 步可选的 WVA 安装脚本需要）
 - 已克隆 llm-d 仓库：`git clone https://github.com/llm-d/llm-d.git && cd llm-d`
 
 ---
 
 ## 安装步骤
 
-先设置版本变量——后续多个步骤都会用到：
+先设置路径与版本变量——后续每个步骤都会用到：
 
 ```bash
+# llm-d/llm-d 的克隆位置，以及本 demo 目录的位置。
+export LLMD=/path/to/llm-d           # llm-d/llm-d 克隆目录
+export DEMO=/path/to/llm-d-full-demo # 本目录
+
 export GAIE_VERSION=v1.5.0
-export ROUTER_CHART_VERSION=v0
+export ROUTER_CHART_VERSION=v0      # Helm chart tag（浮动 tag，仍在发布）
+export ROUTER_CRD_REF=v0.9.0        # router CRD kustomization 使用的 git ref
 ```
+
+> [!IMPORTANT]
+> **原本合一、现已分离的两条路径。** 本 demo **不属于** llm-d 仓库，它独立存在，因此其
+> manifests 与 values 均通过 `$DEMO` 引用。本指南的早期版本假设 demo 位于
+> `llm-d/docs/monitoring/llm-d-full-demo/`，该目录在上游已不存在。它原先存放的可执行监控
+> 资产（安装脚本、Grafana 仪表盘、tracing manifests）已在 llm-d PR #1542 中迁移到
+> `guides/recipes/observability/`，这也是现在 `$LLMD` 各引用所指向的位置。
+
+> [!NOTE]
+> `ROUTER_CHART_VERSION` 与 `ROUTER_CRD_REF` 是有意分开的。`v0` 仍是 router chart 有效的
+> **Helm/OCI** tag，但在 `llm-d/llm-d-router` 中已不再是有效的 **git** ref——浮动的 `v0`
+> 分支已被删除，改用正式 release tag，因此 `kubectl apply -k '...?ref=v0'` 现在会报
+> `couldn't find remote ref v0`。CRD kustomization 请使用 release tag。
 
 ### 第 1 步：创建 Kind 集群
 
@@ -731,7 +790,7 @@ export ROUTER_CHART_VERSION=v0
 mkdir -p /tmp/llm-d-cache
 
 kind create cluster \
-  --config docs/monitoring/llm-d-full-demo/kind/kind-config.yaml
+  --config $DEMO/kind/kind-config.yaml
 ```
 
 验证：
@@ -745,26 +804,42 @@ kubectl get nodes
 
 ### 第 2 步：拉取并加载 inference-sim 镜像
 
+```bash
+export SIM_VERSION=v0.9.2
+```
+
 **Apple Silicon（arm64）**：
 ```bash
-ARM64_DIGEST=$(docker manifest inspect ghcr.io/llm-d/llm-d-inference-sim:v0.8.0 2>/dev/null | \
+ARM64_DIGEST=$(docker manifest inspect ghcr.io/llm-d/llm-d-inference-sim:${SIM_VERSION} 2>/dev/null | \
   python3 -c "import sys,json; d=json.load(sys.stdin); \
   [print(m['digest']) for m in d.get('manifests',[]) \
   if m.get('platform',{}).get('architecture')=='arm64']")
 
 docker pull ghcr.io/llm-d/llm-d-inference-sim@${ARM64_DIGEST}
 docker tag ghcr.io/llm-d/llm-d-inference-sim@${ARM64_DIGEST} \
-  ghcr.io/llm-d/llm-d-inference-sim:v0.8.0-arm64
+  ghcr.io/llm-d/llm-d-inference-sim:${SIM_VERSION}-arm64
 
-kind load docker-image ghcr.io/llm-d/llm-d-inference-sim:v0.8.0-arm64 --name llm-d
+kind load docker-image ghcr.io/llm-d/llm-d-inference-sim:${SIM_VERSION}-arm64 --name llm-d
 ```
 
 **x86_64**：
 ```bash
-docker pull ghcr.io/llm-d/llm-d-inference-sim:v0.8.0
-kind load docker-image ghcr.io/llm-d/llm-d-inference-sim:v0.8.0 --name llm-d
-# 同时修改 manifests/01-model-servers.yaml 中的镜像 tag 为 v0.8.0
+docker pull ghcr.io/llm-d/llm-d-inference-sim:${SIM_VERSION}
+kind load docker-image ghcr.io/llm-d/llm-d-inference-sim:${SIM_VERSION} --name llm-d
+# 同时去掉 manifests/01-model-servers.yaml 中镜像 tag 的 `-arm64` 后缀
 ```
+
+> [!IMPORTANT]
+> **从 v0.9.x 起必须加 `--force-dummy-tokenizer`。** sim 默认的 `--mode random` 会在启动时
+> 通过 `--render-url`（默认 `http://localhost:8082`）指向的 **tokenizer render 服务**对其句子库
+> 做分词，以此构建应答池。本 demo 并未部署该服务，因此不加该参数时每个 model server pod 都会
+> 崩溃重启，报错：
+> ```
+> failed to create vLLM simulator ... dataset initialization error:
+> RenderRequest: post /v1/completions/render: dial tcp [::1]:8082: connect: connection refused
+> ```
+> `manifests/01-model-servers.yaml` 已加上 `--force-dummy-tokenizer`，使 sim 自包含运行。
+> （这也是升级旧版 demo 时，仅改镜像 tag 无法work的原因。）
 
 ---
 
@@ -774,12 +849,12 @@ kind load docker-image ghcr.io/llm-d/llm-d-inference-sim:v0.8.0 --name llm-d
 
 ```bash
 # 3a. Monitoring CRDs（ServiceMonitor、PodMonitor）——必须最先安装
-bash docs/monitoring/scripts/install-prometheus-grafana.sh --crds-only
+bash $LLMD/guides/recipes/observability/install-prometheus-grafana.sh --crds-only
 
 # 3b. llm-d router CRDs——一次性安装 GAIE CRDs（InferencePool）
 #     和 llm-d.ai CRDs（InferenceObjective、InferenceModelRewrite）
 kubectl apply -k \
-  "https://github.com/llm-d/llm-d-router/config/crd?ref=${ROUTER_CHART_VERSION}"
+  "https://github.com/llm-d/llm-d-router/config/crd?ref=${ROUTER_CRD_REF}"
 ```
 
 > **为什么用 `llm-d-router/config/crd` 而不是上游 GAIE 仓库？**
@@ -802,7 +877,7 @@ kubectl get crd | grep -E "inferencep|monitoring.coreos|llm-d.ai"
 ### 第 4 步：安装 Prometheus + Grafana
 
 ```bash
-bash docs/monitoring/scripts/install-prometheus-grafana.sh --enable-tls
+bash $LLMD/guides/recipes/observability/install-prometheus-grafana.sh --enable-tls
 ```
 
 ---
@@ -814,18 +889,21 @@ kubectl create namespace llm-d
 
 helm install llm-d \
   oci://ghcr.io/llm-d/charts/llm-d-router-standalone-dev \
-  -f guides/recipes/router/base.values.yaml \
-  -f guides/optimized-baseline/router/optimized-baseline.values.yaml \
-  -f guides/recipes/router/features/monitoring.values.yaml \
-  -f docs/monitoring/llm-d-full-demo/helm-values/kind-overrides.values.yaml \
-  -f docs/monitoring/llm-d-full-demo/helm-values/tracing.values.yaml \
-  -f docs/monitoring/llm-d-full-demo/helm-values/proxy-tracing-ipp.values.yaml \
+  -f $LLMD/guides/recipes/router/base.values.yaml \
+  -f $LLMD/guides/optimized-baseline/router/optimized-baseline.values.yaml \
+  -f $LLMD/guides/recipes/router/features/monitoring.values.yaml \
+  -f $DEMO/helm-values/kind-overrides.values.yaml \
+  -f $DEMO/helm-values/tracing.values.yaml \
+  -f $DEMO/helm-values/proxy-tracing-ipp.values.yaml \
   -n llm-d \
   --version ${ROUTER_CHART_VERSION}
 ```
 
 - `tracing.values.yaml` 配置 **EPP** 将 trace 发送到 `http://otel-collector:4317`。
-- `proxy-tracing-ipp.values.yaml` 覆盖 chart 的 **Envoy** 配置：(a) 把 **IPP** 作为 EPP 之前的第二个 `ext_proc` 过滤器加入；(b) 让 Envoy 成为 **OpenTelemetry trace 根**；(c) 新增 `ipp_ext_proc` 与 `otel_collector` 两个 cluster。该文件是 chart Envoy 预设的逐字拷贝加上述改动；升级 `ROUTER_CHART_VERSION` 时需重新同步。
+- `proxy-tracing-ipp.values.yaml` 覆盖 chart 的 **Envoy** 配置：(a) 把 **IPP** 作为 EPP 之前的第二个 `ext_proc` 过滤器加入；(b) 让 Envoy 成为 **OpenTelemetry trace 根**；(c) 新增 `ipp_ext_proc` 与 `otel_collector` 两个 cluster。该文件是 chart Envoy 预设的逐字拷贝加上述改动，并已将 chart 的 Go 模板占位符按 **sidecar 模式 + EPP TLS** 解析（`STATIC` ext_proc cluster、`127.0.0.1`、保留 `tls_options`/`transport_socket`、`failure_mode_allow: false`）。
+
+> [!WARNING]
+> **只要 chart 的 Envoy 预设有变动就要重新同步——即使你没有改 `ROUTER_CHART_VERSION`。** `v0` 是**浮动** tag：同一个版本字符串会随时间解析到新的 chart。本次重跑的同步就带入了两处上游偏移（两个 listener 上的 IPv6 `additional_addresses`，以及 EPP `ext_proc` 过滤器上显式的 `failure_mode_allow`）。
 
 > Envoy 会在 IPP（第 6b 步）存在之前就引用 `payload-processor` Service。由于 IPP 过滤器配置了 `failure_mode_allow: true`，期间请求仍能成功——只是在 IPP 运行前不产生 IPP span。
 
@@ -836,7 +914,7 @@ helm install llm-d \
 OTel Collector 和 Jaeger 必须与 llm-d 组件**在同一命名空间**，才能通过 `http://otel-collector:4317` 接收 traces。
 
 ```bash
-bash docs/monitoring/scripts/install-otel-collector-jaeger.sh -n llm-d
+bash $LLMD/guides/recipes/observability/install-otel-collector-jaeger.sh -n llm-d
 ```
 
 部署内容：
@@ -855,7 +933,7 @@ IPP 是 Envoy 链路中的第二个 `ext_proc` 服务（已在第 5 步接好）
 git clone https://github.com/llm-d/llm-d-inference-payload-processor.git /tmp/ipp
 
 helm install payload-processor /tmp/ipp/config/charts/payload-processor \
-  -f docs/monitoring/llm-d-full-demo/helm-values/ipp.values.yaml \
+  -f $DEMO/helm-values/ipp.values.yaml \
   -n llm-d
 ```
 
@@ -865,16 +943,24 @@ helm install payload-processor /tmp/ipp/config/charts/payload-processor \
 `ipp.values.yaml` 设置 `provider.name=none`（chart 只部署 IPP 工作负载——Deployment、Service、ConfigMap、RBAC；Envoy 接线在 router 侧完成），并启用到 `http://otel-collector:4317` 的 OTLP tracing。
 
 > [!NOTE]
-> 镜像 `ghcr.io/llm-d/llm-d-inference-payload-processor:main` 目前**无法匿名拉取**（403）。若 Pod 出现 `ImagePullBackOff`，请从克隆的仓库本地构建并加载进 Kind。Apple Silicon 上按 arm64 构建：
+> **不再需要任何镜像变通方案。** chart 的默认镜像现在是已发布的
+> `ghcr.io/llm-d/llm-d-inference-payload-processor:v0.1.0`，**可以**匿名拉取——本指南的早期
+> 版本默认使用 `:main`，会返回 403 从而必须本地构建。Kind 会直接拉取 `v0.1.0`，无需
+> `kind load`。
+>
+> <details><summary>兜底方案：本地构建 IPP（仅当你确实遇到 <code>ImagePullBackOff</code> 时）</summary>
+>
+> Apple Silicon 上按 arm64 构建：
 > ```bash
 > docker run --rm -v /tmp/ipp:/src -w /src/cmd -e CGO_ENABLED=0 -e GOOS=linux -e GOARCH=arm64 \
 >   golang:1.25 go build -o /src/payload-processor-bin .
 > printf 'FROM gcr.io/distroless/static:nonroot\nCOPY payload-processor-bin /payload-processor\nENTRYPOINT ["/payload-processor"]\n' > /tmp/ipp/Dockerfile.local
 > docker build --platform linux/arm64 -f /tmp/ipp/Dockerfile.local -t ghcr.io/llm-d/llm-d-inference-payload-processor:main /tmp/ipp
 > kind load docker-image ghcr.io/llm-d/llm-d-inference-payload-processor:main --name llm-d
-> kubectl delete pod -n llm-d -l app=payload-processor   # 让其在已加载镜像上重启
+> helm upgrade payload-processor ... --set payloadProcessor.image.tag=main   # 再让 chart 指向它
 > ```
 > （x86_64 去掉 `--platform`/`GOARCH=arm64`。）
+> </details>
 
 验证：
 ```bash
@@ -888,11 +974,11 @@ kubectl get deploy,svc -n llm-d | grep payload-processor
 ### 第 7 步：部署模型服务器
 
 ```bash
-kubectl apply -f docs/monitoring/llm-d-full-demo/manifests/01-model-servers.yaml
-kubectl apply -f docs/monitoring/llm-d-full-demo/manifests/02-inferenceobjective.yaml
+kubectl apply -f $DEMO/manifests/01-model-servers.yaml
+kubectl apply -f $DEMO/manifests/02-inferenceobjective.yaml
 
 # PodMonitor —— 复用已有的 recipe component（通过 llm-d.ai/role=decode 标签选取 Pod）
-kubectl apply -k guides/recipes/modelserver/components/monitoring/ -n llm-d
+kubectl apply -k $LLMD/guides/recipes/modelserver/components/monitoring/ -n llm-d
 ```
 
 模型服务器清单中已内置 OTEL 环境变量，让 inference-sim 导出 traces：
@@ -926,7 +1012,7 @@ otel-collector-xxx                          1/1     Running
 ### 第 8 步：部署流量生成器
 
 ```bash
-kubectl apply -f docs/monitoring/llm-d-full-demo/manifests/03-traffic-generator.yaml
+kubectl apply -f $DEMO/manifests/03-traffic-generator.yaml
 ```
 
 ```bash
@@ -941,29 +1027,95 @@ kubectl logs -n llm-d deploy/llm-d-traffic-gen -f
 
 WVA 是面向推理模型服务器的全局自动扩缩器。它监听 decode Deployment，从 Prometheus 读取 vLLM/队列/KV-cache 指标，计算期望副本数，并以 Prometheus 指标 `wva_desired_replicas` 输出。标准 HPA 消费该指标驱动 scale 子资源。在无 GPU 的 Kind 上以**饱和度扩缩**模式（KV-cache + 队列深度）运行；GPU 成本优化仅作演示。
 
-WVA 的组成比演示其余部分更复杂，请从 [`llm-d-workload-variant-autoscaler`](https://github.com/llm-d/llm-d-workload-variant-autoscaler) 仓库安装其控制器、CRD 和 service-class/accelerator ConfigMap（`kind-emulator` 配置专为此场景设计），然后应用本演示的衔接清单：
+> [!IMPORTANT]
+> **`VariantAutoscaling` CRD 已废弃——本步骤现改为基于注解。**
+> WVA 现在通过 **HPA（或 KEDA `ScaledObject`）上的 `llm-d.ai/*` 注解**发现工作负载，详见 WVA
+> 仓库的 `docs/developer-guide/migrating-from-va-crd.md`。由此带来两点影响：
+> - `manifests/06-hpa.yaml` 已带上这些注解，**单独使用即可**。
+> - `manifests/05-variantautoscaling.yaml` 属于**遗留**文件，不再应用。WVA 当前的 manifests
+>   甚至不再包含该 CRD，直接 apply 会失败：
+>   `no matches for kind "VariantAutoscaling" in version "llmd.ai/v1alpha1"`。
+
+> [!WARNING]
+> **请使用 `:main` 镜像，而非 `:latest`。** 已发布的 `:latest` tag 落后 `main` 数周，仍然依赖
+> 已被移除的 `VariantAutoscaling` CRD，因此在当前版本上会崩溃重启：
+> `unable to setup indexes ... no matches for kind "VariantAutoscaling"`。
+
+完整步骤（已在本 demo 集群上实测通过）：
 
 ```bash
-# 9a. 控制器 + CRD + 配置（来自 WVA 仓库；kind-emulator 配置）
-ENVIRONMENT=kind-emulator ./deploy/install.sh        # 或：kubectl apply -k config/overlays/cluster-scoped/kubernetes
+git clone https://github.com/llm-d/llm-d-workload-variant-autoscaler /tmp/wva && cd /tmp/wva
 
-# 9b. 让 WVA 控制器指向本演示的 Prometheus
-#     （其 manager ConfigMap 的 PROMETHEUS_BASE_URL → llm-d-monitoring 的 Prometheus svc）
+# 9a. WVA 期望在它自己的 monitoring 命名空间中存在 Prometheus TLS secret。本 demo 第 4 步
+#     使用 --enable-tls 时已创建过，直接复制过去即可，无需再起一套 Prometheus。
+kubectl create ns workload-variant-autoscaler-monitoring --dry-run=client -o yaml | kubectl apply -f -
+kubectl get secret prometheus-web-tls -n llm-d-monitoring -o yaml \
+  | python3 -c "import sys,yaml; d=yaml.safe_load(sys.stdin); \
+      d['metadata']={'name':'prometheus-web-tls','namespace':'workload-variant-autoscaler-monitoring'}; \
+      print(yaml.safe_dump(d))" \
+  | kubectl apply -f -
 
-# 9c. 把 wva_desired_replicas 作为外部指标暴露给 HPA
-#     安装 prometheus-adapter（或 KEDA）并映射该序列——参见 WVA 仓库
+# 9b. 控制器 + RBAC + 配置。复用本 demo 的集群与 Prometheus。
+ENVIRONMENT=kind-emulator CREATE_CLUSTER=false CLUSTER_NAME=llm-d \
+DEPLOY_PROMETHEUS=false DEPLOY_OPERATIONAL_DASHBOARD=false \
+SCALER_BACKEND=keda KEDA_HELM_INSTALL=true \
+  ./deploy/install.sh
 
-# 9d. 为 decode 池应用 VariantAutoscaling + HPA
-kubectl apply -f docs/monitoring/llm-d-full-demo/manifests/05-variantautoscaling.yaml
-kubectl apply -f docs/monitoring/llm-d-full-demo/manifests/06-hpa.yaml
+# 9c. 将控制器固定到 :main（原因见上方 WARNING）。
+kubectl set image -n workload-variant-autoscaler-system \
+  deploy/wva-controller-manager manager=ghcr.io/llm-d/llm-d-workload-variant-autoscaler:main
+
+# 9d. 让 WVA 指向**本 demo** 的 Prometheus。
+kubectl get cm wva-manager-config -n workload-variant-autoscaler-system \
+  -o jsonpath='{.data.config\.yaml}' > /tmp/wva-cfg.yaml
+sed -i '' 's|https://kube-prometheus-stack-prometheus.workload-variant-autoscaler-monitoring.svc.cluster.local:9090|https://llmd-kube-prometheus-stack-prometheus.llm-d-monitoring.svc.cluster.local:9090|' /tmp/wva-cfg.yaml
+kubectl create cm wva-manager-config -n workload-variant-autoscaler-system \
+  --from-file=config.yaml=/tmp/wva-cfg.yaml --dry-run=client -o yaml \
+  | python3 -c "import sys,yaml; d=yaml.safe_load(sys.stdin); \
+      d['metadata']['labels']={'app.kubernetes.io/name':'workload-variant-autoscaler'}; \
+      print(yaml.safe_dump(d))" \
+  | kubectl apply -f -
+kubectl rollout restart deploy/wva-controller-manager -n workload-variant-autoscaler-system
+
+# 9e. 把 wva_desired_replicas 作为外部指标暴露给 HPA。
+helm repo add prometheus-community https://prometheus-community.github.io/helm-charts && helm repo update
+helm install prometheus-adapter prometheus-community/prometheus-adapter -n llm-d-monitoring \
+  --set prometheus.url=https://llmd-kube-prometheus-stack-prometheus.llm-d-monitoring.svc.cluster.local \
+  --set prometheus.port=9090 \
+  -f $LLMD/guides/workload-autoscaling/components/prometheus-adapter/wva-adapter-values.yaml \
+  -f $LLMD/guides/workload-autoscaling/components/prometheus-adapter/tls-adapter-values.yaml
+
+# 9f. 为 decode 池应用带注解的 HPA（不再需要 VariantAutoscaling CR）。
+kubectl apply -f $DEMO/manifests/06-hpa.yaml
 ```
 
-验证：
+> 上面的 `sed -i ''` 是 BSD/macOS 语法；GNU/Linux 请用 `sed -i`。
+> `deploy/install.sh` 需要 PATH 中有 **`yq`**——否则会在 “Enabling scale-to-zero in WVA
+> ConfigMap” 处以 `yq: command not found` 中断，而此时控制器**其实已经部署完成**。
+
+验证整条链路：
 ```bash
-kubectl get variantautoscaling,hpa -n llm-d
-# variantautoscaling.llmd.ai/optimized-baseline-decode   optimized-baseline-decode   1   4
-# horizontalpodautoscaler.autoscaling/optimized-baseline-decode-hpa  Deployment/optimized-baseline-decode
+# 1. WVA 发现了带注解的 HPA 并作出决策
+kubectl logs -n workload-variant-autoscaler-system deploy/wva-controller-manager | grep scaling-decision
+# ...{"name":"optimized-baseline-decode-hpa","curr":2,"tgt":1,"action":"scale-down"}
+
+# 2. 指标已进入 Prometheus
+#    wva_desired_replicas{variant_name="optimized-baseline-decode-hpa",exported_namespace="llm-d"} 1
+
+# 3. prometheus-adapter 已将其重新发布为 external metric
+kubectl get --raw "/apis/external.metrics.k8s.io/v1beta1/namespaces/llm-d/wva_desired_replicas"
+
+# 4. HPA 消费该指标并驱动了 Deployment
+kubectl get hpa -n llm-d
+# NAME                            REFERENCE                              TARGETS        MINPODS MAXPODS REPLICAS
+# optimized-baseline-decode-hpa   Deployment/optimized-baseline-decode   500m/1 (avg)   1       4       2
 ```
+
+> [!NOTE]
+> 在无 GPU 的 Kind 上，WVA 会打印 `AcceleratorNotResolved` 警告（“Cannot resolve accelerator
+> type from Deployment nodeSelector/nodeAffinity”）。这是**预期且无害**的——`wva_desired_replicas`
+> 仍会照常输出（带 `accelerator_type="unresolved"`），HPA 可正常扩缩；只是与加速器相关的容量指标
+> 会被抑制。
 
 提高流量（降低生成器的 `INTERVAL`，或循环 `curl`），观察 `wva_desired_replicas` 上升时 decode 副本数随之变化。
 
@@ -996,6 +1148,9 @@ kubectl port-forward -n llm-d-monitoring svc/llmd-grafana 3000:80
 
 打开：[http://localhost:3000](http://localhost:3000) — 用户名/密码：`admin` / `admin`
 
+安装脚本现在会加载 **7** 个仪表盘（此前是 5 个——`llm-d Inference Gateway` 与
+`llm-d SGLang Overview` 是上游新增的）：
+
 | 仪表盘 | 内容 |
 |---|---|
 | **llm-d vLLM Overview** | Token 吞吐量、请求速率、TTFT |
@@ -1003,6 +1158,8 @@ kubectl port-forward -n llm-d-monitoring svc/llmd-grafana 3000:80
 | **llm-d Diagnostic Drill-Down** | 按 Pod 详细指标 |
 | **llm-d Performance (KV Cache)** | KV 缓存使用率时间序列 |
 | **P/D Coordinator Metrics** | Prefill/Decode 分离指标 |
+| **llm-d Inference Gateway** | 网关层请求/路由指标 |
+| **llm-d SGLang Overview** | vLLM Overview 的 SGLang 后端对应版本（本 demo 中为空——sim 暴露的是 `vllm:*`） |
 
 ---
 
@@ -1023,7 +1180,7 @@ Jaeger UI 的 **Service** 下拉框列出三个 llm-d 服务：
    - 两个 `async ...ExternalProcessor.Process egress` span——对 IPP 和对 EPP 的调用。
      这是唯一能在一个视图里看到单个请求两次 ext_proc 跳的地方。
 2. **Service** → `llm-d-inference-payload-processor` → IPP 的 `gateway.request` span。
-3. **Service** → `llm-d-router/epp` → `gateway.request` + `gateway.request_orchestration`（调度决策）。
+3. **Service** → `llm-d-router/epp` → 一棵 5 span 的树：`gateway.request` → `gateway.request_orchestration` → `run_scheduler_profile` → `filter_endpoints` + `pick_endpoints`。展开 `pick_endpoints` 可看到 `llm_d.epp.picker.top_endpoints` / `top_scores`——也就是该请求真实的路由决策。
 4. `llm-d-model-server` 不存在——无 GPU 的 `inference-sim` 不导出 trace。
 
 ---
@@ -1204,26 +1361,26 @@ wva_desired_replicas{variant_name="optimized-baseline-decode", exported_namespac
 ## Helm Values 叠加顺序
 
 ```
-guides/recipes/router/base.values.yaml
+$LLMD/guides/recipes/router/base.values.yaml
   └── EPP 镜像、Envoy 代理默认配置
 
-guides/optimized-baseline/router/optimized-baseline.values.yaml
+$LLMD/guides/optimized-baseline/router/optimized-baseline.values.yaml
   └── 4 插件评分：queue + kv-cache + prefix-cache + no-hit-lru
 
-guides/recipes/router/features/monitoring.values.yaml
+$LLMD/guides/recipes/router/features/monitoring.values.yaml
   └── EPP ServiceMonitor（Prometheus 抓取）
 
-docs/monitoring/llm-d-full-demo/helm-values/tracing.values.yaml
+$DEMO/helm-values/tracing.values.yaml
   └── EPP OTLP tracing → http://otel-collector:4317（100% 采样）
 
-docs/monitoring/llm-d-full-demo/helm-values/kind-overrides.values.yaml
+$DEMO/helm-values/kind-overrides.values.yaml
   └── Kind 环境资源缩减（EPP/Envoy）
 
-docs/monitoring/llm-d-full-demo/helm-values/proxy-tracing-ipp.values.yaml
+$DEMO/helm-values/proxy-tracing-ipp.values.yaml
   └── 完整 Envoy 配置覆盖：IPP ext_proc 过滤器（在 EPP 之前）、
       OpenTelemetry trace 根、ipp_ext_proc + otel_collector 两个 cluster
 
-docs/monitoring/llm-d-full-demo/helm-values/ipp.values.yaml   （payload-processor chart）
+$DEMO/helm-values/ipp.values.yaml   （payload-processor chart）
   └── 仅部署 IPP 工作负载（provider.name=none）+ OTLP tracing
 ```
 
@@ -1294,7 +1451,7 @@ helm uninstall payload-processor -n llm-d
 kubectl delete namespace llm-d
 
 # 卸载监控栈
-bash docs/monitoring/scripts/install-prometheus-grafana.sh --uninstall
+bash $LLMD/guides/recipes/observability/install-prometheus-grafana.sh --uninstall
 
 # 删除 Kind 集群
 kind delete cluster --name llm-d
@@ -1321,7 +1478,7 @@ pkill -f "kubectl port-forward" 2>/dev/null || true
 ### 模型服务器 Pod 卡在 `ImagePullBackOff`
 
 ```bash
-kind load docker-image ghcr.io/llm-d/llm-d-inference-sim:v0.8.0-arm64 --name llm-d
+kind load docker-image ghcr.io/llm-d/llm-d-inference-sim:v0.9.2-arm64 --name llm-d
 ```
 
 ### 流量生成器返回 404

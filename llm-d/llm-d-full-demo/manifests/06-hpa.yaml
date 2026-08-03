@@ -1,10 +1,17 @@
 ---
 # HPA that scales the decode pool from WVA's published desired-replica metric.
 #
-# WVA does not touch the scale subresource directly; it emits
-# `wva_desired_replicas` and this HPA acts on it. The `target.averageValue: "1"`
-# with an AverageValue external metric makes the HPA converge the replica count
-# to exactly what WVA asked for (desired / 1, averaged per pod).
+# ANNOTATION-BASED WVA DISCOVERY (current path).
+# The `llm-d.ai/*` annotations opt this HPA into WVA management. WVA watches
+# annotated HPAs directly, builds an in-memory variant from them, and publishes
+# `wva_desired_replicas{variant_name=<hpa name>, namespace=<ns>}`. No
+# VariantAutoscaling CR is needed — that CRD is deprecated upstream and the
+# current WVA manifests no longer ship it (see manifests/05-variantautoscaling.yaml).
+#
+# WVA does not touch the scale subresource directly; it only emits the metric and
+# this HPA acts on it. The `target.averageValue: "1"` with an AverageValue
+# external metric makes the HPA converge the replica count to exactly what WVA
+# asked for (desired / 1, averaged per pod).
 #
 # Requires `wva_desired_replicas` to be available as a Kubernetes external
 # metric — install prometheus-adapter (or KEDA) and map the Prometheus series.
@@ -14,6 +21,13 @@ kind: HorizontalPodAutoscaler
 metadata:
   name: optimized-baseline-decode-hpa
   namespace: llm-d
+  annotations:
+    # Opts this HPA into WVA management.
+    llm-d.ai/managed: "true"
+    # Required: identifies the model served by this variant (multi-variant grouping).
+    llm-d.ai/model-id: "Qwen/Qwen2.5-0.5B-Instruct"
+    # Optional cost per replica for cost-aware optimization; defaults to "10.0".
+    llm-d.ai/variant-cost: "10.0"
 spec:
   scaleTargetRef:
     apiVersion: apps/v1
@@ -41,7 +55,7 @@ spec:
           name: wva_desired_replicas
           selector:
             matchLabels:
-              variant_name: optimized-baseline-decode
+              variant_name: optimized-baseline-decode-hpa
               exported_namespace: llm-d
         target:
           type: AverageValue

@@ -13,6 +13,26 @@ Each request is observable in Jaeger across **three trace sources** — the **En
 
 ---
 
+## Re-verified against llm-d `main` (2026-08-02)
+
+The whole guide was re-run from scratch on a fresh Kind cluster against current `main` of
+`llm-d`, `llm-d-router`, `llm-d-inference-payload-processor`, and
+`llm-d-workload-variant-autoscaler`. Everything below is what actually changed. If you are
+following an older copy of this demo, these are the breaking points:
+
+| # | What changed | Impact |
+|---|---|---|
+| 1 | `docs/monitoring/` was **deleted** from the llm-d repo (PR #1542). Install scripts and dashboards now live in `guides/recipes/observability/`. | Step 3/4/6 commands 404. Paths are now `$LLMD/guides/recipes/observability/...`. |
+| 2 | `llm-d-router`'s floating **`v0` git branch was deleted** (release tags only). | `kubectl apply -k '...?ref=v0'` fails with `couldn't find remote ref v0`. New `ROUTER_CRD_REF` var, set to a release tag. `v0` is still valid as a *Helm* tag. |
+| 3 | **inference-sim v0.8.0 → v0.9.2**, and v0.9.x's default `--mode random` needs a tokenizer render service. | Model servers **crash-loop** without the new `--force-dummy-tokenizer` flag. |
+| 4 | The IPP chart now defaults to the released **`:v0.1.0`**, which *is* anonymously pullable. | The old build-from-source workaround for the 403 on `:main` is no longer needed. |
+| 5 | The router chart's Envoy preset drifted (IPv6 `additional_addresses`, explicit `failure_mode_allow`) **under the same floating `v0` tag**. | `helm-values/proxy-tracing-ipp.values.yaml` was re-synced. Re-sync it even when you don't bump the version. |
+| 6 | The EPP now emits **5 spans instead of 2**, with `llm_d.epp.*` attributes on the plain optimized-baseline path. | Strictly better — see [Observed tracing behavior](#observed-tracing-behavior). |
+| 7 | WVA's **`VariantAutoscaling` CRD is deprecated** and no longer shipped; discovery is via `llm-d.ai/*` annotations on the HPA. Its published `:latest` image is stale and crash-loops. | `manifests/05-variantautoscaling.yaml` is now legacy; `manifests/06-hpa.yaml` carries the annotations. Step 9 has a full verified recipe. |
+| 8 | The observability installer now loads **7** Grafana dashboards, not 5. | Two new dashboards: Inference Gateway, SGLang Overview. |
+
+---
+
 ## Architecture
 
 ```
@@ -354,8 +374,30 @@ This section records what the tracing pipeline **actually does**, verified end-t
 |---|---|---|
 | `llm-d-envoy-proxy` | `ingress` + 2× `async ...ExternalProcessor.Process egress` | The two ext_proc spans are the IPP call and the EPP call. This is the one trace that shows both hops together. |
 | `llm-d-inference-payload-processor` | `gateway.request` | IPP body/header processing. |
-| `llm-d-router/epp` | `gateway.request` + `gateway.request_orchestration` | EPP routing + scheduling decision. |
-| `llm-d-model-server` | (none) | `inference-sim:v0.8.0` does not export traces. |
+| `llm-d-router/epp` | `gateway.request` → `gateway.request_orchestration` → `run_scheduler_profile` → (`filter_endpoints`, `pick_endpoints`) | EPP routing **and the full scheduling pipeline** — 5 spans, properly nested. |
+| `llm-d-model-server` | (none) | `inference-sim` does not export traces at any version tested (v0.8.0–v0.9.2). |
+
+> [!TIP]
+> **The EPP is much better instrumented than it used to be.** This guide previously recorded
+> only 2 EPP spans (`gateway.request` + `gateway.request_orchestration`), and noted that the
+> `llm_d.epp.*` attributes were reachable *only* on the precise-prefix-cache path. That is no
+> longer true: on the **plain optimized-baseline path used by this demo**, the scheduler
+> emits `run_scheduler_profile`, `filter_endpoints`, and `pick_endpoints`, carrying the
+> `llm_d.epp.*` namespace directly. Observed on this run:
+>
+> ```
+> gateway.request
+> └─ gateway.request_orchestration      request_prio=0  target_model=Qwen/Qwen2.5-0.5B-Instruct
+>    └─ run_scheduler_profile           llm_d.epp.scheduling.profile.name=default
+>       ├─ filter_endpoints             llm_d.epp.filter.candidate_endpoints=2
+>       │                               llm_d.epp.filter.filtered_endpoints=1
+>       └─ pick_endpoints               llm_d.epp.picker.candidate_endpoints=1
+>                                       llm_d.epp.picker.top_endpoints=["llm-d/optimized-baseline-decode-...-rank-0"]
+>                                       llm_d.epp.picker.top_scores=[0.999997615814209]
+> ```
+> `filter_endpoints` and `pick_endpoints` also carry `gen_ai.request.id` and
+> `gen_ai.request.model`, so a single EPP trace now explains *which* endpoint was chosen and
+> *why* — no P/D or precise-prefix setup required.
 
 **Why they are NOT one stitched trace:**
 
@@ -381,8 +423,8 @@ This section records what the tracing pipeline **actually does**, verified end-t
 | `otel-collector` | `llm-d` | Deployment | Receives OTLP traces, filters noise, forwards to Jaeger |
 | `jaeger` | `llm-d` | Deployment | Trace storage + UI (port 16686) |
 | `ServiceMonitor/llm-d-epp-monitor` | `llm-d` | CR | Prometheus scrapes EPP metrics (:9090) |
-| `PodMonitor/decode` | `llm-d` | CR | Prometheus scrapes model server metrics (:8000) — from `guides/recipes/modelserver/components/monitoring/` |
-| `VariantAutoscaling/optimized-baseline-decode` | `llm-d` | CR (opt-in) | **WVA** target; emits `wva_desired_replicas` → HPA |
+| `PodMonitor/decode` | `llm-d` | CR | Prometheus scrapes model server metrics (:8000) — from `$LLMD/guides/recipes/modelserver/components/monitoring/` |
+| `HorizontalPodAutoscaler/optimized-baseline-decode-hpa` | `llm-d` | HPA (opt-in) | **WVA** target, discovered via `llm-d.ai/*` annotations; WVA emits `wva_desired_replicas` → prometheus-adapter → this HPA. Replaces the deprecated `VariantAutoscaling` CR. |
 | Prometheus (HTTPS/TLS) | `llm-d-monitoring` | StatefulSet | Metrics storage |
 | Grafana | `llm-d-monitoring` | Deployment | 5 pre-loaded llm-d dashboards |
 
@@ -391,7 +433,7 @@ This section records what the tracing pipeline **actually does**, verified end-t
 | Signal | Tool | Sources | Count |
 |---|---|---|---|
 | **Metrics** | Prometheus + Grafana | EPP (ServiceMonitor) + model servers (PodMonitor) | 35+ EPP + 41 vLLM |
-| **Traces** | Jaeger + OTel Collector | Envoy (`llm-d-envoy-proxy`) + IPP (`llm-d-inference-payload-processor`) + EPP (`llm-d-router/epp`); model server does not export (sim) | 3 services / 3 separate traces per request |
+| **Traces** | Jaeger + OTel Collector | Envoy (`llm-d-envoy-proxy`) + IPP (`llm-d-inference-payload-processor`) + EPP (`llm-d-router/epp`); model server does not export (sim) | 3 services / 3 separate traces per request (3 + 1 + 5 = 9 spans) |
 
 ---
 
@@ -456,10 +498,10 @@ done
 
 ### PodMonitor — how it works
 
-This demo reuses the existing recipe component at `guides/recipes/modelserver/components/monitoring/`, applied with:
+This demo reuses the existing recipe component at `$LLMD/guides/recipes/modelserver/components/monitoring/`, applied with:
 
 ```bash
-kubectl apply -k guides/recipes/modelserver/components/monitoring/ -n llm-d
+kubectl apply -k $LLMD/guides/recipes/modelserver/components/monitoring/ -n llm-d
 ```
 
 **The CR it creates:**
@@ -578,7 +620,7 @@ The llm-d EPP embeds the InferencePool/InferenceObjective controller logic direc
 ### Model Server OpenTelemetry Configuration (`01-model-servers.yaml`)
 
 > [!NOTE]
-> Verified on a live cluster: `llm-d-inference-sim:v0.8.0` does **not** act on these `OTEL_*` variables — no `llm-d-model-server` service ever appears in Jaeger. The variables are kept because they are correct and forward-looking: a real vLLM (or a future sim build) that honors them will export an inference span that joins the EPP's downstream-propagated trace. The explanation below describes that intended behavior.
+> Verified on a live cluster: `llm-d-inference-sim` (tested at both v0.8.0 and v0.9.2) does **not** act on these `OTEL_*` variables — no `llm-d-model-server` service ever appears in Jaeger. The variables are kept because they are correct and forward-looking: a real vLLM (or a future sim build) that honors them will export an inference span that joins the EPP's downstream-propagated trace. The explanation below describes that intended behavior.
 
 The five `OTEL_*` environment variables in the model server manifest are meant to wire the model-server pods into the distributed tracing pipeline. Each variable maps to a standard OpenTelemetry SDK configuration knob.
 
@@ -724,27 +766,47 @@ The only reason the CRDs are installed from the upstream GAIE repo (rather than 
 
 - **Kind** v0.29+ and **Docker Desktop** (14+ CPUs, 20+ GB RAM allocated)
 - **kubectl**, **Helm** v3.10+
-- **jq**, **python3**
+- **jq**, **python3**, **yq** (`yq` is only needed by the optional WVA installer in Step 9)
 - llm-d repo cloned: `git clone https://github.com/llm-d/llm-d.git && cd llm-d`
 
 ---
 
 ## Installation Steps
 
-Set the version variables first — they are referenced in multiple steps below:
+Set the path and version variables first — they are referenced in every step below:
 
 ```bash
+# Where you cloned llm-d/llm-d, and where THIS demo directory lives.
+export LLMD=/path/to/llm-d          # the llm-d/llm-d clone
+export DEMO=/path/to/llm-d-full-demo # this directory
+
 export GAIE_VERSION=v1.5.0
-export ROUTER_CHART_VERSION=v0
+export ROUTER_CHART_VERSION=v0      # Helm chart tag (floating; still published)
+export ROUTER_CRD_REF=v0.9.0        # git ref for the router CRD kustomization
 ```
+
+> [!IMPORTANT]
+> **Two paths that used to be one.** This demo is *not* part of the llm-d repo — it lives
+> on its own, so its manifests and values are referenced through `$DEMO`. Earlier revisions
+> of this guide assumed the demo sat at `llm-d/docs/monitoring/llm-d-full-demo/`; that
+> directory no longer exists upstream. The runnable monitoring assets it used to hold
+> (install scripts, Grafana dashboards, tracing manifests) moved to
+> `guides/recipes/observability/` in llm-d PR #1542, which is where `$LLMD` references
+> point now.
+
+> [!NOTE]
+> `ROUTER_CHART_VERSION` and `ROUTER_CRD_REF` are deliberately separate. `v0` is still a
+> valid **Helm/OCI** tag for the router chart, but it is no longer a **git** ref in
+> `llm-d/llm-d-router` — the floating `v0` branch was deleted in favour of real release
+> tags, so `kubectl apply -k '...?ref=v0'` now fails with
+> `couldn't find remote ref v0`. Use a release tag for the CRD kustomization.
 
 ### Step 1: Create Kind Cluster
 
 ```bash
 mkdir -p /tmp/llm-d-cache
 
-kind create cluster \
-  --config docs/monitoring/llm-d-full-demo/kind/kind-config.yaml
+kind create cluster --config $DEMO/kind/kind-config.yaml
 ```
 
 Verify:
@@ -758,26 +820,43 @@ kubectl get nodes
 
 ### Step 2: Pull & Load the Inference-Sim Image
 
+```bash
+export SIM_VERSION=v0.9.2
+```
+
 On **Apple Silicon (arm64)**:
 ```bash
-ARM64_DIGEST=$(docker manifest inspect ghcr.io/llm-d/llm-d-inference-sim:v0.8.0 2>/dev/null | \
+ARM64_DIGEST=$(docker manifest inspect ghcr.io/llm-d/llm-d-inference-sim:${SIM_VERSION} 2>/dev/null | \
   python3 -c "import sys,json; d=json.load(sys.stdin); \
   [print(m['digest']) for m in d.get('manifests',[]) \
   if m.get('platform',{}).get('architecture')=='arm64']")
 
 docker pull ghcr.io/llm-d/llm-d-inference-sim@${ARM64_DIGEST}
 docker tag ghcr.io/llm-d/llm-d-inference-sim@${ARM64_DIGEST} \
-  ghcr.io/llm-d/llm-d-inference-sim:v0.8.0-arm64
+  ghcr.io/llm-d/llm-d-inference-sim:${SIM_VERSION}-arm64
 
-kind load docker-image ghcr.io/llm-d/llm-d-inference-sim:v0.8.0-arm64 --name llm-d
+kind load docker-image ghcr.io/llm-d/llm-d-inference-sim:${SIM_VERSION}-arm64 --name llm-d
 ```
 
 On **x86_64**:
 ```bash
-docker pull ghcr.io/llm-d/llm-d-inference-sim:v0.8.0
-kind load docker-image ghcr.io/llm-d/llm-d-inference-sim:v0.8.0 --name llm-d
-# Also update the image tag in manifests/01-model-servers.yaml to v0.8.0
+docker pull ghcr.io/llm-d/llm-d-inference-sim:${SIM_VERSION}
+kind load docker-image ghcr.io/llm-d/llm-d-inference-sim:${SIM_VERSION} --name llm-d
+# Also drop the `-arm64` suffix from the image tag in manifests/01-model-servers.yaml
 ```
+
+> [!IMPORTANT]
+> **`--force-dummy-tokenizer` is required from v0.9.x on.** The sim's default `--mode random`
+> builds its response bank at startup by tokenizing sentences against a *tokenizer render
+> service* at `--render-url` (default `http://localhost:8082`). This demo runs no such
+> service, so without the flag every model-server pod crash-loops on:
+> ```
+> failed to create vLLM simulator ... dataset initialization error:
+> RenderRequest: post /v1/completions/render: dial tcp [::1]:8082: connect: connection refused
+> ```
+> `manifests/01-model-servers.yaml` already passes `--force-dummy-tokenizer`, which keeps
+> the sim self-contained. (This is also why the sim can't be bumped by editing the tag alone
+> if you are upgrading an older copy of this demo.)
 
 ---
 
@@ -787,12 +866,12 @@ kind load docker-image ghcr.io/llm-d/llm-d-inference-sim:v0.8.0 --name llm-d
 
 ```bash
 # 3a. Monitoring CRDs (ServiceMonitor, PodMonitor) — MUST BE FIRST
-bash docs/monitoring/scripts/install-prometheus-grafana.sh --crds-only
+bash $LLMD/guides/recipes/observability/install-prometheus-grafana.sh --crds-only
 
 # 3b. llm-d router CRDs — installs both GAIE CRDs (InferencePool) and
 #     llm-d.ai CRDs (InferenceObjective, InferenceModelRewrite)
 kubectl apply -k \
-  "https://github.com/llm-d/llm-d-router/config/crd?ref=${ROUTER_CHART_VERSION}"
+  "https://github.com/llm-d/llm-d-router/config/crd?ref=${ROUTER_CRD_REF}"
 ```
 
 > **Why `llm-d-router/config/crd` instead of the upstream GAIE repo?**
@@ -800,6 +879,14 @@ kubectl apply -k \
 > The kustomization at `llm-d-router/config/crd` installs everything in one shot:
 > the upstream GAIE CRDs (`inference.networking.k8s.io` InferencePool) **plus**
 > the llm-d-owned CRDs (`llm-d.ai` InferenceObjective, InferenceModelRewrite).
+
+> **Note the `ref=${ROUTER_CRD_REF}`, not `ref=${ROUTER_CHART_VERSION}`.** See the variable
+> block at the top of this section — `v0` is a Helm tag, not a git ref. Pick the newest
+> release tag with:
+> ```bash
+> git ls-remote --tags https://github.com/llm-d/llm-d-router | grep -v '\^{}' \
+>   | sed 's|.*refs/tags/||' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1
+> ```
 
 Verify:
 ```bash
@@ -818,7 +905,7 @@ kubectl get crd | grep -E "inferencep|monitoring.coreos|llm-d.ai"
 ### Step 4: Install Prometheus + Grafana
 
 ```bash
-bash docs/monitoring/scripts/install-prometheus-grafana.sh --enable-tls
+bash $LLMD/guides/recipes/observability/install-prometheus-grafana.sh --enable-tls
 ```
 
 Verify:
@@ -840,18 +927,32 @@ kubectl create namespace llm-d
 
 helm install llm-d \
   oci://ghcr.io/llm-d/charts/llm-d-router-standalone-dev \
-  -f guides/recipes/router/base.values.yaml \
-  -f guides/optimized-baseline/router/optimized-baseline.values.yaml \
-  -f guides/recipes/router/features/monitoring.values.yaml \
-  -f docs/monitoring/llm-d-full-demo/helm-values/kind-overrides.values.yaml \
-  -f docs/monitoring/llm-d-full-demo/helm-values/tracing.values.yaml \
-  -f docs/monitoring/llm-d-full-demo/helm-values/proxy-tracing-ipp.values.yaml \
+  -f $LLMD/guides/recipes/router/base.values.yaml \
+  -f $LLMD/guides/optimized-baseline/router/optimized-baseline.values.yaml \
+  -f $LLMD/guides/recipes/router/features/monitoring.values.yaml \
+  -f $DEMO/helm-values/kind-overrides.values.yaml \
+  -f $DEMO/helm-values/tracing.values.yaml \
+  -f $DEMO/helm-values/proxy-tracing-ipp.values.yaml \
   -n llm-d \
   --version ${ROUTER_CHART_VERSION}
 ```
 
 - `tracing.values.yaml` enables the **EPP** to export spans to `http://otel-collector:4317`.
-- `proxy-tracing-ipp.values.yaml` overrides the chart's **Envoy** config to (a) add the **IPP** as a second `ext_proc` filter in front of the EPP, (b) make Envoy the **OpenTelemetry trace root**, and (c) add the `ipp_ext_proc` and `otel_collector` clusters. It is a verbatim copy of the chart's Envoy preset plus those additions; re-sync it if you bump `ROUTER_CHART_VERSION`.
+- `proxy-tracing-ipp.values.yaml` overrides the chart's **Envoy** config to (a) add the **IPP** as a second `ext_proc` filter in front of the EPP, (b) make Envoy the **OpenTelemetry trace root**, and (c) add the `ipp_ext_proc` and `otel_collector` clusters. It is a verbatim copy of the chart's Envoy preset plus those additions, with the chart's Go-template placeholders resolved for **sidecar mode + TLS EPP serving** (`STATIC` ext_proc cluster, `127.0.0.1`, `tls_options`/`transport_socket` present, `failure_mode_allow: false`).
+
+> [!WARNING]
+> **Re-sync this file whenever the chart's Envoy preset moves — including when you *don't*
+> change `ROUTER_CHART_VERSION`.** `v0` is a *floating* tag: the same version string
+> resolves to a new chart over time. Re-syncing on this run picked up two upstream drifts
+> (IPv6 `additional_addresses` on both listeners, and an explicit `failure_mode_allow` on
+> the EPP `ext_proc` filter). To diff your copy against the live chart:
+> ```bash
+> helm pull oci://ghcr.io/llm-d/charts/llm-d-router-standalone-dev \
+>   --version $ROUTER_CHART_VERSION --untar --untardir /tmp/chart
+> python3 -c "import yaml;print(yaml.safe_load(open('/tmp/chart/llm-d-router-standalone-dev/values.yaml'))['router']['proxy']['presets']['envoy']['configMap']['data']['envoy.yaml'])" > /tmp/chart-envoy.yaml
+> python3 -c "import yaml;print(yaml.safe_load(open('$DEMO/helm-values/proxy-tracing-ipp.values.yaml'))['router']['proxy']['configMap']['data']['envoy.yaml'])" > /tmp/demo-envoy.yaml
+> diff -u /tmp/chart-envoy.yaml /tmp/demo-envoy.yaml   # expect ONLY the `### llm-d-full-demo:` additions
+> ```
 
 > Envoy starts referencing the `payload-processor` Service before the IPP exists (Step 6b). Because the IPP filter is configured `failure_mode_allow: true`, requests still succeed in the meantime — the IPP simply doesn't contribute a span until it is running.
 
@@ -878,7 +979,7 @@ kubectl get deploy,svc,inferencepool,servicemonitor -n llm-d
 Both must run in the same namespace (`llm-d`) so components can reach the collector at `http://otel-collector:4317`.
 
 ```bash
-bash docs/monitoring/scripts/install-otel-collector-jaeger.sh -n llm-d
+bash $LLMD/guides/recipes/observability/install-otel-collector-jaeger.sh -n llm-d
 ```
 
 This deploys:
@@ -909,7 +1010,7 @@ Install from the chart in the [`llm-d-inference-payload-processor`](https://gith
 git clone https://github.com/llm-d/llm-d-inference-payload-processor.git /tmp/ipp
 
 helm install payload-processor /tmp/ipp/config/charts/payload-processor \
-  -f docs/monitoring/llm-d-full-demo/helm-values/ipp.values.yaml \
+  -f $DEMO/helm-values/ipp.values.yaml \
   -n llm-d
 ```
 
@@ -919,16 +1020,24 @@ helm install payload-processor /tmp/ipp/config/charts/payload-processor \
 `ipp.values.yaml` sets `provider.name=none` (the chart deploys only the IPP workload — Deployment, Service, ConfigMap, RBAC; Envoy wiring is done on the router side) and enables OTLP tracing to `http://otel-collector:4317`.
 
 > [!NOTE]
-> The IPP image `ghcr.io/llm-d/llm-d-inference-payload-processor:main` is currently **not anonymously pullable** (403). If the pod shows `ImagePullBackOff`, build it from the cloned repo and load it into Kind. On Apple Silicon, build for arm64:
+> **No image workaround is needed any more.** The chart's default image is now the released
+> `ghcr.io/llm-d/llm-d-inference-payload-processor:v0.1.0`, which **is** anonymously pullable —
+> earlier revisions of this guide defaulted to `:main`, which returned 403 and forced a
+> local build. Kind pulls `v0.1.0` directly; no `kind load` step.
+>
+> <details><summary>Fallback: build the IPP locally (only if you hit <code>ImagePullBackOff</code>)</summary>
+>
+> On Apple Silicon, build for arm64:
 > ```bash
 > docker run --rm -v /tmp/ipp:/src -w /src/cmd -e CGO_ENABLED=0 -e GOOS=linux -e GOARCH=arm64 \
 >   golang:1.25 go build -o /src/payload-processor-bin .
 > printf 'FROM gcr.io/distroless/static:nonroot\nCOPY payload-processor-bin /payload-processor\nENTRYPOINT ["/payload-processor"]\n' > /tmp/ipp/Dockerfile.local
 > docker build --platform linux/arm64 -f /tmp/ipp/Dockerfile.local -t ghcr.io/llm-d/llm-d-inference-payload-processor:main /tmp/ipp
 > kind load docker-image ghcr.io/llm-d/llm-d-inference-payload-processor:main --name llm-d
-> kubectl delete pod -n llm-d -l app=payload-processor   # let it restart onto the loaded image
+> helm upgrade payload-processor ... --set payloadProcessor.image.tag=main   # then point the chart at it
 > ```
 > (drop `--platform`/`GOARCH=arm64` for x86_64.)
+> </details>
 
 Verify:
 ```bash
@@ -945,11 +1054,11 @@ kubectl get deploy,svc -n llm-d | grep payload-processor
 ### Step 7: Deploy Model Servers
 
 ```bash
-kubectl apply -f docs/monitoring/llm-d-full-demo/manifests/01-model-servers.yaml
-kubectl apply -f docs/monitoring/llm-d-full-demo/manifests/02-inferenceobjective.yaml
+kubectl apply -f $DEMO/manifests/01-model-servers.yaml
+kubectl apply -f $DEMO/manifests/02-inferenceobjective.yaml
 
 # PodMonitor — reuse the existing recipe component (selects pods by llm-d.ai/role=decode)
-kubectl apply -k guides/recipes/modelserver/components/monitoring/ -n llm-d
+kubectl apply -k $LLMD/guides/recipes/modelserver/components/monitoring/ -n llm-d
 ```
 
 The model server manifest includes OTEL env vars so inference-sim exports traces:
@@ -999,7 +1108,7 @@ kubectl get deploy,inferenceobjective,podmonitor -n llm-d
 ### Step 8: Deploy Traffic Generator
 
 ```bash
-kubectl apply -f docs/monitoring/llm-d-full-demo/manifests/03-traffic-generator.yaml
+kubectl apply -f $DEMO/manifests/03-traffic-generator.yaml
 ```
 
 Verify:
@@ -1024,33 +1133,98 @@ kubectl logs -n llm-d deploy/llm-d-traffic-gen -f
 
 WVA is a global autoscaler for inference model servers. It watches the decode Deployment, reads vLLM/queue/KV-cache metrics from Prometheus, computes a desired replica count, and publishes it as the Prometheus metric `wva_desired_replicas`. A standard HPA consumes that metric and drives the scale subresource. On no-GPU Kind it runs in **saturation-scaling** mode (KV-cache + queue depth); GPU cost-optimization is illustrative only.
 
-WVA has more moving parts than the rest of the demo, so install its controller, CRDs, and service-class/accelerator ConfigMaps from the [`llm-d-workload-variant-autoscaler`](https://github.com/llm-d/llm-d-workload-variant-autoscaler) repo (the `kind-emulator` profile is purpose-built for this). Then apply the demo's glue:
+> [!IMPORTANT]
+> **The `VariantAutoscaling` CRD is deprecated — this step is now annotation-based.**
+> WVA discovers workloads from `llm-d.ai/*` **annotations on the HPA** (or on a KEDA
+> `ScaledObject`); see the WVA repo's `docs/developer-guide/migrating-from-va-crd.md`.
+> Two consequences:
+> - `manifests/06-hpa.yaml` now carries those annotations and is **sufficient on its own**.
+> - `manifests/05-variantautoscaling.yaml` is **legacy** and is no longer applied. WVA's
+>   current manifests don't even ship the CRD, so applying it fails with
+>   `no matches for kind "VariantAutoscaling" in version "llmd.ai/v1alpha1"`.
+
+> [!WARNING]
+> **Use the `:main` image, not `:latest`.** The published `:latest` tag lags `main` by weeks
+> and still expects the removed `VariantAutoscaling` CRD, so it crash-loops on a current
+> install with `unable to setup indexes ... no matches for kind "VariantAutoscaling"`.
+
+Full recipe, verified against this demo's cluster:
 
 ```bash
-# 9a. Controller + CRDs + config (from the WVA repo; kind-emulator profile)
-#     git clone https://github.com/llm-d/llm-d-workload-variant-autoscaler && cd it
-ENVIRONMENT=kind-emulator ./deploy/install.sh        # or: kubectl apply -k config/overlays/cluster-scoped/kubernetes
+git clone https://github.com/llm-d/llm-d-workload-variant-autoscaler /tmp/wva && cd /tmp/wva
 
-# 9b. Point WVA's controller at this demo's Prometheus
-#     (PROMETHEUS_BASE_URL in its manager ConfigMap → the llm-d-monitoring Prometheus svc)
+# 9a. WVA expects a Prometheus TLS secret in ITS monitoring namespace. This demo already
+#     created one (Step 4 used --enable-tls), so copy it across rather than standing up a
+#     second Prometheus.
+kubectl create ns workload-variant-autoscaler-monitoring --dry-run=client -o yaml | kubectl apply -f -
+kubectl get secret prometheus-web-tls -n llm-d-monitoring -o yaml \
+  | python3 -c "import sys,yaml; d=yaml.safe_load(sys.stdin); \
+      d['metadata']={'name':'prometheus-web-tls','namespace':'workload-variant-autoscaler-monitoring'}; \
+      print(yaml.safe_dump(d))" \
+  | kubectl apply -f -
 
-# 9c. Expose wva_desired_replicas to the HPA as an external metric
-#     install prometheus-adapter (or KEDA) and map the series — see the WVA repo
+# 9b. Controller + RBAC + config. Reuse this demo's cluster and Prometheus.
+ENVIRONMENT=kind-emulator CREATE_CLUSTER=false CLUSTER_NAME=llm-d \
+DEPLOY_PROMETHEUS=false DEPLOY_OPERATIONAL_DASHBOARD=false \
+SCALER_BACKEND=keda KEDA_HELM_INSTALL=true \
+  ./deploy/install.sh
 
-# 9d. Apply the VariantAutoscaling + HPA for the decode pool
-kubectl apply -f docs/monitoring/llm-d-full-demo/manifests/05-variantautoscaling.yaml
-kubectl apply -f docs/monitoring/llm-d-full-demo/manifests/06-hpa.yaml
+# 9c. Pin the controller to :main (see the warning above).
+kubectl set image -n workload-variant-autoscaler-system \
+  deploy/wva-controller-manager manager=ghcr.io/llm-d/llm-d-workload-variant-autoscaler:main
+
+# 9d. Point WVA at THIS demo's Prometheus.
+kubectl get cm wva-manager-config -n workload-variant-autoscaler-system \
+  -o jsonpath='{.data.config\.yaml}' > /tmp/wva-cfg.yaml
+sed -i '' 's|https://kube-prometheus-stack-prometheus.workload-variant-autoscaler-monitoring.svc.cluster.local:9090|https://llmd-kube-prometheus-stack-prometheus.llm-d-monitoring.svc.cluster.local:9090|' /tmp/wva-cfg.yaml
+kubectl create cm wva-manager-config -n workload-variant-autoscaler-system \
+  --from-file=config.yaml=/tmp/wva-cfg.yaml --dry-run=client -o yaml \
+  | python3 -c "import sys,yaml; d=yaml.safe_load(sys.stdin); \
+      d['metadata']['labels']={'app.kubernetes.io/name':'workload-variant-autoscaler'}; \
+      print(yaml.safe_dump(d))" \
+  | kubectl apply -f -
+kubectl rollout restart deploy/wva-controller-manager -n workload-variant-autoscaler-system
+
+# 9e. Expose wva_desired_replicas to the HPA as an external metric.
+helm repo add prometheus-community https://prometheus-community.github.io/helm-charts && helm repo update
+helm install prometheus-adapter prometheus-community/prometheus-adapter -n llm-d-monitoring \
+  --set prometheus.url=https://llmd-kube-prometheus-stack-prometheus.llm-d-monitoring.svc.cluster.local \
+  --set prometheus.port=9090 \
+  -f $LLMD/guides/workload-autoscaling/components/prometheus-adapter/wva-adapter-values.yaml \
+  -f $LLMD/guides/workload-autoscaling/components/prometheus-adapter/tls-adapter-values.yaml
+
+# 9f. The annotated HPA for the decode pool (no VariantAutoscaling CR).
+kubectl apply -f $DEMO/manifests/06-hpa.yaml
 ```
 
-Verify:
+> The `sed -i ''` above is BSD/macOS syntax; on GNU/Linux use `sed -i`.
+> `deploy/install.sh` needs **`yq`** on your PATH — without it the run dies at
+> "Enabling scale-to-zero in WVA ConfigMap" with `yq: command not found`, *after* the
+> controller has already been applied.
+
+Verify the whole chain:
 ```bash
-kubectl get variantautoscaling,hpa -n llm-d
-# NAME                                                      TARGET                       MIN   MAX
-# variantautoscaling.llmd.ai/optimized-baseline-decode      optimized-baseline-decode    1     4
-#
-# NAME                                                              REFERENCE
-# horizontalpodautoscaler.autoscaling/optimized-baseline-decode-hpa Deployment/optimized-baseline-decode
+# 1. WVA discovered the annotated HPA and made a decision
+kubectl logs -n workload-variant-autoscaler-system deploy/wva-controller-manager | grep scaling-decision
+# ...{"name":"optimized-baseline-decode-hpa","curr":2,"tgt":1,"action":"scale-down"}
+
+# 2. The metric reached Prometheus
+#    wva_desired_replicas{variant_name="optimized-baseline-decode-hpa",exported_namespace="llm-d"} 1
+
+# 3. prometheus-adapter re-published it as an external metric
+kubectl get --raw "/apis/external.metrics.k8s.io/v1beta1/namespaces/llm-d/wva_desired_replicas"
+
+# 4. The HPA consumed it and moved the Deployment
+kubectl get hpa -n llm-d
+# NAME                            REFERENCE                              TARGETS        MINPODS MAXPODS REPLICAS
+# optimized-baseline-decode-hpa   Deployment/optimized-baseline-decode   500m/1 (avg)   1       4       2
 ```
+
+> [!NOTE]
+> On no-GPU Kind, WVA logs an `AcceleratorNotResolved` warning ("Cannot resolve accelerator
+> type from Deployment nodeSelector/nodeAffinity"). This is **expected and non-fatal** —
+> `wva_desired_replicas` is still emitted (with `accelerator_type="unresolved"`) so the HPA
+> scales normally; only accelerator-specific capacity metrics are withheld.
 
 Raise traffic (lower the generator's `INTERVAL`, or loop `curl`) and watch the decode replica count move as `wva_desired_replicas` rises.
 
@@ -1083,6 +1257,8 @@ kubectl port-forward -n llm-d-monitoring svc/llmd-grafana 3000:80
 
 Open: [http://localhost:3000](http://localhost:3000) — login: `admin` / `admin`
 
+The install script now loads **seven** dashboards (it previously shipped five — `llm-d Inference Gateway` and `llm-d SGLang Overview` were added upstream):
+
 | Dashboard | Content |
 |---|---|
 | **llm-d vLLM Overview** | Token throughput, request rates, TTFT |
@@ -1090,6 +1266,8 @@ Open: [http://localhost:3000](http://localhost:3000) — login: `admin` / `admin
 | **llm-d Diagnostic Drill-Down** | Per-pod detailed metrics |
 | **llm-d Performance (KV Cache)** | KV cache utilization over time |
 | **P/D Coordinator Metrics** | Prefill/Decode disaggregation |
+| **llm-d Inference Gateway** | Gateway-level request/routing metrics |
+| **llm-d SGLang Overview** | SGLang backend equivalent of the vLLM overview (empty in this demo — the sim exposes `vllm:*`) |
 
 ---
 
@@ -1111,8 +1289,10 @@ are not stitched together — see [Observed tracing behavior](#observed-tracing-
    - two `async ...ExternalProcessor.Process egress` spans — the IPP call and the EPP call.
      This is the single view that shows both ext_proc hops for one request.
 2. **Service** → `llm-d-inference-payload-processor` → the IPP's `gateway.request` span.
-3. **Service** → `llm-d-router/epp` → `gateway.request` + `gateway.request_orchestration`
-   (the scheduling decision).
+3. **Service** → `llm-d-router/epp` → a 5-span tree: `gateway.request` →
+   `gateway.request_orchestration` → `run_scheduler_profile` → `filter_endpoints` +
+   `pick_endpoints`. Open `pick_endpoints` to see `llm_d.epp.picker.top_endpoints` /
+   `top_scores` — the actual routing decision for that request.
 4. `llm-d-model-server` is absent — the no-GPU `inference-sim` does not export traces.
 
 ---
@@ -1294,26 +1474,26 @@ wva_desired_replicas{variant_name="optimized-baseline-decode", exported_namespac
 ## Helm Values Layer Reference
 
 ```
-guides/recipes/router/base.values.yaml
+$LLMD/guides/recipes/router/base.values.yaml
   └── EPP image, proxy defaults, shared settings
 
-guides/optimized-baseline/router/optimized-baseline.values.yaml
+$LLMD/guides/optimized-baseline/router/optimized-baseline.values.yaml
   └── 4-plugin scoring: queue + kv-cache + prefix-cache + no-hit-lru
 
-guides/recipes/router/features/monitoring.values.yaml
+$LLMD/guides/recipes/router/features/monitoring.values.yaml
   └── ServiceMonitor for EPP metrics (Prometheus scraping)
 
-docs/monitoring/llm-d-full-demo/helm-values/tracing.values.yaml
+$DEMO/helm-values/tracing.values.yaml
   └── EPP OTLP tracing → http://otel-collector:4317 (100% sampling)
 
-docs/monitoring/llm-d-full-demo/helm-values/kind-overrides.values.yaml
+$DEMO/helm-values/kind-overrides.values.yaml
   └── Reduced EPP/proxy resources for local kind cluster
 
-docs/monitoring/llm-d-full-demo/helm-values/proxy-tracing-ipp.values.yaml
+$DEMO/helm-values/proxy-tracing-ipp.values.yaml
   └── Full Envoy config override: IPP ext_proc filter (before EPP),
       OpenTelemetry trace root, ipp_ext_proc + otel_collector clusters
 
-docs/monitoring/llm-d-full-demo/helm-values/ipp.values.yaml   (payload-processor chart)
+$DEMO/helm-values/ipp.values.yaml   (payload-processor chart)
   └── IPP workload only (provider.name=none) + OTLP tracing
 ```
 
@@ -1371,7 +1551,7 @@ helm uninstall payload-processor -n llm-d
 kubectl delete namespace llm-d
 
 # Remove monitoring stack
-bash docs/monitoring/scripts/install-prometheus-grafana.sh --uninstall
+bash $LLMD/guides/recipes/observability/install-prometheus-grafana.sh --uninstall
 
 # Delete kind cluster
 kind delete cluster --name llm-d
@@ -1398,7 +1578,7 @@ Install monitoring CRDs before the Helm chart (`--crds-only` in Step 3).
 ### Model server pods stuck in `ImagePullBackOff`
 
 ```bash
-kind load docker-image ghcr.io/llm-d/llm-d-inference-sim:v0.8.0-arm64 --name llm-d
+kind load docker-image ghcr.io/llm-d/llm-d-inference-sim:v0.9.2-arm64 --name llm-d
 ```
 
 ### Traffic generator returns 404
