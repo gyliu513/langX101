@@ -9,9 +9,13 @@ metadata:
     llm-d.ai/model: Qwen2.5-0.5B-Instruct
     app.kubernetes.io/part-of: llm-d
 spec:
-  replicas: 1
-  # A second vLLM pod does not fit next to the first one on a single Kind node
-  # (4 CPU / 6Gi requested each), so a rolling update would deadlock at Pending.
+  # 2 replicas so the EPP scheduler actually has a choice to make: the
+  # prefix-cache-scorer can only demonstrate KV-aware routing when there is more
+  # than one candidate endpoint.
+  replicas: 2
+  # Requests are deliberately small (see resources below) so both replicas fit on
+  # one Kind node; a rolling update would still deadlock at Pending during the
+  # surge, so replace pods instead.
   strategy:
     type: Recreate
   selector:
@@ -80,13 +84,16 @@ spec:
             capabilities:
               add:
                 - SYS_NICE
+          # Sized so two replicas (plus the EPP's vllm-render sidecar, the P/D
+          # pool and the monitoring stack) fit on a single 14-CPU / 23Gi Kind
+          # node. Qwen2.5-0.5B on CPU needs far less than the limits.
           resources:
             requests:
-              cpu: "4"
-              memory: 6Gi
+              cpu: "2"
+              memory: 5Gi
             limits:
-              cpu: "8"
-              memory: 12Gi
+              cpu: "4"
+              memory: 8Gi
           volumeMounts:
             - mountPath: /dev/shm
               name: dshm
