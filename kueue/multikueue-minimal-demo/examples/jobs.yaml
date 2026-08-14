@@ -1,0 +1,92 @@
+# Three plain batch/v1 Jobs — no CRD, no operator, nothing beyond Kueue.
+#
+# The only Kueue-specific bit is the queue-name label. Kueue's webhook suspends
+# the Job, and because cluster-queue carries a MultiKueue AdmissionCheck it also
+# stamps spec.managedBy=kueue.x-k8s.io/multikueue so the local Job controller
+# keeps its hands off — the Job only ever runs on a worker cluster.
+#
+# Each worker has 2 CPU of quota and each Job asks for 2 CPU, so two Jobs run
+# (one per worker) and the third waits.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: demo-job-1
+  namespace: default
+  labels:
+    kueue.x-k8s.io/queue-name: user-queue
+spec:
+  parallelism: 1
+  completions: 1
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: sleeper
+          image: registry.k8s.io/e2e-test-images/agnhost:2.53
+          command: ["sh", "-c", "echo running on node $NODE_NAME; sleep 60"]
+          env:
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          resources:
+            requests:
+              cpu: "2"
+              memory: 200Mi
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: demo-job-2
+  namespace: default
+  labels:
+    kueue.x-k8s.io/queue-name: user-queue
+spec:
+  parallelism: 1
+  completions: 1
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: sleeper
+          image: registry.k8s.io/e2e-test-images/agnhost:2.53
+          command: ["sh", "-c", "echo running on node $NODE_NAME; sleep 60"]
+          env:
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          resources:
+            requests:
+              cpu: "2"
+              memory: 200Mi
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: demo-job-3
+  namespace: default
+  labels:
+    kueue.x-k8s.io/queue-name: user-queue
+spec:
+  parallelism: 1
+  completions: 1
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: sleeper
+          image: registry.k8s.io/e2e-test-images/agnhost:2.53
+          command: ["sh", "-c", "echo running on node $NODE_NAME; sleep 60"]
+          env:
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          resources:
+            requests:
+              cpu: "2"
+              memory: 200Mi

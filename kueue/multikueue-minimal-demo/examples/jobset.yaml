@@ -1,0 +1,40 @@
+# A JobSet dispatched through MultiKueue.
+#
+# Note there is NO spec.managedBy here: Kueue's webhook defaults it to
+# kueue.x-k8s.io/multikueue because the queue-name label points at a
+# ClusterQueue carrying a MultiKueue AdmissionCheck. That is what stops the
+# JobSet controller on the manager from creating any child Jobs locally.
+#
+# Total request: 2 replicas x 500m = 1 CPU, which fits in one worker's 2 CPU quota.
+apiVersion: jobset.x-k8s.io/v1alpha2
+kind: JobSet
+metadata:
+  name: demo-jobset
+  namespace: default
+  labels:
+    kueue.x-k8s.io/queue-name: user-queue
+spec:
+  replicatedJobs:
+    - name: workers
+      replicas: 2
+      template:
+        spec:
+          parallelism: 1
+          completions: 1
+          backoffLimit: 0
+          template:
+            spec:
+              restartPolicy: Never
+              containers:
+                - name: sleeper
+                  image: registry.k8s.io/e2e-test-images/agnhost:2.53
+                  command: ["sh", "-c", "echo jobset member on $NODE_NAME; sleep 45"]
+                  env:
+                    - name: NODE_NAME
+                      valueFrom:
+                        fieldRef:
+                          fieldPath: spec.nodeName
+                  resources:
+                    requests:
+                      cpu: 500m
+                      memory: 200Mi
