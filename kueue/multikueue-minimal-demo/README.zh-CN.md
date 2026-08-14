@@ -163,15 +163,74 @@ MultiKueue 环境，并跑通 **batch/Job、JobSet、RayJob** 三种工作负载
    │                       ├───────────────────────────>│ ✗              │
 ```
 
+### ⑤～⑦ 详解 —— 为什么只有一个 worker 会真正跑
+
+第 ⑤ 步会让人立刻产生一个疑问：*既然 Workload 被复制到了 w1 和 w2 **两边**，为什么不会跑两遍？*
+答案是：**被复制过去的那个东西，根本跑不起来任何东西。**
+
+#### ⑤ manager 复制的是 Workload，不是 Job
+
+`Workload` 只是一条排队记录 —— 一次配额申请。Kubernetes 里没有任何控制器会根据 Workload 去创建
+Pod。Pod 之所以存在，只可能是因为有一个 **Job / JobSet / RayJob** 对象，并且它的控制器把它
+unsuspend 了。
+
+第 ⑤ 步 manager 在 w1 和 w2 上创建的**只有 Workload 副本**，两个 worker 上都还没有 Job。所以
+根本不存在"可能跑两遍"的东西：这两份副本是两次互相竞争的**配额投标**，而不是两个正在运行的任务。
+真正的 Job 只会被创建一次，在第 ⑧ 步，也就是竞争已经分出胜负之后。
+
+所以重复执行是**结构上不可能**，而不是"概率很小"—— 它不依赖于谁抢得够不够快。
+
+#### ⑥ 每个 worker 各自独立 admit，彼此完全不知情
+
+每个 worker 上跑的都是原生、未经改造的 Kueue。它的调度器看到本地 ClusterQueue 里来了一个新
+Workload，本地配额够就 admit —— 和单集群 Kueue 走的是完全相同的代码路径。**worker 不知道
+manager 的存在，不知道另一个 worker 的存在，也不知道自己正在参加一场竞争。** worker 之间没有任何
+协调、没有锁、没有共识协议。
+
+因此"w1 先 admit"的含义仅仅是：w1 的调度器碰巧比 w2 先把自己那份副本置为 `Admitted=True`。本
+demo 里两个 worker 都是空闲的、配额也完全相同，所以谁赢纯属偶然 —— 重跑一次很可能就变成 w2。
+
+#### manager 是怎么知道 w1 赢了的？
+
+**是 manager 主动去看 worker，worker 从不向 manager 汇报。** manager 为每个 worker 持有一个远程
+client，用的是 `mk-workerN-secret` 这个 Secret 里存的 kubeconfig（由 `scripts/4-connect.sh`
+创建）；MultiKueue 的 AdmissionCheck 控制器**通过这条连接 watch 远程的 Workload 副本**。
+
+方向是这里的关键。没有任何东西从 worker 推给 manager，所以 worker 不需要装 agent、不需要注册、
+甚至不需要意识到自己身处一个联邦里 —— 这正是"一个 kubeconfig 就够，不需要任何多集群管理平台"
+能够成立的原因。
+
+当这个 watch 观测到某份远程副本带上了 `Admitted=True`，manager 就判定该副本所在的集群胜出。
+
+#### ⑦ 胜者只会被锁定一次
+
+确认 w1 admit 之后，manager 对自己**本地**那份 Workload 以及落败方做三件事：
+
+1. 写入 `status.clusterName: mk-worker1` —— **这个字段一旦设置就不可变**；
+2. 把 `multikueue-check` 这个 AdmissionCheck 置为 `Ready`；
+3. **删除 w2 上的那份 Workload 副本**，从而释放 w2 已经临时占住的配额，让别的 Workload 能用。
+
+第 (1) 条的不可变性就是这场竞争之所以安全的原因。如果两个 worker 在 manager reconcile 之前就都
+admit 了（完全可能发生），manager 依然只会选**一个** —— watch 最先报上来的那个；第二次观测想去写
+一个已经被写过的字段，会被直接丢弃。不存在"同时有两个胜者"的时间窗口。
+
+到这时才轮到第 ⑧ 步：只在 w1 上创建真正的 Job，并打上
+`kueue.x-k8s.io/prebuilt-workload-name` 标签指向那份已经被 admit 的副本 —— 这样 w1 的 Kueue 会
+把这个 Job 绑定到已有的 admission 上，而不是再新建一个 Workload 重新排一遍队。
+
+> **注意：**"复制给所有候选、谁先 admit 谁赢"这套行为是 **AllAtOnce** 分发器特有的，本 demo 在
+> `manifests/kueue-config.yaml` 里配置的就是它。而 `Incremental` 分发器则是一次只提名一部分集群，
+> 再按定时器逐步扩大范围 —— 产生的无用远程对象更少，但找到有空闲配额的集群更慢。
+
 ### 实际观测到的 Workload 状态
 
 ```yaml
 status:
-  clusterName: mk-worker2            # ← 最终跑在哪个集群（一旦设置就不可变）
+  clusterName: mk-worker1            # ← 最终跑在哪个集群（一旦设置就不可变）
   admissionChecks:
   - name: multikueue-check
     state: Ready
-    message: The workload was admitted on "mk-worker2"
+    message: The workload was admitted on "mk-worker1"
   conditions:
   - type: QuotaReserved              # ← 闸门①：manager 配额通过
     status: "True"

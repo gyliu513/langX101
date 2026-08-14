@@ -168,15 +168,85 @@ and that gate is only enabled by default from 1.32 onwards.
    │                       ├───────────────────────────>│ ✗              │
 ```
 
+### Steps ⑤–⑦ in detail — why only one worker runs it
+
+Step ⑤ raises the obvious question: *if the Workload is copied to **both** workers, why
+doesn't it run twice?* The answer is that **the thing being copied cannot run anything.**
+
+#### ⑤ The manager copies the Workload, not the Job
+
+A `Workload` is a queueing record — a request for quota. Nothing in Kubernetes creates pods
+from a Workload. Pods exist only because a **Job / JobSet / RayJob** object exists and its
+controller unsuspends it.
+
+At step ⑤ the manager creates **only the Workload copy** on w1 and on w2. Neither worker has
+a Job yet. So there is nothing that *could* run twice — the two copies are two competing
+**bids for quota**, not two running workloads. The real Job is created exactly once, at ⑧,
+after the race has already been settled.
+
+This is why duplicate execution is *structurally impossible* rather than merely unlikely: it
+does not depend on anyone winning a race quickly enough.
+
+#### ⑥ Each worker admits on its own, knowing nothing about the other
+
+Each worker runs plain, unmodified Kueue. Its scheduler sees a new Workload in its local
+ClusterQueue and admits it when local quota allows — the exact same code path as a
+single-cluster install. **A worker does not know the manager exists, does not know the other
+worker exists, and does not know it is in a race.** There is no coordination, no lock, no
+consensus protocol between workers.
+
+So "w1 admits FIRST" means nothing more than: w1's scheduler happened to set `Admitted=True`
+on its local copy before w2 did. In this demo both workers are idle and identically sized, so
+the winner is genuinely arbitrary — re-run the demo and it may well be w2.
+
+#### How does the manager know that w1 won?
+
+**The manager watches the workers; the workers never report back.** For each worker the
+manager holds a remote client built from the kubeconfig stored in the `mk-workerN-secret`
+Secret (created by `scripts/4-connect.sh`), and the MultiKueue AdmissionCheck controller
+**watches the remote Workload copies over that connection**.
+
+The direction is the whole trick. Nothing is pushed from worker to manager, so workers need
+no agent, no registration, no awareness of the federation — which is precisely why this works
+with a kubeconfig and no multi-cluster management platform.
+
+When that watch reports a remote copy carrying `Admitted=True`, the manager declares that
+copy's cluster the winner.
+
+#### ⑦ The winner is latched exactly once
+
+On learning w1 admitted, the manager does three things to its **local** Workload and to the
+losers:
+
+1. writes `status.clusterName: mk-worker1` — **this field is immutable once set**;
+2. sets the `multikueue-check` AdmissionCheck to `Ready`;
+3. **deletes the Workload copy on w2**, which releases the quota w2 had tentatively reserved
+   so a different Workload can use it.
+
+The immutability in (1) is what makes the race safe. If both workers admit before the manager
+reconciles — entirely possible — the manager still picks exactly **one**, the first its watch
+reports. The second observation tries to write a field that is already set, and is simply
+dropped. There is no window in which two winners exist.
+
+Only then does ⑧ create the real Job, on w1 alone, labelled with
+`kueue.x-k8s.io/prebuilt-workload-name` pointing at the copy that was already admitted — so
+w1's Kueue binds the Job to that existing admission instead of creating a second Workload and
+queueing all over again.
+
+> **Note:** this "copy to everyone, first to admit wins" behaviour is specific to the
+> **AllAtOnce** dispatcher, which this demo configures in `manifests/kueue-config.yaml`. The
+> `Incremental` dispatcher instead nominates a subset of clusters at a time and widens the set
+> on a timer — fewer wasted remote objects, slower to find a cluster with free quota.
+
 ### Observed Workload status
 
 ```yaml
 status:
-  clusterName: mk-worker2            # where it ran (immutable once set)
+  clusterName: mk-worker1            # where it ran (immutable once set)
   admissionChecks:
   - name: multikueue-check
     state: Ready
-    message: The workload was admitted on "mk-worker2"
+    message: The workload was admitted on "mk-worker1"
   conditions:
   - type: QuotaReserved              # GATE #1 — manager let it through
     status: "True"
