@@ -1,0 +1,79 @@
+# Queue setup + MultiKueue wiring on the manager cluster.
+#
+# The chain is:
+#   ClusterQueue --(admissionChecksStrategy)--> AdmissionCheck
+#     --(parameters)--> MultiKueueConfig --(clusters)--> MultiKueueCluster
+#       --(kubeConfig Secret)--> the worker's API server
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: ResourceFlavor
+metadata:
+  name: default-flavor
+---
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: ClusterQueue
+metadata:
+  name: cluster-queue
+spec:
+  namespaceSelector: {}
+  resourceGroups:
+    - coveredResources: ["cpu", "memory"]
+      flavors:
+        - name: default-flavor
+          resources:
+            - name: cpu
+              nominalQuota: 10
+            - name: memory
+              nominalQuota: 20Gi
+  # Attaching a MultiKueue AdmissionCheck is what turns this into a
+  # "delegating" queue: nothing runs here, admission is decided by a worker.
+  admissionChecksStrategy:
+    admissionChecks:
+      - name: multikueue-check
+---
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: LocalQueue
+metadata:
+  name: user-queue
+  namespace: default
+spec:
+  clusterQueue: cluster-queue
+---
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: AdmissionCheck
+metadata:
+  name: multikueue-check
+spec:
+  controllerName: kueue.x-k8s.io/multikueue
+  parameters:
+    apiGroup: kueue.x-k8s.io
+    kind: MultiKueueConfig
+    name: multikueue-config
+---
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: MultiKueueConfig
+metadata:
+  name: multikueue-config
+spec:
+  clusters:
+    - mk-worker1
+    - mk-worker2
+---
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: MultiKueueCluster
+metadata:
+  name: mk-worker1
+spec:
+  clusterSource:
+    kubeConfig:
+      locationType: Secret
+      location: mk-worker1-secret # Secret in kueue-system, key "kubeconfig"
+---
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: MultiKueueCluster
+metadata:
+  name: mk-worker2
+spec:
+  clusterSource:
+    kubeConfig:
+      locationType: Secret
+      location: mk-worker2-secret

@@ -1,0 +1,73 @@
+# A RayJob dispatched through MultiKueue.
+#
+# As with the JobSet, spec.managedBy is defaulted to kueue.x-k8s.io/multikueue by
+# Kueue's webhook, so the KubeRay operator on the manager ignores this object and
+# creates no Ray pods there. The RayCluster is materialised on the worker only.
+#
+# shutdownAfterJobFinishes tears the RayCluster down once the entrypoint exits,
+# which releases the worker's quota.
+#
+# Quota accounting (this is what the worker ClusterQueue gates on — *requests*,
+# not limits): head 500m/2Gi + 1 worker 500m/1Gi = 1 CPU / 3Gi, which fits the
+# worker's 2 CPU / 4Gi quota.
+#
+# Note the memory: a Ray head under 2Gi gets OOMKilled (exit code 137) before it
+# writes a single log line, which looks like a MultiKueue failure but is not.
+apiVersion: ray.io/v1
+kind: RayJob
+metadata:
+  name: demo-rayjob
+  namespace: default
+  labels:
+    kueue.x-k8s.io/queue-name: user-queue
+spec:
+  shutdownAfterJobFinishes: true
+  entrypoint: python -c "import ray; ray.init(); print('RAY NODES:', len(ray.nodes()))"
+  rayClusterSpec:
+    # Must match the Ray version baked into the image below.
+    rayVersion: "2.55.1"
+    headGroupSpec:
+      # Without an explicit object-store size Ray derives one from the container's
+      # cgroup and lands below its own 75MB floor, dying with:
+      #   ValueError: Attempting to cap object store memory usage at 1146470 bytes,
+      #   but the minimum allowed is 78643200 bytes.
+      rayStartParams:
+        object-store-memory: "134217728"
+      template:
+        spec:
+          containers:
+            - name: ray-head
+              image: us-central1-docker.pkg.dev/k8s-staging-images/kueue/ray-project-mini:0.0.4
+              resources:
+                requests:
+                  cpu: 500m
+                  memory: 2Gi
+                limits:
+                  cpu: "2"
+                  memory: 8Gi
+              ports:
+                - containerPort: 6379
+                  name: gcs-server
+                - containerPort: 8265
+                  name: dashboard
+                - containerPort: 10001
+                  name: client
+    workerGroupSpecs:
+      - groupName: small-group
+        replicas: 1
+        minReplicas: 1
+        maxReplicas: 1
+        rayStartParams:
+          object-store-memory: "134217728"
+        template:
+          spec:
+            containers:
+              - name: ray-worker
+                image: us-central1-docker.pkg.dev/k8s-staging-images/kueue/ray-project-mini:0.0.4
+                resources:
+                  requests:
+                    cpu: 500m
+                    memory: 1Gi
+                  limits:
+                    cpu: "1"
+                    memory: 2Gi

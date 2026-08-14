@@ -1,0 +1,82 @@
+# Credentials the manager cluster uses to drive this worker.
+#
+# This is the upstream examples/multikueue/create-multikueue-kubeconfig.sh RBAC
+# narrowed to the frameworks this demo installs: batch/Job, JobSet and KubeRay.
+# Rules for Kubeflow, LeaderWorkerSet and AppWrapper are omitted because those
+# operators are not installed here.
+#
+# Rule of thumb: this list must cover every framework in
+# manifests/kueue-config.yaml, otherwise the manager's watch is rejected with a
+# 403 and the MultiKueueCluster goes Active=False.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: multikueue-sa
+  namespace: kueue-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: multikueue-sa-role
+rules:
+  # --- Kueue's own objects ---
+  - apiGroups: ["kueue.x-k8s.io"]
+    resources: ["workloads"]
+    verbs: ["create", "delete", "get", "list", "watch", "update", "patch"]
+  - apiGroups: ["kueue.x-k8s.io"]
+    resources: ["workloads/status"]
+    verbs: ["get", "update", "patch"]
+  - apiGroups: ["kueue.x-k8s.io"]
+    resources: ["clusterqueues", "localqueues"]
+    verbs: ["get", "list", "watch"]
+  # --- batch/Job ---
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["create", "delete", "get", "list", "watch"]
+  - apiGroups: ["batch"]
+    resources: ["jobs/status"]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["create", "delete", "get", "list", "watch"]
+  # --- JobSet ---
+  - apiGroups: ["jobset.x-k8s.io"]
+    resources: ["jobsets"]
+    verbs: ["create", "delete", "get", "list", "watch"]
+  - apiGroups: ["jobset.x-k8s.io"]
+    resources: ["jobsets/status"]
+    verbs: ["get"]
+  # --- KubeRay ---
+  - apiGroups: ["ray.io"]
+    resources: ["rayjobs", "rayservices"]
+    verbs: ["create", "delete", "get", "list", "watch"]
+  - apiGroups: ["ray.io"]
+    resources: ["rayclusters"]
+    verbs: ["create", "delete", "get", "list", "watch", "update", "patch"]
+  - apiGroups: ["ray.io"]
+    resources: ["rayjobs/status", "rayclusters/status", "rayservices/status"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: multikueue-sa-crb
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: multikueue-sa-role
+subjects:
+  - kind: ServiceAccount
+    name: multikueue-sa
+    namespace: kueue-system
+---
+# Long-lived token for the ServiceAccount. Since k8s 1.24 these are not created
+# automatically, so we request one explicitly.
+apiVersion: v1
+kind: Secret
+type: kubernetes.io/service-account-token
+metadata:
+  name: multikueue-sa
+  namespace: kueue-system
+  annotations:
+    kubernetes.io/service-account.name: multikueue-sa

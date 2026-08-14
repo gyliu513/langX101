@@ -1,0 +1,80 @@
+# Restricts Kueue's enabled integrations to exactly the frameworks this demo
+# installs: batch/Job, JobSet and KubeRay.
+#
+# WHY THIS IS REQUIRED, not just "nice to have":
+# Kueue ships with jobset, ray, appwrapper, trainer, lws, pod, deployment,
+# statefulset ... all enabled by default. For every enabled framework the
+# MultiKueue controller on the manager opens a watch against each worker
+# cluster. If a worker lacks that CRD the watch fails and the whole
+# MultiKueueCluster flips to Active=False with:
+#
+#   ClientConnectionFailed: no matches for kind "JobSet" in version "jobset.x-k8s.io/v1alpha2"
+#
+# So the rule is: the enabled framework list must exactly match the operators
+# actually installed on the workers.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kueue-manager-config
+  namespace: kueue-system
+data:
+  controller_manager_config.yaml: |
+    apiVersion: config.kueue.x-k8s.io/v1beta2
+    kind: Configuration
+    health:
+      healthProbeBindAddress: :8081
+    metrics:
+      bindAddress: :8443
+    webhook:
+      port: 9443
+    leaderElection:
+      leaderElect: true
+      resourceName: c1f6bfd2.kueue.x-k8s.io
+    controller:
+      groupKindConcurrency:
+        Job.batch: 5
+        Workload.kueue.x-k8s.io: 10
+        LocalQueue.kueue.x-k8s.io: 5
+        Cohort.kueue.x-k8s.io: 1
+        ClusterQueue.kueue.x-k8s.io: 5
+        ResourceFlavor.kueue.x-k8s.io: 1
+    clientConnection:
+      qps: 300
+      burst: 500
+    integrations:
+      frameworks:
+      - "batch/job"
+      - "jobset.x-k8s.io/jobset"
+      - "ray.io/rayjob"
+      - "ray.io/raycluster"
+      - "ray.io/rayservice"
+    multiKueue:
+      # DISPATCH STRATEGY. Two built-in dispatchers ship with Kueue:
+      #
+      #   kueue.x-k8s.io/multikueue-dispatcher-all-at-once   (default)
+      #     Nominates EVERY cluster in the MultiKueueConfig at the same time,
+      #     creates a remote Workload on each, and the first worker to admit
+      #     wins. The losing copies are deleted. Fastest time-to-start; costs a
+      #     brief burst of remote objects proportional to the cluster count.
+      #
+      #   kueue.x-k8s.io/multikueue-dispatcher-incremental
+      #     Nominates clusters in waves of `stepSize` (default 3), widening the
+      #     pool only if nobody admitted. Gentler on large fleets, and with the
+      #     MultiKueueIncrementalDispatcherRespectConfigOrder gate (beta, on by
+      #     default in v0.19) the waves follow the order in
+      #     MultiKueueConfig.spec.clusters, which makes it a preference list.
+      #
+      # A third option is any custom controller name — Kueue then only manages
+      # the remote copies and lets your controller pick the target clusters.
+      #
+      # This demo pins all-at-once explicitly. With only 2 workers it behaves the
+      # same as incremental, but stating it makes the knob visible.
+      dispatcherName: kueue.x-k8s.io/multikueue-dispatcher-all-at-once
+      # Only honoured by the incremental dispatcher; shown here for reference.
+      # incrementalDispatcherConfig:
+      #   stepSize: 1
+      #
+      # How long a workload stays Ready after losing contact with its worker.
+      workerLostTimeout: 15m
+      # How often orphaned remote objects are garbage-collected.
+      gcInterval: 1m
