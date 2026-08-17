@@ -97,6 +97,9 @@ and that gate is only enabled by default from 1.32 onwards.
 3. **The manager never runs a business pod.** This is the most direct proof that
    MultiKueue is working.
 
+"If both workers admit, why doesn't it run twice?" and "what is a Workload, exactly?"
+are in the [§8 FAQ](#8-faq).
+
 ---
 
 ## 3. Workflow
@@ -233,6 +236,25 @@ Only then does ⑧ create the real Job, on w1 alone, labelled with
 w1's Kueue binds the Job to that existing admission instead of creating a second Workload and
 queueing all over again.
 
+That is the biggest difference from single-cluster Kueue. There the Job **already lives in
+the cluster**; after admit, Kueue flips `suspend` to `false` and the local Job controller
+starts pods. In MultiKueue the workers admit a **Workload copy** — there is no Job yet, so
+the Job controller has nothing to reconcile. The real Job is created by the manager, on
+**one** worker, only after `clusterName` is latched.
+
+Even if both workers admit almost together, the timeline is:
+
+```
+T1  w1 Workload Admitted=True     ← quota reserved; no Job, no pods
+T2  w2 Workload Admitted=True     ← quota reserved; no Job, no pods
+T3  manager sees the first report and writes clusterName (immutable)
+T4  delete the losing Workload copy
+T5  create Job on the winner only → that Job controller starts pods
+```
+
+Between T1 and T4 neither worker has a Job, so there is no window in which two Job
+controllers create pods.
+
 > **Note:** this "copy to everyone, first to admit wins" behaviour is specific to the
 > **AllAtOnce** dispatcher, which this demo configures in `manifests/kueue-config.yaml`. The
 > `Incremental` dispatcher instead nominates a subset of clusters at a time and widens the set
@@ -256,6 +278,18 @@ status:
   - type: PodsReady
     status: "True"
 ```
+
+Do not conflate the three objects:
+
+| Object | What it is | Does it start pods? |
+|--------|------------|---------------------|
+| **Job** | The task the user submitted | Yes — but the copy on the manager never runs (`managedBy`); the real one is created by the manager on the winning worker only |
+| **Workload** | Kueue's scheduling unit: a quota request + queueing record. Exists in single-cluster Kueue too; not MultiKueue-specific | No. Nothing in Kubernetes creates pods from a Workload |
+| **`status.clusterName`** | A result field on the **manager** Workload | No. It is the immutable "which cluster won" marker |
+
+The remote Workload copies *are* an intermediate: two bids for quota; the loser is deleted.
+That is not the whole meaning of Workload — before a winner is chosen it is a quota request;
+`clusterName` is the field that records the winner.
 
 ---
 
@@ -435,7 +469,78 @@ KUEUE_VERSION=v0.16.4 JOBSET_VERSION=v0.10.1 KUBERAY_VERSION=1.5.1 ./scripts/up.
 
 ---
 
-## 8. When you actually do need OCM or a similar platform
+## 8. FAQ
+
+### If both workers admit, won't both Job controllers start pods?
+
+No. That is the **single-cluster** path: the Job already lives in the cluster; after admit,
+Kueue unsuspends it and the local Job controller creates pods.
+
+MultiKueue splits that chain:
+
+```
+single-cluster:  Job already exists → Workload admit → unsuspend Job → pods
+MultiKueue:      Workload copy admits (quota only) → latch clusterName
+                 → manager creates the Job on the winner → pods
+```
+
+When a worker admits, there is still no Job, so the Job controller has nothing to
+reconcile. Both copies showing `Admitted=True` means both tentatively reserved quota, not
+that both started the task.
+
+### Why can't the Job run on the manager?
+
+The manager is not physically unable to run Jobs. MultiKueue **deliberately prevents** Jobs
+on a MultiKueue-enabled queue from executing there.
+
+The webhook sets two fields:
+
+| Field | Effect |
+|-------|--------|
+| `spec.suspend = true` | Hold; do not create pods |
+| `spec.managedBy = kueue.x-k8s.io/multikueue` | The manager's native Job controller treats it as "not mine" and never unsuspends it |
+
+Three reasons:
+
+1. **Avoid running twice.** The Job object the user applied already sits on the manager. If the local Job controller also acted, the manager would start pods *and* MultiKueue would create another Job on a worker.
+2. **Manager quota is virtual.** The ClusterQueue only throttles how many workloads may enter dispatch; it does not match real machine capacity. This demo gives the manager 10 CPU; the kind node is not sized to run 10 CPU of business pods.
+3. **The manager is the control plane.** It accepts jobs, reserves virtual quota, picks a worker, and syncs status. Capacity lives on the workers.
+
+A Job that does **not** go through a MultiKueue AdmissionCheck can still run on the manager as a normal single-cluster Job. What is blocked is the cross-cluster dispatch path.
+
+The check: `kubectl get pods` on the manager shows no business pods; they appear on a worker. That is rule 3 in §2.
+
+### Does `managedBy` make the two workers mutually exclusive?
+
+No. The split is:
+
+| Mechanism | What it guarantees |
+|-----------|-------------------|
+| `managedBy` + `suspend` | The Job does **not** execute on the **manager** |
+| Step ⑤ copies only the Workload | Neither worker has a runnable Job yet |
+| `clusterName` is immutable once set | There can be only one winner |
+| Delete the losing Workload | The other side's bid is withdrawn |
+| Create the Job only at step ⑧ | Execution happens once, on the winner only |
+
+Mutual exclusion between workers is the last four; `managedBy` is not that.
+
+### Is Workload just an intermediate that records which cluster was chosen?
+
+Half right.
+
+- **Remote copies:** yes, intermediate. They exist to bid for quota on that cluster; the loser is deleted; the winner's copy is deleted after the job finishes.
+- **Workload as a whole:** Kueue's generic scheduling unit (it exists in single-cluster too) — request quota, queue, admit, release.
+- **The field that records "where it ran"** is `status.clusterName` on the **manager** Workload, immutable once written.
+
+```
+Job              = the task the user submitted (the thing that eventually starts pods)
+Workload         = Kueue's queueing / quota object for that task
+clusterName      = the "which cluster won" result field on the Workload
+```
+
+---
+
+## 9. When you actually do need OCM or a similar platform
 
 This demo proves MultiKueue needs no multi-cluster management platform. These cases,
 however, are where bare MultiKueue is genuinely not enough:
