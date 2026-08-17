@@ -93,6 +93,8 @@ MultiKueue 环境，并跑通 **batch/Job、JobSet、RayJob** 三种工作负载
 
 3. **manager 上永远不会有业务 Pod。** 这是验证 MultiKueue 是否真的生效的最直接标志。
 
+「两边都 admit 了为什么不会跑两遍」「Workload 到底是什么」这类问题见 [§8 FAQ](#8-faq)。
+
 ---
 
 ## 3. 工作流程图
@@ -218,6 +220,23 @@ admit 了（完全可能发生），manager 依然只会选**一个** —— wat
 `kueue.x-k8s.io/prebuilt-workload-name` 标签指向那份已经被 admit 的副本 —— 这样 w1 的 Kueue 会
 把这个 Job 绑定到已有的 admission 上，而不是再新建一个 Workload 重新排一遍队。
 
+这是和单集群 Kueue 最大的差别。单集群里 Job **已经在本集群**，admit 之后 Kueue 把
+`suspend` 翻成 `false`，本地 Job 控制器就开始建 Pod。MultiKueue 里 worker 上 admit 的是
+**Workload 副本**，当时还没有 Job，所以 Job 控制器无事可做。真正的 Job 只在 `clusterName`
+锁死之后、由 manager 创建到**一个** worker 上。
+
+即使两边几乎同时 admit，时间线也是：
+
+```
+T1  w1 Workload Admitted=True     ← 只占配额，无 Job，无 Pod
+T2  w2 Workload Admitted=True     ← 只占配额，无 Job，无 Pod
+T3  manager 看到先报到的那个，写下 clusterName（不可变）
+T4  删除落败方的 Workload 副本
+T5  只在胜者上 create Job → 那边的 Job 控制器这时才建 Pod
+```
+
+T1～T4 期间两个 worker 上都没有 Job，不存在"两个 Job 控制器同时建 Pod"的窗口。
+
 > **注意：**"复制给所有候选、谁先 admit 谁赢"这套行为是 **AllAtOnce** 分发器特有的，本 demo 在
 > `manifests/kueue-config.yaml` 里配置的就是它。而 `Incremental` 分发器则是一次只提名一部分集群，
 > 再按定时器逐步扩大范围 —— 产生的无用远程对象更少，但找到有空闲配额的集群更慢。
@@ -240,6 +259,16 @@ status:
   - type: PodsReady
     status: "True"
 ```
+
+三个对象别混：
+
+| 对象 | 是什么 | 会起 Pod 吗 |
+|------|--------|-------------|
+| **Job** | 用户提交的任务 | 会。但 manager 上那份因 `managedBy` 不执行；真正跑的那份只在胜者 worker 上由 manager 创建 |
+| **Workload** | Kueue 的调度单元：配额申请 + 排队记录。单集群里就有，不是 MultiKueue 专属 | 不会。没有任何控制器根据 Workload 建 Pod |
+| **`status.clusterName`** | manager 那份 Workload 上的结果字段 | 否。它只是"花落哪家"的不可变标记 |
+
+远程 Workload 副本确实是中间过程（两边投标，分出胜负就删落败方）；但 Workload 的全部含义不只是"记下哪个 cluster 赢了"——选中之前它是配额申请单，`clusterName` 才是选中标记。
 
 ---
 
@@ -414,7 +443,75 @@ KUEUE_VERSION=v0.16.4 JOBSET_VERSION=v0.10.1 KUBERAY_VERSION=1.5.1 ./scripts/up.
 
 ---
 
-## 8. 什么时候才真的需要 OCM 之类的多集群平台
+## 8. FAQ
+
+### 两个 worker 都 admit 了，两边的 Job 控制器不就会同时建 Pod 吗？
+
+不会。那是**单集群**路径：Job 已经在本集群里，admit 之后 Kueue unsuspend，本地 Job 控制器才建
+Pod。
+
+MultiKueue 把这条链拆开了：
+
+```
+单集群:   Job 已存在  →  Workload admit  →  unsuspend Job  →  建 Pod
+MultiKueue: Workload 副本 admit（只占配额）→ 锁定 clusterName → manager 才在胜者上 create Job → 建 Pod
+```
+
+worker 上 admit 时还没有 Job，Job 控制器没有可 reconcile 的对象。两边同时 `Admitted=True`
+只表示两边都临时占了一份配额，不是两边都开始跑任务。
+
+### 为什么 manager 上不能跑这个 Job？
+
+不是 manager 物理上跑不了，是 **MultiKueue 故意不让走这条队列的 Job 在 manager 上执行**。
+
+提交到挂了 MultiKueue AdmissionCheck 的队列时，webhook 会改两个字段：
+
+| 字段 | 效果 |
+|------|------|
+| `spec.suspend = true` | 先挂起，不建 Pod |
+| `spec.managedBy = kueue.x-k8s.io/multikueue` | manager 上的原生 Job 控制器认为「这不是我的活」，永远不会 unsuspend |
+
+原因有三条：
+
+1. **避免跑两遍。** 用户 `kubectl apply` 的 Job 对象就在 manager 上。如果本地 Job 控制器也干活，manager 起一套 Pod，MultiKueue 又在 worker 上再创建一份，同一任务执行两次。
+2. **manager 配额是虚账。** ClusterQueue 只决定同时允许多少任务进入分发，不对应真实机器容量。本 demo manager 给了 10 CPU，kind 节点并没有按 10 CPU 去跑业务 Pod。
+3. **manager 是调度控制面。** 接单、占虚账、挑 worker、同步状态；算力在 worker 上。
+
+如果 Job **不**走 MultiKueue 队列（没有那个 AdmissionCheck），它可以在 manager 上当普通单集群 Job 跑。拦住的是「跨集群分发」这条路径。
+
+验证标准：manager 上 `kubectl get pods` 看不到业务 Pod，worker 上才看得到。这是 README 第 3 条规则。
+
+### `managedBy` 是用来保证两个 worker 互斥的吗？
+
+不是。分工是：
+
+| 机制 | 保证什么 |
+|------|----------|
+| `managedBy` + `suspend` | **manager 本地**不执行 |
+| 第 ⑤ 步只复制 Workload | 两边还没有能跑的 Job |
+| `clusterName` 一旦写入就不可变 | 胜者只能有一个 |
+| 删除落败方的 Workload | 另一边连投标都撤掉 |
+| 第 ⑧ 步才创建 Job | 真正执行只发生一次、只在胜者上 |
+
+两个 worker 互斥靠的是后四条，不是 `managedBy`。
+
+### Workload 是不是专门用来标记哪个 cluster 被选中的中间对象？
+
+一半对。
+
+- **对 worker 副本来说：** 是中间过程。存在只为了向该集群投标配额，分出胜负就删落败方，任务跑完再删胜者那份。
+- **对 Workload 整体来说：** 它是 Kueue 通用的调度单元（单集群里也有），用来申请配额、排队、admit、释放。
+- **真正标记"跑在哪"的是** manager 那份 Workload 上的 `status.clusterName`，写上就不可变。
+
+```
+Job              = 用户提交的任务（最终会起 Pod）
+Workload         = Kueue 为这个任务建的排队 / 配额对象
+clusterName      = Workload 上"花落哪家"的结果字段
+```
+
+---
+
+## 9. 什么时候才真的需要 OCM 之类的多集群平台
 
 本 demo 证明了 MultiKueue 不依赖任何多集群管理平台。但下面这些场景，裸 MultiKueue 确实不够：
 
