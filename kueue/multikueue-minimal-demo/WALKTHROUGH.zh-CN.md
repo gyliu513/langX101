@@ -3,7 +3,10 @@
 > English: [WALKTHROUGH.md](WALKTHROUGH.md) · 架构原理：[README.zh-CN.md](README.zh-CN.md)
 
 本文档记录搭建全过程的**每一条命令和它的真实输出**（在 macOS / Apple Silicon / Docker
-Desktop 上实际执行采集）。原理和架构见 [README.zh-CN.md](README.zh-CN.md)。
+Desktop 上实际执行采集）。全程用 `kubectl` / `kind` / `helm` 逐步敲，不依赖封装脚本。
+原理和架构见 [README.zh-CN.md](README.zh-CN.md)。
+
+仓库里仍有 `scripts/`，只是可选的一键封装；本手册讲解不以脚本为准。
 
 **目录**
 
@@ -86,8 +89,7 @@ Kustomize Version: v5.5.0
 一个 manager，两个 worker，每个都是单节点集群。
 
 ```console
-gyliu-cary@Mac multikueue-minimal-demo % ./scripts/0-create-clusters.sh
-==> creating cluster mk-manager
+gyliu-cary@Mac multikueue-minimal-demo % kind create cluster --name mk-manager --image kindest/node:v1.35.0 --wait 120s
 Creating cluster "mk-manager" ...
  • Ensuring node image (kindest/node:v1.35.0) 🖼  ...
  ✓ Ensuring node image (kindest/node:v1.35.0) 🖼
@@ -106,28 +108,15 @@ Creating cluster "mk-manager" ...
  • Ready after 16s 💚
 Set kubectl context to "kind-mk-manager"
 
-==> creating cluster mk-worker1
+gyliu-cary@Mac multikueue-minimal-demo % kind create cluster --name mk-worker1 --image kindest/node:v1.35.0 --wait 120s
 Creating cluster "mk-worker1" ...
  ✓ Ready after 17s 💚
 Set kubectl context to "kind-mk-worker1"
 
-==> creating cluster mk-worker2
+gyliu-cary@Mac multikueue-minimal-demo % kind create cluster --name mk-worker2 --image kindest/node:v1.35.0 --wait 120s
 Creating cluster "mk-worker2" ...
  ✓ Ready after 16s 💚
 Set kubectl context to "kind-mk-worker2"
-
-==> clusters ready:
-mk-manager
-mk-worker1
-mk-worker2
-```
-
-等价的手工命令：
-
-```console
-gyliu-cary@Mac multikueue-minimal-demo % kind create cluster --name mk-manager --image kindest/node:v1.35.0 --wait 120s
-gyliu-cary@Mac multikueue-minimal-demo % kind create cluster --name mk-worker1 --image kindest/node:v1.35.0 --wait 120s
-gyliu-cary@Mac multikueue-minimal-demo % kind create cluster --name mk-worker2 --image kindest/node:v1.35.0 --wait 120s
 ```
 
 ### 验证
@@ -246,31 +235,7 @@ gyliu-cary@Mac multikueue-minimal-demo % kubectl config use-context kind-mk-mana
 Switched to context "kind-mk-manager".
 ```
 
-### 方式三：用本 demo 的辅助脚本
-
-`scripts/ctx.sh` 封装了上面的操作，参数支持简写：
-
-```console
-gyliu-cary@Mac multikueue-minimal-demo % ./scripts/ctx.sh
-==> demo contexts (* = current):
-  * kind-mk-manager
-    kind-mk-worker1
-    kind-mk-worker2
-
-usage: ./scripts/ctx.sh <manager|worker1|worker2>
-```
-
-```console
-gyliu-cary@Mac multikueue-minimal-demo % ./scripts/ctx.sh worker1
-Switched to context "kind-mk-worker1".
-==> now pointing at mk-worker1
-NAME                       STATUS   ROLES           AGE   VERSION
-mk-worker1-control-plane   Ready    control-plane   38m   v1.35.0
-```
-
-支持的简写：`manager` / `mgr` / `m`，`worker1` / `w1` / `1`，`worker2` / `w2` / `2`。
-
-### 方式四：定义 shell 别名（做实验时最省事）
+### 方式三：定义 shell 别名（做实验时最省事）
 
 把这几行贴进当前终端（或写进 `~/.zshrc`）：
 
@@ -288,7 +253,7 @@ gyliu-cary@Mac multikueue-minimal-demo % kw1 -n default get pods
 gyliu-cary@Mac multikueue-minimal-demo % kw2 -n default get pods
 ```
 
-### 方式五：kubectx（第三方工具）
+### 方式四：kubectx（第三方工具）
 
 ```console
 gyliu-cary@Mac multikueue-minimal-demo % brew install kubectx
@@ -307,7 +272,15 @@ gyliu-cary@Mac multikueue-minimal-demo % kubectx -          # 回到上一个 co
 | worker 配额使用情况 | worker | `kubectl --context kind-mk-worker1 get clusterqueue cluster-queue` |
 | Kueue 控制器日志 | manager | `kubectl --context kind-mk-manager -n kueue-system logs deployment/kueue-controller-manager` |
 
-> `./scripts/status.sh` 会自动遍历 3 个集群，把上面这些一次性打出来，不用手工切换。
+对照一次「提交在哪 vs 跑在哪」，把这几条挨个跑：
+
+```console
+gyliu-cary@Mac multikueue-minimal-demo % kubectl --context kind-mk-manager -n default get jobs,jobsets,rayjobs,workloads,pods
+gyliu-cary@Mac multikueue-minimal-demo % kubectl --context kind-mk-worker1 -n default get jobs,jobsets,rayjobs,pods
+gyliu-cary@Mac multikueue-minimal-demo % kubectl --context kind-mk-worker1 get clusterqueue cluster-queue
+gyliu-cary@Mac multikueue-minimal-demo % kubectl --context kind-mk-worker2 -n default get jobs,jobsets,rayjobs,pods
+gyliu-cary@Mac multikueue-minimal-demo % kubectl --context kind-mk-worker2 get clusterqueue cluster-queue
+```
 
 ---
 
@@ -321,58 +294,53 @@ CRD 后装的话 Kueue 不会自动感知。
 上看到这个字段就主动不干活，所以 manager 上不会产生任何 Pod。
 （要求 JobSet ≥ v0.6.0、KubeRay ≥ v1.3.1。）
 
+三个集群都要装。对每个 context（`kind-mk-manager`、`kind-mk-worker1`、`kind-mk-worker2`）
+各跑一遍下面这组命令。先加 helm repo（只需一次）：
+
 ```console
-gyliu-cary@Mac multikueue-minimal-demo % ./scripts/1-install-frameworks.sh
-==> adding the kuberay helm repo
-==> installing JobSet v0.12.0 on mk-manager
-==> installing KubeRay 1.6.2 on mk-manager
-Release "kuberay-operator" does not exist. Installing it now.
-NAME: kuberay-operator
-LAST DEPLOYED: Fri Aug 14 10:44:19 2026
-NAMESPACE: kuberay-system
-STATUS: deployed
-REVISION: 1
-
-==> installing JobSet v0.12.0 on mk-worker1
-==> installing KubeRay 1.6.2 on mk-worker1
-...
-==> waiting for the JobSet controller on mk-manager
-deployment "jobset-controller-manager" successfully rolled out
-==> waiting for the JobSet controller on mk-worker1
-deployment "jobset-controller-manager" successfully rolled out
-==> waiting for the JobSet controller on mk-worker2
-deployment "jobset-controller-manager" successfully rolled out
-
-==> framework CRDs now available:
---- mk-manager
-jobsets.jobset.x-k8s.io
-rayjobs.ray.io
-rayclusters.ray.io
-rayservices.ray.io
---- mk-worker1
-jobsets.jobset.x-k8s.io
-rayjobs.ray.io
-rayclusters.ray.io
-rayservices.ray.io
---- mk-worker2
-jobsets.jobset.x-k8s.io
-rayjobs.ray.io
-rayclusters.ray.io
-rayservices.ray.io
+gyliu-cary@Mac multikueue-minimal-demo % helm repo add kuberay https://ray-project.github.io/kuberay-helm/
+gyliu-cary@Mac multikueue-minimal-demo % helm repo update kuberay
 ```
 
-等价的手工命令（对每个 context 各跑一遍）：
+以 manager 为例（worker 把 `--context` / `--kube-context` 换成对应名字即可）：
 
 ```console
 gyliu-cary@Mac multikueue-minimal-demo % kubectl --context kind-mk-manager apply --server-side \
   -f https://github.com/kubernetes-sigs/jobset/releases/download/v0.12.0/manifests.yaml
 
-gyliu-cary@Mac multikueue-minimal-demo % helm repo add kuberay https://ray-project.github.io/kuberay-helm/
 gyliu-cary@Mac multikueue-minimal-demo % helm --kube-context kind-mk-manager upgrade --install kuberay-operator \
   kuberay/kuberay-operator --version 1.6.2 -n kuberay-system --create-namespace --wait
+
+gyliu-cary@Mac multikueue-minimal-demo % kubectl --context kind-mk-manager -n jobset-system \
+  rollout status deployment/jobset-controller-manager --timeout=300s
+deployment "jobset-controller-manager" successfully rolled out
+```
+
+真实输出（三个集群装完后）：
+
+```
+NAME: kuberay-operator
+LAST DEPLOYED: Fri Aug 14 10:44:19 2026
+NAMESPACE: kuberay-system
+STATUS: deployed
+REVISION: 1
 ```
 
 ### 验证
+
+```console
+gyliu-cary@Mac multikueue-minimal-demo % kubectl --context kind-mk-manager get crd \
+  jobsets.jobset.x-k8s.io rayjobs.ray.io rayclusters.ray.io rayservices.ray.io \
+  -o custom-columns='CRD:.metadata.name' --no-headers
+jobsets.jobset.x-k8s.io
+rayjobs.ray.io
+rayclusters.ray.io
+rayservices.ray.io
+```
+
+三个集群的 CRD 列表应相同。worker 上再各跑一遍 `kubectl --context kind-mk-worker1 get crd ...`。
+
+再确认 operator 在跑：
 
 ```console
 gyliu-cary@Mac multikueue-minimal-demo % kubectl --context kind-mk-manager get pods -A | grep -E "jobset|kuberay"
@@ -401,27 +369,43 @@ MultiKueue: {
 
 ### 3.2 安装
 
+对三个 context 各跑一遍：
+
 ```console
-gyliu-cary@Mac multikueue-minimal-demo % ./scripts/2-install-kueue.sh
-==> installing Kueue v0.19.1 on mk-manager
-==> pinning enabled integrations on mk-manager
+gyliu-cary@Mac multikueue-minimal-demo % kubectl --context kind-mk-manager apply --server-side \
+  -f https://github.com/kubernetes-sigs/kueue/releases/download/v0.19.1/manifests.yaml
+gyliu-cary@Mac multikueue-minimal-demo % kubectl --context kind-mk-manager apply -f manifests/kueue-config.yaml
 configmap/kueue-manager-config configured
+gyliu-cary@Mac multikueue-minimal-demo % kubectl --context kind-mk-manager -n kueue-system \
+  rollout restart deployment/kueue-controller-manager
 deployment.apps/kueue-controller-manager restarted
-==> installing Kueue v0.19.1 on mk-worker1
-==> pinning enabled integrations on mk-worker1
-configmap/kueue-manager-config configured
-deployment.apps/kueue-controller-manager restarted
-==> installing Kueue v0.19.1 on mk-worker2
-==> pinning enabled integrations on mk-worker2
-configmap/kueue-manager-config configured
-deployment.apps/kueue-controller-manager restarted
-==> waiting for kueue-controller-manager on mk-manager
+gyliu-cary@Mac multikueue-minimal-demo % kubectl --context kind-mk-manager -n kueue-system \
+  rollout status deployment/kueue-controller-manager --timeout=300s
 deployment "kueue-controller-manager" successfully rolled out
-==> waiting for kueue-controller-manager on mk-worker1
-deployment "kueue-controller-manager" successfully rolled out
-==> waiting for kueue-controller-manager on mk-worker2
-deployment "kueue-controller-manager" successfully rolled out
-==> enabled integrations (should list batch/job, jobset and the ray kinds):
+```
+
+把 `kind-mk-manager` 换成 `kind-mk-worker1`、`kind-mk-worker2` 再各做一次。
+
+`apply -f manifests/kueue-config.yaml` 之后必须 `rollout restart`：Kueue 只在启动时读这份
+ConfigMap，不重启就不会收窄 integrations。
+
+webhook 就绪后再 apply 任何 Kueue CR，否则会 `connection refused`。可以看 endpoint：
+
+```console
+gyliu-cary@Mac multikueue-minimal-demo % kubectl --context kind-mk-manager -n kueue-system get endpointslice \
+  -l kubernetes.io/service-name=kueue-webhook-service
+```
+
+装完后核对 integrations 是否已被收窄：
+
+```console
+gyliu-cary@Mac multikueue-minimal-demo % kubectl --context kind-mk-manager -n kueue-system get cm kueue-manager-config \
+  -o jsonpath='{.data.controller_manager_config\.yaml}'
+```
+
+应能看到：
+
+```
 integrations:
   frameworks:
   - "batch/job"
@@ -429,15 +413,6 @@ integrations:
   - "ray.io/rayjob"
   - "ray.io/raycluster"
   - "ray.io/rayservice"
-```
-
-等价的手工命令：
-
-```console
-gyliu-cary@Mac multikueue-minimal-demo % kubectl --context kind-mk-manager apply --server-side \
-  -f https://github.com/kubernetes-sigs/kueue/releases/download/v0.19.1/manifests.yaml
-gyliu-cary@Mac multikueue-minimal-demo % kubectl --context kind-mk-manager apply -f manifests/kueue-config.yaml
-gyliu-cary@Mac multikueue-minimal-demo % kubectl --context kind-mk-manager -n kueue-system rollout restart deployment/kueue-controller-manager
 ```
 
 ### 3.3 为什么必须改 ConfigMap
@@ -515,23 +490,30 @@ worker 集群就是一个普通的独立 Kueue 集群。关键约束：**namespa
 原样复制过去的。
 
 ```console
-gyliu-cary@Mac multikueue-minimal-demo % ./scripts/3-setup-workers.sh
-==> applying queues on mk-worker1
+gyliu-cary@Mac multikueue-minimal-demo % kubectl --context kind-mk-worker1 apply -f manifests/worker-queues.yaml
 resourceflavor.kueue.x-k8s.io/default-flavor created
 clusterqueue.kueue.x-k8s.io/cluster-queue created
 localqueue.kueue.x-k8s.io/user-queue created
-==> applying queues on mk-worker2
+
+gyliu-cary@Mac multikueue-minimal-demo % kubectl --context kind-mk-worker2 apply -f manifests/worker-queues.yaml
 resourceflavor.kueue.x-k8s.io/default-flavor created
 clusterqueue.kueue.x-k8s.io/cluster-queue created
 localqueue.kueue.x-k8s.io/user-queue created
-==> worker queues:
---- mk-worker1
+```
+
+如果报 webhook `connection refused`，等几秒再 `kubectl apply` 一次。
+
+确认两边队列都在：
+
+```console
+gyliu-cary@Mac multikueue-minimal-demo % kubectl --context kind-mk-worker1 get clusterqueue,localqueue -A
 NAME                                        COHORT   PENDING WORKLOADS
 clusterqueue.kueue.x-k8s.io/cluster-queue            0
 
 NAMESPACE   NAME                                   CLUSTERQUEUE    PENDING WORKLOADS   ADMITTED WORKLOADS
 default     localqueue.kueue.x-k8s.io/user-queue   cluster-queue   0                   0
---- mk-worker2
+
+gyliu-cary@Mac multikueue-minimal-demo % kubectl --context kind-mk-worker2 get clusterqueue,localqueue -A
 NAME                                        COHORT   PENDING WORKLOADS
 clusterqueue.kueue.x-k8s.io/cluster-queue            0
 
@@ -554,40 +536,25 @@ resources:
 
 ## 第 5 步：打通 manager 到 worker 的连接
 
-这是**唯一**的跨集群连接机制：一份 kubeconfig，存成 manager 上的 Secret。
+这是**唯一**的跨集群连接机制：manager 拿一份 kubeconfig，用里面的 **token** 向 worker
+的 API server 证明身份，然后才能 `watch Workload` / `create Job`。
 
-```console
-gyliu-cary@Mac multikueue-minimal-demo % ./scripts/4-connect.sh
-==> creating MultiKueue ServiceAccount on mk-worker1
-serviceaccount/multikueue-sa created
-clusterrole.rbac.authorization.k8s.io/multikueue-sa-role created
-clusterrolebinding.rbac.authorization.k8s.io/multikueue-sa-crb created
-secret/multikueue-sa created
-==> waiting for the ServiceAccount token to be populated on mk-worker1
-==> mk-worker1 API server reachable in-network at https://172.19.0.3:6443
-==> storing mk-worker1 kubeconfig as a Secret on mk-manager
-secret/mk-worker1-secret created
-==> creating MultiKueue ServiceAccount on mk-worker2
-serviceaccount/multikueue-sa created
-clusterrole.rbac.authorization.k8s.io/multikueue-sa-role created
-clusterrolebinding.rbac.authorization.k8s.io/multikueue-sa-crb created
-secret/multikueue-sa created
-==> waiting for the ServiceAccount token to be populated on mk-worker2
-==> mk-worker2 API server reachable in-network at https://172.19.0.4:6443
-==> storing mk-worker2 kubeconfig as a Secret on mk-manager
-secret/mk-worker2-secret created
-==> connection secrets on the manager:
-mk-worker1-secret           Opaque   1      0s
-mk-worker2-secret           Opaque   1      0s
-```
+下面以 `mk-worker1` 为例，完整敲一遍；`mk-worker2` 同样做，只改 context 和 Secret 名字。
 
-这一步做了三件事：
+### 5.1 在 worker 上创建受限 ServiceAccount
 
-**1）在 worker 上创建受限的 ServiceAccount**（`manifests/worker-multikueue-rbac.yaml`）。
-权限只覆盖 Kueue Workload + 本 demo 安装的三种框架。注意这个 ClusterRole 必须覆盖第 3 步
+权限只覆盖 Kueue Workload + 本 demo 安装的三种框架。这个 ClusterRole 必须覆盖第 3 步
 `integrations.frameworks` 里的每一个框架，否则 manager 的 watch 会被 403 拒绝。
 
-**2）为该 SA 申请长期 token**。k8s 1.24 起不再自动给 SA 建 token Secret，要显式声明：
+```console
+gyliu-cary@Mac multikueue-minimal-demo % kubectl --context kind-mk-worker1 apply -f manifests/worker-multikueue-rbac.yaml
+serviceaccount/multikueue-sa created
+clusterrole.rbac.authorization.k8s.io/multikueue-sa-role created
+clusterrolebinding.rbac.authorization.k8s.io/multikueue-sa-crb created
+secret/multikueue-sa created
+```
+
+YAML 里显式声明了长期 token Secret（k8s 1.24 起不再自动给 SA 建 token）：
 
 ```yaml
 apiVersion: v1
@@ -600,21 +567,58 @@ metadata:
     kubernetes.io/service-account.name: multikueue-sa
 ```
 
-**3）拼出 kubeconfig，注意 server 地址** ← **kind 环境最大的坑**
+等几秒让 kube-controller-manager 把 token 填进 Secret，再确认非空：
 
-`kind get kubeconfig` 给出的地址是 `https://127.0.0.1:<随机端口>`，**只在宿主机上有效**。
-manager 上的 Kueue Pod 跑在容器网络里，访问不到。必须换成 worker control-plane 容器在
-`kind` docker 网络上的 IP：
+```console
+gyliu-cary@Mac multikueue-minimal-demo % kubectl --context kind-mk-worker1 -n kueue-system get secret multikueue-sa \
+  -o jsonpath='{.data.token}' | wc -c
+```
+
+### 5.2 取出 token 和 CA，拼出 kubeconfig
+
+**kind 环境最大的坑：** `kind get kubeconfig` 给出的是 `https://127.0.0.1:<随机端口>`，
+只在宿主机有效。manager 上的 Kueue Pod 跑在 docker 网络里，必须用 worker control-plane
+容器在 `kind` 网上的 IP：
 
 ```console
 gyliu-cary@Mac multikueue-minimal-demo % docker inspect -f '{{.NetworkSettings.Networks.kind.IPAddress}}' mk-worker1-control-plane
 172.19.0.3
 ```
 
-kubeadm 会把这个 IP 写进 API server 的服务端证书 SAN，所以 TLS 校验照样通过，不需要
+kubeadm 会把这个 IP 写进 API server 证书 SAN，所以 TLS 照样校验，不需要
 `insecure-skip-tls-verify`。
 
-生成出来的 kubeconfig 长这样（token 已截断）：
+把 token、CA、这个 IP 写成一份 kubeconfig（token / CA 不要手抄，从 Secret 抽）：
+
+```console
+gyliu-cary@Mac multikueue-minimal-demo % TOKEN=$(kubectl --context kind-mk-worker1 -n kueue-system get secret multikueue-sa \
+    -o jsonpath='{.data.token}' | base64 -d)
+gyliu-cary@Mac multikueue-minimal-demo % CA=$(kubectl --context kind-mk-worker1 -n kueue-system get secret multikueue-sa \
+    -o jsonpath='{.data.ca\.crt}')
+gyliu-cary@Mac multikueue-minimal-demo % API_IP=$(docker inspect -f '{{.NetworkSettings.Networks.kind.IPAddress}}' mk-worker1-control-plane)
+
+gyliu-cary@Mac multikueue-minimal-demo % cat > /tmp/mk-worker1.kubeconfig <<EOF
+apiVersion: v1
+kind: Config
+clusters:
+  - name: mk-worker1
+    cluster:
+      certificate-authority-data: ${CA}
+      server: https://${API_IP}:6443
+users:
+  - name: multikueue-sa
+    user:
+      token: ${TOKEN}
+contexts:
+  - name: mk-worker1
+    context:
+      cluster: mk-worker1
+      user: multikueue-sa
+current-context: mk-worker1
+EOF
+```
+
+生成出来长这样（token 已截断）：
 
 ```yaml
 apiVersion: v1
@@ -636,6 +640,27 @@ contexts:
 current-context: mk-worker1
 ```
 
+`certificate-authority-data` 用来确认对面真是 w1 的 API server；`token` 用来证明调用方是
+`multikueue-sa`。没有 token，worker 会 `401`，后面的 create/watch 都不会发生。
+
+### 5.3 把 kubeconfig 存成 manager 上的 Secret
+
+Kueue 从 Secret 的 `kubeconfig` 这个 key 读出远程 client：
+
+```console
+gyliu-cary@Mac multikueue-minimal-demo % kubectl --context kind-mk-manager -n kueue-system create secret generic \
+  mk-worker1-secret --from-file=kubeconfig=/tmp/mk-worker1.kubeconfig
+secret/mk-worker1-secret created
+```
+
+对 `mk-worker2` 重复 5.1～5.3：`apply` RBAC、拼 `/tmp/mk-worker2.kubeconfig`、创建
+`mk-worker2-secret`。IP 用：
+
+```console
+gyliu-cary@Mac multikueue-minimal-demo % docker inspect -f '{{.NetworkSettings.Networks.kind.IPAddress}}' mk-worker2-control-plane
+172.19.0.4
+```
+
 ### 验证
 
 ```console
@@ -651,8 +676,7 @@ mk-worker2-secret           Opaque   1      12m
 创建那条对象链：`ClusterQueue → AdmissionCheck → MultiKueueConfig → MultiKueueCluster → Secret`。
 
 ```console
-gyliu-cary@Mac multikueue-minimal-demo % ./scripts/5-setup-manager.sh
-==> applying MultiKueue setup on mk-manager
+gyliu-cary@Mac multikueue-minimal-demo % kubectl --context kind-mk-manager apply -f manifests/manager-multikueue.yaml
 resourceflavor.kueue.x-k8s.io/default-flavor created
 clusterqueue.kueue.x-k8s.io/cluster-queue created
 localqueue.kueue.x-k8s.io/user-queue created
@@ -660,11 +684,19 @@ admissioncheck.kueue.x-k8s.io/multikueue-check created
 multikueueconfig.kueue.x-k8s.io/multikueue-config created
 multikueuecluster.kueue.x-k8s.io/mk-worker1 created
 multikueuecluster.kueue.x-k8s.io/mk-worker2 created
-==> waiting for both MultiKueueClusters to report Active
+```
+
+Kueue 会用第 5 步存的 Secret 去连 worker。等两边都 `Active`：
+
+```console
+gyliu-cary@Mac multikueue-minimal-demo % kubectl --context kind-mk-manager get multikueuecluster \
+  -o custom-columns='CLUSTER:.metadata.name,ACTIVE:.status.conditions[?(@.type=="Active")].status,REASON:.status.conditions[?(@.type=="Active")].reason,MESSAGE:.status.conditions[?(@.type=="Active")].message'
 CLUSTER      ACTIVE   REASON   MESSAGE
 mk-worker1   True     Active   Connected
 mk-worker2   True     Active   Connected
 
+gyliu-cary@Mac multikueue-minimal-demo % kubectl --context kind-mk-manager get admissioncheck multikueue-check \
+  -o custom-columns='CHECK:.metadata.name,ACTIVE:.status.conditions[?(@.type=="Active")].status,MESSAGE:.status.conditions[?(@.type=="Active")].message'
 CHECK              ACTIVE   MESSAGE
 multikueue-check   True     The admission check is active
 ```
@@ -720,47 +752,59 @@ mk-worker2   True        3m
 
 ### 执行
 
+先清掉残留负载（三个集群都删，避免上次实验占着配额）：
+
 ```console
-gyliu-cary@Mac multikueue-minimal-demo % ./scripts/run-demo-job.sh
-==> deleting demo workloads on mk-manager
-==> sweeping mk-worker1
-==> sweeping mk-worker2
-==> queues are empty:
-mk-worker1   0     0
-mk-worker2   0     0
-==> submitting 3 batch/Jobs to mk-manager
+gyliu-cary@Mac multikueue-minimal-demo % kubectl --context kind-mk-manager -n default delete jobs,jobsets,rayjobs --all --ignore-not-found
+gyliu-cary@Mac multikueue-minimal-demo % kubectl --context kind-mk-worker1 -n default delete jobs,jobsets,rayjobs --all --ignore-not-found
+gyliu-cary@Mac multikueue-minimal-demo % kubectl --context kind-mk-worker2 -n default delete jobs,jobsets,rayjobs --all --ignore-not-found
+```
+
+提交 3 个 Job（只打到 manager）：
+
+```console
+gyliu-cary@Mac multikueue-minimal-demo % kubectl --context kind-mk-manager apply -f examples/jobs.yaml
 job.batch/demo-job-1 created
 job.batch/demo-job-2 created
 job.batch/demo-job-3 created
-==> waiting for MultiKueue to dispatch...
+```
 
-==> MANAGER (mk-manager) — submitted here, but nothing executes here
+等十几秒让 MultiKueue 分发，然后对照三个集群：
+
+```console
+gyliu-cary@Mac multikueue-minimal-demo % kubectl --context kind-mk-manager -n default get jobs,pods
 NAME                   STATUS    COMPLETIONS   DURATION   AGE
 job.batch/demo-job-1   Running   0/1                      6s
 job.batch/demo-job-2   Running   0/1           5s         6s
 job.batch/demo-job-3   Running   0/1           4s         6s
-  pods on the manager (expected: none):
-  <none>
+No resources found in default namespace.    # ← manager 上没有 Pod
 
-==> MANAGER — Workloads: which worker cluster each one was dispatched to
+gyliu-cary@Mac multikueue-minimal-demo % kubectl --context kind-mk-manager -n default get workloads \
+  -o custom-columns='WORKLOAD:.metadata.name,ADMITTED:.status.conditions[?(@.type=="Admitted")].status,DISPATCHED-TO:.status.clusterName,MESSAGE:.status.admissionChecks[0].message'
 WORKLOAD               ADMITTED   DISPATCHED-TO   MESSAGE
 job-demo-job-1-a9067   <none>     <none>
 job-demo-job-2-dd6ff   True       mk-worker2      The workload was admitted on "mk-worker2"
 job-demo-job-3-53d6e   True       mk-worker1      The workload was admitted on "mk-worker1"
 
-==> WORKER (mk-worker1) — the Pods actually run here
+gyliu-cary@Mac multikueue-minimal-demo % kubectl --context kind-mk-worker1 -n default get jobs,pods
 NAME                   STATUS    COMPLETIONS   DURATION   AGE
 job.batch/demo-job-3   Running   0/1           4s         4s
 NAME               READY   STATUS    RESTARTS   AGE
 demo-job-3-lhjdn   1/1     Running   0          4s
+
+gyliu-cary@Mac multikueue-minimal-demo % kubectl --context kind-mk-worker1 get clusterqueue cluster-queue \
+  -o custom-columns='CLUSTERQUEUE:.metadata.name,PENDING:.status.pendingWorkloads,ADMITTED:.status.admittedWorkloads'
 CLUSTERQUEUE    PENDING   ADMITTED
 cluster-queue   1         1
 
-==> WORKER (mk-worker2) — the Pods actually run here
+gyliu-cary@Mac multikueue-minimal-demo % kubectl --context kind-mk-worker2 -n default get jobs,pods
 NAME                   STATUS    COMPLETIONS   DURATION   AGE
 job.batch/demo-job-2   Running   0/1           5s         5s
 NAME               READY   STATUS    RESTARTS   AGE
 demo-job-2-lhjct   1/1     Running   0          5s
+
+gyliu-cary@Mac multikueue-minimal-demo % kubectl --context kind-mk-worker2 get clusterqueue cluster-queue \
+  -o custom-columns='CLUSTERQUEUE:.metadata.name,PENDING:.status.pendingWorkloads,ADMITTED:.status.admittedWorkloads'
 CLUSTERQUEUE    PENDING   ADMITTED
 cluster-queue   1         1
 ```
@@ -853,36 +897,44 @@ gyliu-cary@Mac multikueue-minimal-demo % kubectl --context kind-mk-manager -n de
 
 ### 执行
 
+同样先清掉残留，再只向 manager 提交 JobSet：
+
 ```console
-gyliu-cary@Mac multikueue-minimal-demo % ./scripts/run-demo-jobset.sh
-==> deleting demo workloads on mk-manager
-==> sweeping mk-worker1
-==> sweeping mk-worker2
-==> queues are empty:
-mk-worker1   0     0
-mk-worker2   0     0
-==> submitting a JobSet to mk-manager
+gyliu-cary@Mac multikueue-minimal-demo % kubectl --context kind-mk-manager -n default delete jobs,jobsets,rayjobs --all --ignore-not-found
+gyliu-cary@Mac multikueue-minimal-demo % kubectl --context kind-mk-worker1 -n default delete jobs,jobsets,rayjobs --all --ignore-not-found
+gyliu-cary@Mac multikueue-minimal-demo % kubectl --context kind-mk-worker2 -n default delete jobs,jobsets,rayjobs --all --ignore-not-found
+
+gyliu-cary@Mac multikueue-minimal-demo % kubectl --context kind-mk-manager apply -f examples/jobset.yaml
 jobset.jobset.x-k8s.io/demo-jobset created
-==> spec.managedBy defaulted by the Kueue webhook on the manager:
+```
+
+看 webhook 有没有打上 `managedBy`（YAML 里没有写这个字段）：
+
+```console
+gyliu-cary@Mac multikueue-minimal-demo % kubectl --context kind-mk-manager -n default get jobset demo-jobset \
+  -o jsonpath='{.metadata.name}{"  managedBy="}{.spec.managedBy}{"  suspend="}{.spec.suspend}{"\n"}'
 demo-jobset  managedBy=kueue.x-k8s.io/multikueue  suspend=false
-==> waiting for MultiKueue to dispatch...
-==> dispatched to mk-worker2
+```
 
-==> MANAGER (mk-manager) — submitted here, but nothing executes here
-NAME                                 TERMINALSTATE   RESTARTS   COMPLETED   SUSPENDED   AGE
-jobset.jobset.x-k8s.io/demo-jobset                                          false       2s
-  pods on the manager (expected: none):
-  <none>
+看被派到哪个 worker：
 
-==> MANAGER — Workloads: which worker cluster each one was dispatched to
+```console
+gyliu-cary@Mac multikueue-minimal-demo % kubectl --context kind-mk-manager -n default get workloads \
+  -o custom-columns='WORKLOAD:.metadata.name,ADMITTED:.status.conditions[?(@.type=="Admitted")].status,DISPATCHED-TO:.status.clusterName,MESSAGE:.status.admissionChecks[0].message'
 WORKLOAD                   ADMITTED   DISPATCHED-TO   MESSAGE
 jobset-demo-jobset-0e211   True       mk-worker2      The workload was admitted on "mk-worker2"
+```
 
-==> WORKER (mk-worker1) — the Pods actually run here
-CLUSTERQUEUE    PENDING   ADMITTED
-cluster-queue   0         0
+manager 上没有 Pod、没有子 Job；真正的子 Job 只在胜者上：
 
-==> WORKER (mk-worker2) — the Pods actually run here
+```console
+gyliu-cary@Mac multikueue-minimal-demo % kubectl --context kind-mk-manager -n default get jobs,pods
+No resources found in default namespace.
+
+gyliu-cary@Mac multikueue-minimal-demo % kubectl --context kind-mk-worker1 -n default get jobs,jobsets,pods
+No resources found in default namespace.
+
+gyliu-cary@Mac multikueue-minimal-demo % kubectl --context kind-mk-worker2 -n default get jobs,jobsets,pods
 NAME                              STATUS    COMPLETIONS   DURATION   AGE
 job.batch/demo-jobset-workers-0   Running   0/1           2s         2s
 job.batch/demo-jobset-workers-1   Running   0/1           2s         2s
@@ -891,8 +943,6 @@ jobset.jobset.x-k8s.io/demo-jobset                   0                      fals
 NAME                            READY   STATUS              RESTARTS   AGE
 demo-jobset-workers-0-0-p44m7   0/1     ContainerCreating   0          2s
 demo-jobset-workers-1-0-9xqnm   0/1     ContainerCreating   0          2s
-CLUSTERQUEUE    PENDING   ADMITTED
-cluster-queue   0         1
 ```
 
 ### 结果解读
@@ -934,61 +984,72 @@ gyliu-cary@Mac multikueue-minimal-demo % grep -c managedBy examples/jobset.yaml
 
 ### 执行
 
-脚本会先把 Ray 镜像预加载进两个 worker（177MB 的精简 Ray 镜像，比官方 `rayproject/ray`
-的数 GB 轻很多）：
+先清残留。Ray 镜像约 177MB（Kueue 测试用的精简镜像），不预载的话 Pod 会在
+`ContainerCreating` 卡很久。**不要用 `kind load docker-image`**（多架构 attestation 会
+报 `content digest ... not found`），改用单平台 archive：
 
 ```console
-gyliu-cary@Mac multikueue-minimal-demo % ./scripts/run-demo-rayjob.sh
-==> deleting demo workloads on mk-manager
-==> sweeping mk-worker1
-==> sweeping mk-worker2
-==> queues are empty:
-mk-worker1   0     0
-mk-worker2   0     0
-==> pre-pulling us-central1-docker.pkg.dev/k8s-staging-images/kueue/ray-project-mini:0.0.4 on the host
-==> loading the Ray image into mk-worker1
-==> loading the Ray image into mk-worker2
-==> submitting a RayJob to mk-manager
+gyliu-cary@Mac multikueue-minimal-demo % kubectl --context kind-mk-manager -n default delete jobs,jobsets,rayjobs --all --ignore-not-found
+gyliu-cary@Mac multikueue-minimal-demo % kubectl --context kind-mk-worker1 -n default delete jobs,jobsets,rayjobs --all --ignore-not-found
+gyliu-cary@Mac multikueue-minimal-demo % kubectl --context kind-mk-worker2 -n default delete jobs,jobsets,rayjobs --all --ignore-not-found
+
+gyliu-cary@Mac multikueue-minimal-demo % docker pull us-central1-docker.pkg.dev/k8s-staging-images/kueue/ray-project-mini:0.0.4
+gyliu-cary@Mac multikueue-minimal-demo % docker save --platform linux/arm64 \
+  us-central1-docker.pkg.dev/k8s-staging-images/kueue/ray-project-mini:0.0.4 -o /tmp/ray-mini.tar
+gyliu-cary@Mac multikueue-minimal-demo % kind load image-archive /tmp/ray-mini.tar --name mk-worker1
+gyliu-cary@Mac multikueue-minimal-demo % kind load image-archive /tmp/ray-mini.tar --name mk-worker2
+```
+
+Intel Mac 把 `--platform linux/arm64` 换成 `linux/amd64`。
+
+提交 RayJob：
+
+```console
+gyliu-cary@Mac multikueue-minimal-demo % kubectl --context kind-mk-manager apply -f examples/rayjob.yaml
 rayjob.ray.io/demo-rayjob created
-==> spec.managedBy defaulted by the Kueue webhook on the manager:
+```
+
+```console
+gyliu-cary@Mac multikueue-minimal-demo % kubectl --context kind-mk-manager -n default get rayjob demo-rayjob \
+  -o jsonpath='{.metadata.name}{"  managedBy="}{.spec.managedBy}{"  suspend="}{.spec.suspend}{"\n"}'
 demo-rayjob  managedBy=kueue.x-k8s.io/multikueue  suspend=
-==> waiting for MultiKueue to dispatch...
-==> dispatched to mk-worker2
-==> watching the RayCluster come up on the worker (Ctrl-C is safe)...
-  demo-rayjob-mm7f9-head-7zzgz                 0/1   Running       0     2s
-  demo-rayjob-mm7f9-small-group-worker-llslc   0/1   Init:0/1      0     2s
+```
 
-==> MANAGER (mk-manager) — submitted here, but nothing executes here
-NAME                        JOB STATUS   DEPLOYMENT STATUS   RAY CLUSTER NAME    START TIME             END TIME   AGE
-rayjob.ray.io/demo-rayjob                Initializing        demo-rayjob-mm7f9   2026-08-14T14:55:38Z              3s
-  pods on the manager (expected: none):
-  <none>
+看派到哪：
 
-==> MANAGER — Workloads: which worker cluster each one was dispatched to
+```console
+gyliu-cary@Mac multikueue-minimal-demo % kubectl --context kind-mk-manager -n default get workloads \
+  -o custom-columns='WORKLOAD:.metadata.name,ADMITTED:.status.conditions[?(@.type=="Admitted")].status,DISPATCHED-TO:.status.clusterName,MESSAGE:.status.admissionChecks[0].message'
 WORKLOAD                   ADMITTED   DISPATCHED-TO   MESSAGE
 rayjob-demo-rayjob-a5a54   True       mk-worker2      The workload was admitted on "mk-worker2"
+```
 
-==> WORKER (mk-worker1) — the Pods actually run here
-CLUSTERQUEUE    PENDING   ADMITTED
-cluster-queue   0         0
+manager 上没有 Pod；RayCluster 只在胜者上出现：
 
-==> WORKER (mk-worker2) — the Pods actually run here
+```console
+gyliu-cary@Mac multikueue-minimal-demo % kubectl --context kind-mk-manager -n default get pods
+No resources found in default namespace.
+
+gyliu-cary@Mac multikueue-minimal-demo % kubectl --context kind-mk-worker2 -n default get rayjob,pods
 NAME                        JOB STATUS   DEPLOYMENT STATUS   RAY CLUSTER NAME    START TIME             END TIME   AGE
 rayjob.ray.io/demo-rayjob                Initializing        demo-rayjob-mm7f9   2026-08-14T14:55:38Z              2s
 NAME                                         READY   STATUS   RESTARTS   AGE
 demo-rayjob-mm7f9-head-7zzgz                 0/1     Running  0          2s
 demo-rayjob-mm7f9-small-group-worker-llslc   0/1     Init:0/1 0          2s
-CLUSTERQUEUE    PENDING   ADMITTED
-cluster-queue   0         1
+```
 
-==> waiting for the RayJob to finish...
-==> final state on the manager (status synced back from the worker):
+等任务结束（可能一两分钟）。manager 上的 RayJob status 是从 worker **同步回来**的：
+
+```console
+gyliu-cary@Mac multikueue-minimal-demo % kubectl --context kind-mk-manager -n default get rayjob demo-rayjob \
+  -o custom-columns='NAME:.metadata.name,JOB-STATUS:.status.jobStatus,DEPLOYMENT:.status.jobDeploymentStatus,MANAGED-BY:.spec.managedBy'
 NAME          JOB-STATUS   DEPLOYMENT   MANAGED-BY
 demo-rayjob   SUCCEEDED    Running      kueue.x-k8s.io/multikueue
+
+gyliu-cary@Mac multikueue-minimal-demo % kubectl --context kind-mk-manager -n default get workloads \
+  -o custom-columns='WORKLOAD:.metadata.name,FINISHED:.status.conditions[?(@.type=="Finished")].status,RAN-ON:.status.clusterName'
 WORKLOAD                   FINISHED   RAN-ON
 rayjob-demo-rayjob-a5a54   <none>     mk-worker2
-  pods on the manager (expected: none):
-  No resources found in default namespace.
 ```
 
 ### 结果解读
@@ -1066,7 +1127,8 @@ gyliu-cary@Mac multikueue-minimal-demo % kubectl --context kind-mk-manager -n ku
     server: https://172.19.0.3:6443
 ```
 
-必须是 `172.x.x.x` 这种 docker 网络内地址。如果是 `127.0.0.1`，重跑 `./scripts/4-connect.sh`。
+必须是 `172.x.x.x` 这种 docker 网络内地址。如果是 `127.0.0.1`，删掉 Secret 后按第 5 步用
+control-plane 容器 IP 重新拼 kubeconfig 再 `kubectl create secret`。
 
 ### 坑3: RayJob head 容器 OOMKilled
 
@@ -1142,7 +1204,12 @@ gyliu-cary@Mac multikueue-minimal-demo % kubectl --context kind-mk-manager -n ku
 ### 通用状态检查
 
 ```console
-gyliu-cary@Mac multikueue-minimal-demo % ./scripts/status.sh
+gyliu-cary@Mac multikueue-minimal-demo % kubectl --context kind-mk-manager -n default get jobs,jobsets,rayjobs,workloads,pods
+gyliu-cary@Mac multikueue-minimal-demo % kubectl --context kind-mk-manager get multikueuecluster,admissioncheck
+gyliu-cary@Mac multikueue-minimal-demo % kubectl --context kind-mk-worker1 -n default get jobs,jobsets,rayjobs,pods
+gyliu-cary@Mac multikueue-minimal-demo % kubectl --context kind-mk-worker1 get clusterqueue cluster-queue
+gyliu-cary@Mac multikueue-minimal-demo % kubectl --context kind-mk-worker2 -n default get jobs,jobsets,rayjobs,pods
+gyliu-cary@Mac multikueue-minimal-demo % kubectl --context kind-mk-worker2 get clusterqueue cluster-queue
 ```
 
 ---
@@ -1152,29 +1219,23 @@ gyliu-cary@Mac multikueue-minimal-demo % ./scripts/status.sh
 清掉工作负载但保留集群（方便反复做实验）：
 
 ```console
-gyliu-cary@Mac multikueue-minimal-demo % ./scripts/clean-workloads.sh
-==> deleting demo workloads on mk-manager
-==> sweeping mk-worker1
-==> sweeping mk-worker2
-==> queues are empty:
-mk-worker1   0     0
-mk-worker2   0     0
+gyliu-cary@Mac multikueue-minimal-demo % kubectl --context kind-mk-manager -n default delete jobs,jobsets,rayjobs --all --ignore-not-found
+gyliu-cary@Mac multikueue-minimal-demo % kubectl --context kind-mk-worker1 -n default delete jobs,jobsets,rayjobs --all --ignore-not-found
+gyliu-cary@Mac multikueue-minimal-demo % kubectl --context kind-mk-worker2 -n default delete jobs,jobsets,rayjobs --all --ignore-not-found
 ```
 
 删掉整个环境：
 
 ```console
-gyliu-cary@Mac multikueue-minimal-demo % ./scripts/down.sh
-==> deleting cluster mk-manager
+gyliu-cary@Mac multikueue-minimal-demo % kind delete cluster --name mk-manager
 Deleting cluster "mk-manager" ...
-==> deleting cluster mk-worker1
+gyliu-cary@Mac multikueue-minimal-demo % kind delete cluster --name mk-worker1
 Deleting cluster "mk-worker1" ...
-==> deleting cluster mk-worker2
+gyliu-cary@Mac multikueue-minimal-demo % kind delete cluster --name mk-worker2
 Deleting cluster "mk-worker2" ...
-==> torn down
 ```
 
-等价手工命令：
+或一条：
 
 ```console
 gyliu-cary@Mac multikueue-minimal-demo % kind delete clusters mk-manager mk-worker1 mk-worker2
