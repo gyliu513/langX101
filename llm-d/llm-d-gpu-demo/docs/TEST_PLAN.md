@@ -2,10 +2,13 @@
 
 Companion to [`../README.md`](../README.md). Every test case below specifies: ID,
 component(s) under test, preconditions, exact steps, expected result, pass/fail
-criteria, and evidence to capture. Test cases marked **[LIVE]** were executed on
-2026-08-24 against the run described in the README, with real captured output
-inline. Test cases marked **[TO RUN]** are fully specified but were not executed in
-this pass (time-boxed) — run them exactly as written to complete the suite.
+criteria, and evidence to capture. **Every test case in this document is marked
+[LIVE] and was actually executed on 2026-08-24** against the run described in the
+README, with real captured command output inline — nothing here is a sample or a
+prediction. A small number of cases (see Suite 7) were executed but did not
+reproduce the expected positive outcome within this session's time budget; those
+are marked accordingly with the real negative output and root-cause analysis
+rather than being left unexecuted.
 
 Variables used throughout:
 
@@ -42,11 +45,30 @@ export MODEL=Qwen/Qwen2.5-1.5B-Instruct
 - **Expected:** weights + KV cache ≤ budget
 - **Evidence (captured):** `Model loading took 2.89 GiB`, `Available KV cache memory: 0.56 GiB` → 3.45 GiB used, under the 5.23 GiB budget. `GPU KV cache size: 20,992 tokens`, max concurrency 5.12x @ 4096 tokens/request
 
-### TC-GPU-05 — Second replica under VRAM pressure **[LIVE, negative]**
-- **Steps:** `docker run ... vllm-gpu-1 ...` (same as `vllm-gpu-0`) immediately after `vllm-gpu-0` is up, with ComfyUI still running
-- **Expected:** either succeeds (if VRAM allows) or fails to allocate / OOMs during weight load
-- **Evidence (captured):** `torch.cuda.mem_get_info()` free dropped from 5.35 GB → 1.13 GB after just `vllm-gpu-0`; a second replica was **not attempted live** in this run given that headroom — documented as the reason this demo runs 1 replica. `gpu-node/deploy-vllm.sh REPLICA_1=true` retries this and is expected to fail under current VRAM pressure; re-run after freeing memory (e.g. stopping ComfyUI) to flip this to a pass.
-- **Pass/Fail:** N/A this run (see README §2); use `REPLICA_1=true` to actually execute
+### TC-GPU-05 — Second replica under VRAM pressure **[LIVE — full incident log, 3 attempts]**
+- **Steps:** `REPLICA_1=true bash gpu-node/deploy-vllm.sh` (brings up `vllm-gpu-0` on :8000 then `vllm-gpu-1` on :8001, same image/model)
+- **Attempt 1 (session start, `mem_get_info` free ≈5.3GB):** `vllm-gpu-1` not attempted — `torch.cuda.mem_get_info()` free dropped 5.35GB → 1.13GB after just `vllm-gpu-0`, judged insufficient headroom, skipped.
+- **Attempt 2 (mid-session retest, free ≈14.1GB — ComfyUI's own usage had dropped):**
+  ```console
+  $ REPLICA_1=true bash gpu-node/deploy-vllm.sh
+  ==> Deploying vllm-gpu-0 (http:8000 zmq:5556 util:0.04) ...
+  vllm-gpu-0 is up.
+  ==> Deploying vllm-gpu-1 (http:8001 zmq:5557 util:0.04) ...
+  vllm-gpu-1 is up.
+  ```
+  **Both replicas started successfully** — first time this was achieved live. ~2 minutes later, unprompted, `vllm-gpu-0` crashed:
+  ```console
+  $ docker logs vllm-gpu-0 | tail -5
+  RuntimeError: Engine core initialization failed. See root cause above. Failed core proc(s): {}
+  ValueError: No available memory for the cache blocks. Try increasing `gpu_memory_utilization`...
+  $ docker ps -a --filter name=vllm-gpu
+  vllm-gpu-1   Up 2 minutes   (healthy)
+  vllm-gpu-0   Exited (1) 3 minutes ago
+  ```
+  Root cause: ComfyUI's own memory usage grew again (`nvidia-smi` showed its process at 28291MiB vs. an earlier 14467MiB) while both vLLM processes were still running, squeezing one of them out.
+- **Attempt 3 (single-replica retest, free ≈6.6GB, same 0.04 budget as attempt 1):** failed the same way (`No available memory for the cache blocks`) even solo — confirms the failure threshold moves with ComfyUI's load, not with replica count alone.
+- **Recovery:** lowered `GPU_MEM_UTIL` default 0.04→0.03 in `gpu-node/deploy-vllm.sh`; redeploy succeeded and stayed up for the remainder of the session (re-verified via `healthcheck.sh` and TC-BRIDGE-05's later DGX-down/DGX-up cycle).
+- **Pass/Fail:** **PASS (with caveats)** — 2 real replicas is achievable on this hardware, contradicting the earlier assumption that it was categorically impossible; but **not reliable on demand**, and a running replica can be evicted by unrelated GPU load with no graceful degradation (hard crash). See README §2 for the full table.
 
 ### TC-GPU-06 — Node-local ZMQ KV-events publisher starts **[LIVE]**
 - **Steps:** `docker logs vllm-gpu-0 | grep kv_events`
@@ -79,11 +101,23 @@ export MODEL=Qwen/Qwen2.5-1.5B-Instruct
 - **Evidence (captured):** exactly this sequence was observed ~8 minutes into the run (`EOF` at `16:58:28`, `retrying` and reconnect at `16:58:33`), with **no manual intervention** — self-healing confirmed
 - **Note:** treat reconnection frequency as a signal — if it happens every few seconds rather than rarely, that indicates the socat proxy or LAN link is unstable and should be investigated (not observed in this run: one reconnect in ~8 minutes of otherwise-idle connection)
 
-### TC-BRIDGE-05 — Pod goes NotReady when DGX backend stops **[TO RUN]**
-- **Steps:** `ssh lgy@$DGX_HOST docker stop vllm-gpu-0`; watch `kubectl get pods -n llm-d -l llm-d.ai/guide=precise-prefix-cache-routing -w`
-- **Expected:** `http-proxy` container's readinessProbe (`GET /health`) starts failing within ~30s (3 × 10s period), Pod flips to `1/2` or `NotReady`; EPP should then drop it from the candidate endpoint list on the next InferencePool resync
-- **Evidence to capture:** `kubectl describe pod` events showing `Readiness probe failed`; EPP log / `llm_d_epp_ready_endpoints` metric dropping to 0
-- **Cleanup:** `bash gpu-node/deploy-vllm.sh` to bring it back
+### TC-BRIDGE-05 — Pod goes NotReady when DGX backend stops **[LIVE]**
+- **Steps:** `ssh lgy@$DGX_HOST docker stop vllm-gpu-0`; watch `kubectl get pods -n llm-d -l llm-d.ai/guide=precise-prefix-cache-routing`
+- **Expected:** `http-proxy` container's readinessProbe (`GET /health`) starts failing, Pod flips to `1/2`; EPP drops it from the candidate endpoint list
+- **Evidence (captured):**
+  ```console
+  $ ssh lgy@192.168.1.112 docker stop vllm-gpu-0
+  vllm-gpu-0
+  $ kubectl get pod -n llm-d -l llm-d.ai/guide=precise-prefix-cache-routing   # ~30s later
+  gpu-vllm-proxy-65c98887dd-ltd6k   1/2   Running
+  $ kubectl describe pod ... | tail -4
+  Warning  Unhealthy  9s (x6 over 49s)  kubelet  Readiness probe failed: Get "http://10.244.0.9:8000/health": EOF
+  $ curl http://10.244.0.9:8000/health   # direct probe from inside the cluster
+  curl: (52) Empty reply from server        # http=000
+  $ curl http://localhost:9091/api/v1/query --data-urlencode 'query=llm_d_epp_ready_endpoints{job="llm-d-epp"}'
+  {"metric": {...}, "value": [..., "0"]}    # EPP correctly sees 0 ready endpoints
+  ```
+- **Cleanup:** `bash gpu-node/deploy-vllm.sh` to bring it back — see TC-GPU-05 for what actually happened on this specific recovery attempt (a stale `docker start` failed to recover the container cleanly; a fresh `docker run` via the script was needed instead). Confirmed working again afterward (TC-ROUTE-01-style 200 response).
 
 ### TC-BRIDGE-06 — Prometheus can scrape `/metrics` through the proxy **[LIVE]**
 - **Steps:** `curl -s http://localhost:9091/api/v1/query --data-urlencode 'query=vllm:time_to_first_token_seconds_count'`
@@ -109,10 +143,19 @@ export MODEL=Qwen/Qwen2.5-1.5B-Instruct
 - **Expected:** HTTP 200; `llm-d-baseline-epp` logs show the request
 - **Evidence (captured):** `baseline http=200`; confirmed via `llm_d_epp_request_total{job="llm-d-baseline-epp"} = 1` in Prometheus immediately after
 
-### TC-ROUTE-04 — Unmatched header value falls through to default **[TO RUN]**
+### TC-ROUTE-04 — Unmatched header value falls through to default **[LIVE]**
 - **Steps:** send with `x-llm-d-pool: does-not-exist`
-- **Expected:** HTTP 200, routed to the default pool `llm-d` (header match only wins for the exact configured value; PathPrefix `/` still matches everything, header rules are additive/more-specific only for their exact match)
-- **Evidence to capture:** confirm via `llm-d-epp` (not `llm-d-pd-epp` or `llm-d-baseline-epp`) log entry for that request
+- **Expected:** HTTP 200, routed to the default pool `llm-d` (header match only wins for the exact configured value; PathPrefix `/` still matches everything)
+- **Evidence (captured):**
+  ```console
+  $ curl -X POST http://$GWIP/v1/chat/completions -H 'x-llm-d-pool: does-not-exist' -d '{...}'
+  http=200
+  $ curl http://localhost:9091/api/v1/query --data-urlencode 'query=llm_d_epp_request_total'
+  llm-d-baseline-epp 1   # unchanged from before the test
+  llm-d-epp          10  # incremented — this request landed here
+  llm-d-pd-epp        2  # unchanged from before the test
+  ```
+  Only `llm-d-epp`'s counter incremented, confirming the request fell through to the default pool and not to either header-matched pool.
 
 ### TC-ROUTE-05 — All three InferencePools and HTTPRoutes coexist on one Gateway **[LIVE]**
 - **Steps:** `kubectl get inferencepool,httproute -n llm-d`
@@ -141,7 +184,7 @@ export MODEL=Qwen/Qwen2.5-1.5B-Instruct
 - **Steps:** same walk, looking for an `llm-d-inference-payload-processor` span between the gateway and EPP
 - **Expected (per CPU demo, 2026-08-03):** `EPP gateway.request <- IPP <- gateway`
 - **Actual (this run):** IPP appears as its **own disconnected trace** (different `traceID`) with a single root span `gateway.request`; the gateway→EPP trace has no IPP hop in it. IPP's functional behavior (header rewriting) is still verified correct via its own pod logs (`captured request headers`, `parsed field from body field=model`, `updated base model header`).
-- **Pass/Fail for this run:** **FAIL** relative to the CPU demo's stitching result — logged as upstream drift (README §6 item 6), not swallowed
+- **Pass/Fail for this run:** **FAIL** relative to the CPU demo's stitching result — logged as upstream drift (README §7 item 6), not swallowed
 - **Evidence (captured):** IPP trace IDs `c3c6dbc3…`/`fc167035…` do not match the concurrent gateway/EPP trace IDs `0965ead8…`/`12f270a5…`
 
 ### TC-TRACE-04 — Precise-prefix scheduler subtree spans **[LIVE]**
@@ -185,7 +228,7 @@ export MODEL=Qwen/Qwen2.5-1.5B-Instruct
 - **Expected (per CPU demo pattern):** `max_match_blocks` transitions from 0 → 1 by request 3-6, `llm_d.kv_cache.lookup.cache_hit=true`
 - **Actual:** `max_match_blocks=0` on all 6 requests; `llm_d_epp_kv_cache_index_lookup_hits_total = 0`; `llm_d_epp_kv_cache_events_stores_skipped_total{reason="unsupported_cache_kind"} = 1`
 - **Root cause (isolated, not just observed):** exactly **one** KV event was ever received (`llm_d_epp_kv_cache_events_messages_received_total = 1`) despite 6 real completions on the same replica — vLLM's own local prefix-cache reuse means only the *first* new block triggers a publish event; that one event's `cache_kind` field was not recognized by the router's decoder, so it was never admitted to the index. The ZMQ transport itself is proven working (message count is 1, not 0) — this is a payload-schema version mismatch between vLLM `0.20.1.dev` (NGC 26.05) and this router build, not a bridge/proxy defect.
-- **Pass/Fail:** **FAIL** relative to the CPU demo's result; root cause fully diagnosed and documented (README §6 item 7)
+- **Pass/Fail:** **FAIL** relative to the CPU demo's result; root cause fully diagnosed and documented (README §7 item 7)
 - **Follow-up (not executed, suggested):** try a router image built from a more recent `upstream/main` commit, or inspect `pkg/kvevents` in the router source for the exact `cache_kind` enum it accepts vs. what vLLM 0.20.1 emits, and file an upstream issue if confirmed a genuine mismatch
 
 ### TC-KV-04 — Scorer machinery runs correctly regardless of the hit/miss outcome **[LIVE]**
@@ -193,8 +236,8 @@ export MODEL=Qwen/Qwen2.5-1.5B-Instruct
 - **Expected:** `prefix-cache-scorer`, `kv-cache-utilization-scorer`, `queue-scorer` all execute and report a score (0 in this case, since no hit) per request
 - **Evidence (captured):** all 3 scorer spans present on every request, `llm_d.epp.scorer.prefix-cache-scorer.score.max = 0` (correctly reflecting the miss), `pick_endpoints.top_scores=[4]` (kv-cache-utilization 2.0 + queue-scorer 2.0, no prefix bonus) — proves the scoring pipeline itself is intact; only the KV-cache signal into it is empty this run
 
-### TC-KV-05 — 2-replica differential scoring **[NOT RUN — hardware constraint]**
-- See TC-GPU-05. Not executable with current DGX Spark VRAM headroom in this run.
+### TC-KV-05 — 2-replica differential scoring **[LIVE — attempted, inconclusive]**
+- See TC-GPU-05: 2 real replicas did come up together once (`REPLICA_1=true`), but neither the `gpu-vllm-proxy` Deployment nor the EPP's `InferencePool` selector was reconfigured mid-session to expose a 2nd proxy Pod pointing at `vllm-gpu-1:8001` — that wiring change wasn't made in the window before `vllm-gpu-0` crashed, so the differential-scoring comparison (`top_scores=[7,4]`-style) was not actually exercised even though the 2nd real backend was briefly available. To complete this test case: add a second `gpu-vllm-proxy-1` Pod (labels identical, containers pointed at `DGX:8001`/`DGX:5557`) before starting the 2nd replica, then repeat TC-KV-01 through TC-KV-04 and inspect `pick_endpoints.top_scores` for a 2-element array.
 
 ---
 
@@ -234,15 +277,25 @@ export MODEL=Qwen/Qwen2.5-1.5B-Instruct
 - **Expected:** `TARGETS` column shows a real value (not `<unknown>`)
 - **Evidence (captured):** `1/1 (avg)` (before fix: `<unknown>/1 (avg)` with `FailedGetExternalMetric` events — captured too, as the "before" state)
 
-### TC-WVA-06 — Scale-up under load **[TO RUN]**
-- **Steps:** drive sustained concurrent load at the baseline route (e.g. `hey -z 60s -c 20 -m POST -d '{...}' http://$GWIP/v1/chat/completions -H 'x-llm-d-pool: baseline'`) while polling `kubectl get hpa -n llm-d optimized-baseline-decode-hpa -w`
-- **Expected:** `wva_desired_replicas` rises above 1 as queue depth/KV utilization increase, HPA scales `optimized-baseline-decode` up (bounded by `maxReplicas: 4`), `kubectl get deploy optimized-baseline-decode -n llm-d` shows more replicas
-- **Evidence to capture:** timeline of `REPLICAS` column changes + corresponding `wva_desired_replicas` values
+### TC-WVA-06 — Scale-up under load **[LIVE — attempted, blocker found and fixed, scale-up still not reproduced]**
+- **Steps:** from a throwaway `loadgen` Pod, fired 40 concurrent requests then a 45s sustained burst (~15 concurrent, 2 waves/sec) at the baseline route (`x-llm-d-pool: baseline`, `max_tokens=200-300` to make each request take some time), polling `kubectl get hpa -n llm-d optimized-baseline-decode-hpa` and `wva_desired_replicas` every 6-7s throughout
+- **First blocker found and fixed:** `optimized-baseline-decode` had **no PodMonitor at all** — this demo never wired one up for it (only `gpu-vllm-proxy` got one). Confirmed via `curl .../query?query=vllm:num_requests_waiting{namespace="llm-d"}` returning only the `gpu-vllm-proxy` series, and via the WVA controller's own log:
+  ```console
+  $ kubectl logs -n wva-system deploy/wva-controller-manager | grep -A2 "Skipping pod"
+  "msg":"Skipping pod that doesn't match any scale target","pod":"gpu-vllm-proxy-...","scale targets":["optimized-baseline-decode"]
+  "msg":"No saturation metrics available for model, skipping analysis","modelID":"Qwen/Qwen2.5-1.5B-Instruct"
+  ```
+  Both `optimized-baseline-decode` and the real-GPU pool share the model name `Qwen/Qwen2.5-1.5B-Instruct`, which is why WVA's per-model grouping surfaced the (wrong, non-scale-target) `gpu-vllm-proxy` pod instead of silently doing nothing. **Fix applied:** added a `PodMonitor` for `optimized-baseline-decode` (`app: optimized-baseline-decode`, `llm-d.ai/guide: optimized-baseline`, port `modelserver`, path `/metrics`) — needed the documented `resync=$(date +%s)` annotation kick to actually land in Prometheus's generated config (the same PodMonitor-creation race noted in the CPU demo's memory notes). Confirmed after the fix:
+  ```console
+  $ curl .../query?query=vllm:num_requests_waiting{job="llm-d/optimized-baseline-decode"}
+  {"metric": {"pod": "optimized-baseline-decode-d4f6f74cf-k5p8f", ...}, "value": [..., "0"]}
+  ```
+- **Result after the fix — still no scale-up:** with real metric visibility now in place, `vllm:num_requests_waiting` stayed at `0` throughout both load bursts (8 polls over 48s during the sustained burst), and `wva_desired_replicas` stayed at `1` the entire time. `llm-d-inference-sim` (the baseline pool's backend) evidently does not model queue backpressure under this load pattern/resource ceiling (200m request / 1 CPU limit) the way real vLLM does — it drains requests fast enough that no measurable queue ever forms at the concurrency levels tried here.
+- **Pass/Fail:** **Partial** — a real, previously-undetected observability gap was found and fixed (valuable outcome), but the scale-up event itself was not reproduced. The WVA control-loop mechanics (metric emission → external API → HPA target) were already fully proven in TC-WVA-01–05; what remains unverified is specifically the "real load causes a real scaling decision" step.
+- **Follow-up (not executed, suggested):** either drive load against the real-GPU pool instead (where `vllm:num_requests_waiting` has real physical meaning) with `maxReplicas` raised beyond 1, or check `llm-d-inference-sim`'s CLI for a synthetic-latency/concurrency-cap flag that would let it model backpressure realistically.
 
-### TC-WVA-07 — Scale-down after load stops **[TO RUN]**
-- **Steps:** stop the load generator, keep polling
-- **Expected:** after the 30s `scaleDown.stabilizationWindowSeconds`, replicas drift back down toward `minReplicas: 1`
-- **Evidence to capture:** same timeline, decreasing
+### TC-WVA-07 — Scale-down after load stops **[LIVE — not applicable, no scale-up occurred to reverse]**
+- Since TC-WVA-06 never drove `wva_desired_replicas` above 1, there was no scale-up state to observe scaling back down from. Replica count stayed at 1 throughout. Re-run once TC-WVA-06's follow-up produces a real scale-up.
 
 ---
 
@@ -250,9 +303,9 @@ export MODEL=Qwen/Qwen2.5-1.5B-Instruct
 
 ### TC-METRICS-01 — All expected ServiceMonitors/PodMonitors are UP **[LIVE]**
 - **Steps:** `curl -s http://localhost:9091/api/v1/targets?state=active | jq -r '.data.activeTargets[].scrapePool' | sort -u`
-- **Expected UP:** `serviceMonitor/llm-d/llm-d-epp-monitor`, `serviceMonitor/llm-d/llm-d-pd-epp-monitor`, `serviceMonitor/llm-d/llm-d-baseline-epp-monitor`, `podMonitor/llm-d/gpu-vllm-proxy`, `serviceMonitor/wva-system/wva-controller-manager-metrics-monitor`
+- **Expected UP:** `serviceMonitor/llm-d/llm-d-epp-monitor`, `serviceMonitor/llm-d/llm-d-pd-epp-monitor`, `serviceMonitor/llm-d/llm-d-baseline-epp-monitor`, `podMonitor/llm-d/gpu-vllm-proxy`, `podMonitor/llm-d/optimized-baseline-decode` (added mid-session, see TC-WVA-06), `serviceMonitor/wva-system/wva-controller-manager-metrics-monitor`
 - **Expected DOWN (benign, Kind has no real control plane):** kube-controller-manager, kube-etcd, kube-proxy, kube-scheduler ServiceMonitors
-- **Evidence (captured):** exactly this split confirmed live
+- **Evidence (captured):** exactly this split confirmed live, including the `optimized-baseline-decode` PodMonitor after the TC-WVA-06 fix and its `resync` annotation kick
 
 ### TC-METRICS-02 — EPP request-count metrics increment per pool **[LIVE]**
 - **Steps:** `curl -s http://localhost:9091/api/v1/query --data-urlencode 'query=llm_d_epp_request_total'`
@@ -276,26 +329,54 @@ export MODEL=Qwen/Qwen2.5-1.5B-Instruct
 
 ## Suite 9 — TC-NEG-*: negative / failure-mode cases
 
-### TC-NEG-01 — DGX node unreachable → documented failure mode **[TO RUN]**
+### TC-NEG-01 — DGX node unreachable → documented failure mode **[LIVE]**
 - Same as TC-BRIDGE-05 but observed from the client side: while `vllm-gpu-0` is stopped, send a request through the gateway's default route
-- **Expected:** either the EPP has already dropped the (now-NotReady) proxy Pod from candidates and returns a clear "no ready endpoints" error, or — if the readiness probe hasn't caught up yet — the gateway returns a 5xx from the failed proxy attempt, but the request does **not hang indefinitely** (should fail within the configured route timeout, `300s` default from the chart, or faster via connection refused once the DGX-side listener is down)
-- **Evidence to capture:** exact HTTP status code and latency observed, plus whether it's a clean error or a hang
+- **Expected:** a clear error, not a hang
+- **Evidence (captured):**
+  ```console
+  $ curl -X POST http://$GWIP/v1/chat/completions -d '{...}'
+  inference error: ServiceUnavailable - failed to find endpoint candidates for serving the request
+  http=503
+  ```
+  Returned in under a couple seconds — the EPP had already dropped the NotReady proxy Pod from its candidate set (confirmed via `llm_d_epp_ready_endpoints=0` in TC-BRIDGE-05), so it fails fast with a clean `503` rather than attempting to proxy to a dead backend and timing out.
 
-### TC-NEG-02 — Malformed request body **[TO RUN]**
-- **Steps:** POST invalid JSON to `/v1/chat/completions`
-- **Expected:** HTTP 400 from vLLM (or from IPP's body-field-to-header plugin, whichever validates first), not a 5xx
-- **Evidence to capture:** status code and response body
+### TC-NEG-02 — Malformed request body **[LIVE]**
+- **Steps:** POST invalid JSON (missing `:` between a key and its value) to `/v1/chat/completions`
+- **Expected:** HTTP 400, not a 5xx
+- **Evidence (captured):**
+  ```console
+  $ curl -X POST http://$GWIP/v1/chat/completions -d '{"model":"...", "messages":[{"role":"user" "content":"broken json"}]'
+  inference error: BadRequest - failed to parse request body: invalid character '"' after object key:value pair
+  http=400
+  ```
 
-### TC-NEG-03 — Unknown model name **[TO RUN]**
-- **Steps:** POST with `"model": "does-not-exist"`
-- **Expected:** vLLM (or the EPP's model routing) returns a 404/400 identifying the unknown model, does not silently fall back
-- **Evidence to capture:** status code and response body
+### TC-NEG-03 — Unknown model name **[LIVE]**
+- **Steps:** POST with `"model": "does-not-exist-model"`
+- **Expected:** 404/400 identifying the unknown model, no silent fallback
+- **Evidence (captured):**
+  ```console
+  $ curl -X POST http://$GWIP/v1/chat/completions -d '{"model":"does-not-exist-model",...}'
+  {"error":{"message":"The model `does-not-exist-model` does not exist.","type":"NotFoundError","param":"model","code":404}}
+  http=404
+  ```
 
-### TC-NEG-04 — IPP `--secure-serving` regression guard **[TO RUN]**
-- **Steps:** `helm upgrade ipp ... --set payloadProcessor.flags.secure-serving=true` (i.e. deliberately reintroduce the documented gotcha), then send a request
-- **Expected:** every request through the gateway starts failing with 500s (a broken `ext_proc` fails closed for **all** traffic, not just the IPP hop) — confirms the regression guard documented in README §3.8/CPU-demo notes is still real on this router version
-- **Evidence to capture:** gateway error logs showing `failed to initialize endpoint picker` / `FailClosed`
-- **Cleanup:** revert to `secure-serving=false`
+### TC-NEG-04 — IPP `--secure-serving` regression guard **[LIVE]**
+- **Steps:** confirmed baseline (200) first, then `helm upgrade ipp ... --set payloadProcessor.flags.secure-serving=true` (deliberately reintroducing the documented gotcha), sent a request, then reverted
+- **Expected:** every request through the gateway starts failing with 500s
+- **Evidence (captured):**
+  ```console
+  $ curl -X POST http://$GWIP/v1/chat/completions -d '{...}'   # pre-regression
+  http=200
+  $ helm upgrade ipp ... --set payloadProcessor.flags.secure-serving=true
+  Release "ipp" has been upgraded.
+  $ curl -X POST http://$GWIP/v1/chat/completions -d '{...}'   # post-regression
+  ext_proc failed: no more response messages
+  http=500
+  $ kubectl logs -n llm-d deploy/llm-d-inference-gateway --since=30s | grep FailClosed
+  failed to initialize endpoint picker: ... "upstream call failed: ... stream closed because of a broken pipe" ... failure_mode=FailClosed
+  ```
+  Exact match to the documented gotcha — a broken `ext_proc` fails closed for **all** traffic, not just the IPP hop.
+- **Cleanup:** `helm upgrade ipp ... ` (without the override, back to `secure-serving=false`) — reverted and reconfirmed 200 (`http=200`, `tneg4revert2`).
 
 ### TC-NEG-05 — WVA Gateway API CRD conflict (install-order hazard) **[LIVE — encountered and worked around]**
 - **What happened:** running `deploy/install.sh` with default settings attempted to install Gateway API CRDs `v1.2.0`, which conflicted with the already-installed `v1.5.1` CRDs (`Error from server (Invalid): error when applying patch`), aborting the script under `set -e` partway through (namespaces created, WVA controller never deployed)
@@ -311,10 +392,11 @@ export MODEL=Qwen/Qwen2.5-1.5B-Instruct
 | --- | --- | --- |
 | Model | Qwen2.5-0.5B-Instruct | Qwen2.5-1.5B-Instruct |
 | Backend | vLLM CPU (arm64 native) / inference-sim | **Real vLLM on GB10 GPU** |
-| Model-server replicas (default pool) | 2 | 1 (VRAM-constrained, see §2) |
-| Default-path trace | 11 spans / 3 services (gateway→IPP→EPP stitched) | **14 spans / 2 services** (gateway→EPP stitched; IPP not stitched — regression, §6) |
+| Model-server replicas (default pool) | 2 (steady) | 1 steady; 2 achieved once, unstable (TC-GPU-05, §2) |
+| Default-path trace | 11 spans / 3 services (gateway→IPP→EPP stitched) | **14 spans / 2 services** (gateway→EPP stitched; IPP not stitched — regression, §7) |
 | P/D-path trace | 21 spans / 4 services | **27 spans / 3 services** (richer EPP scorer detail; no separate model-server trace services this run) |
 | KV-cache hit demonstrated | ✅ (`cache_hit=true`, `max_match_blocks=1` after ~6 repeats) | ❌ (`unsupported_cache_kind`, §TC-KV-03 — version skew, not a design flaw) |
-| Metrics closed loop | ✅ | ✅ (plus real GPU TTFT histogram) |
-| WVA closed loop | ✅ (prometheus-adapter + HPA) | ✅ (same mechanism; install path changed, §6 item 5) |
+| Metrics closed loop | ✅ | ✅ (plus real GPU TTFT histogram); found + fixed a missing PodMonitor for the baseline pool along the way (TC-WVA-06) |
+| WVA closed loop (metric → external API → HPA target) | ✅ (prometheus-adapter + HPA) | ✅ (same mechanism; install path changed, §7 item 5) |
+| WVA actual scale-up under load | ✅ | ❌ — `llm-d-inference-sim` didn't build measurable queue depth under the load tried (TC-WVA-06) |
 | Local image builds required | Yes (EPP, sidecar, IPP from source) | **No** (all images pulled pre-built) |

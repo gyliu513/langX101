@@ -4,18 +4,25 @@
 # Idempotent: safe to re-run. Removes any existing container of the same
 # name before recreating it.
 #
-# GPU memory reality check (2026-08-24, live on this node): the GB10's
-# unified memory is shared with whatever else is running on the box (in our
-# case the user's ComfyUI session, ~34GB). `torch.cuda.mem_get_info()` free
-# fluctuates and drops sharply once vLLM reserves its allocator arena -- on
-# this node a single small vLLM replica (--gpu-memory-utilization 0.04, i.e.
-# ~5.2GB of the 130.667GB total unified pool) took free from ~5.3GB down to
-# ~1.1GB. There is currently NOT enough headroom for a second real-GPU
-# replica alongside ComfyUI. This script therefore deploys ONE real replica
-# (vllm-gpu-0) by default; a second (vllm-gpu-1) can be attempted with
-# REPLICA_1=true but is expected to fail to schedule/OOM unless ComfyUI is
-# stopped or more memory frees up -- see docs/TEST_PLAN.md TC-GPU-* and the
-# README "Known limitations" section.
+# GPU memory reality check (2026-08-24, live on this node, updated after
+# several redeploys in one session): the GB10's unified memory is shared with
+# whatever else is running on the box (the user's ComfyUI session, which
+# itself fluctuates between ~14GB and ~28GB depending on whether it's
+# actively generating). `torch.cuda.mem_get_info()` free swings widely as a
+# result -- observed anywhere from ~1.1GB to ~14GB free over the course of
+# one session, with NO trend, just ComfyUI's own load. Consequences seen
+# live:
+#   - REPLICA_1=true (2 real replicas) DID succeed once, when free happened
+#     to be ~14GB -- but one of the two crashed minutes later
+#     ("Engine core initialization failed", "No available memory for the
+#     cache blocks") once ComfyUI's usage grew again and squeezed both.
+#   - The single-replica default (0.04 util, ~5.2GB budget) also failed once
+#     with the same OOM error when free had dropped to ~1-6GB.
+# Default util lowered to 0.03 (~3.9GB) for more headroom; even so, DO NOT
+# assume a successful deploy stays up indefinitely on a shared box -- treat
+# `bash gpu-node/healthcheck.sh` as the source of truth, not "it worked
+# earlier". See docs/TEST_PLAN.md TC-GPU-05 and the README "Known
+# limitations" section for the full incident log.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -28,7 +35,7 @@ DGX_HOST="${DGX_HOST:-192.168.1.112}"
 DGX_USER="${DGX_USER:-lgy}"
 DGX_MODEL="${DGX_MODEL:-Qwen/Qwen2.5-1.5B-Instruct}"
 VLLM_IMAGE="${VLLM_IMAGE:-nvcr.io/nvidia/vllm:26.05-py3}"
-GPU_MEM_UTIL="${GPU_MEM_UTIL:-0.04}"
+GPU_MEM_UTIL="${GPU_MEM_UTIL:-0.03}"
 MAX_MODEL_LEN="${MAX_MODEL_LEN:-4096}"
 REPLICA_1="${REPLICA_1:-false}"
 
