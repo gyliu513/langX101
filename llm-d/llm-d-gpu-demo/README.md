@@ -1,5 +1,7 @@
 # llm-d on Kind — Real DGX Spark GPU Inference with Full Observability
 
+*[中文文档](README-zh.md)*
+
 This document records a **Kind + real-GPU** deployment of llm-d: a local Kind cluster
 (Gateway API / agentgateway mode) running all of llm-d's routing and observability
 components, bridged to **real vLLM inference on an NVIDIA DGX Spark GPU node**
