@@ -111,20 +111,34 @@ login), which bundles a vLLM `0.20.1+7124b12a.dev` build with GB10 support.
 ### GPU memory reality check — this is the load-bearing finding of this whole demo
 
 The box is **shared**: the user's ComfyUI session was left running (by design — see
-"Known limitations") and already held ~34 GB per `nvidia-smi`'s per-process view.
-But `nvidia-smi`'s aggregate memory query returns `Not Supported` on GB10 (no fixed
-VRAM total to report — it's unified memory), and the number that actually matters —
-`torch.cuda.mem_get_info()` free bytes — measured **only ~5.3 GB free** at the
-moment we started, and **dropped to ~1.1 GB free** after bringing up a single small
-vLLM replica (`--gpu-memory-utilization 0.04`, weights 2.89 GiB + 0.56 GiB KV
-cache). There was **no room for a second real-GPU replica** alongside ComfyUI.
+"Known limitations"). `nvidia-smi`'s aggregate memory query returns `Not Supported`
+on GB10 (no fixed VRAM total to report — it's unified memory), and the number that
+actually matters — `torch.cuda.mem_get_info()` free bytes — **swung wildly over the
+course of this one session**, tracking ComfyUI's own activity (its process usage
+was observed at both ~14 GiB and ~28 GiB minutes apart), with no way to predict it
+in advance:
 
-Consequence: this demo runs **one real GPU vLLM replica**, not two. The CPU demo's
-"2 replicas make the KV-routing decision visible" scenario (`top_scores=[7,4]`,
-sticky to the prefix holder) is therefore **not reproduced live** here — see
-`docs/TEST_PLAN.md` TC-KV-* for what *is* verified with one real replica, and
-`gpu-node/deploy-vllm.sh`'s `REPLICA_1=true` escape hatch if more VRAM frees up
-later (e.g. ComfyUI stopped).
+| Moment | Free VRAM (`mem_get_info`) | What happened |
+| --- | --- | --- |
+| Session start | ~5.3 GB | 1st replica (`--gpu-memory-utilization 0.04` ≈5.2GB) started fine, weights 2.89 GiB + KV cache 0.56 GiB |
+| Right after | ~1.1 GB | No room for a 2nd replica at that instant |
+| Mid-session retest | ~14.1 GB | **A 2nd real replica DID start successfully** (`REPLICA_1=true`) — both `vllm-gpu-0` and `vllm-gpu-1` reported `Application startup complete` |
+| ~2 min later | (ComfyUI grew again) | `vllm-gpu-0` **crashed**: `RuntimeError: Engine core initialization failed` / `ValueError: No available memory for the cache blocks` |
+| Later retest, 1 replica only | ~6.6 GB | Even the **single** replica at the same 0.04 budget **failed the same way** |
+| Final retest | — | Succeeded again at a lowered `--gpu-memory-utilization 0.03` (~3.9GB) |
+
+Two conclusions, both load-bearing for how to operate this demo: (1) **2 real
+replicas is achievable** when the shared box happens to have headroom — the CPU
+demo's "KV-routing decision becomes visible with 2 replicas" scenario is not
+fundamentally blocked, just **not reliably reproducible on demand** on this shared
+box; and (2) **a successful deploy is not a permanent state** — VRAM can be
+reclaimed out from under a running vLLM process by another workload on the same
+box at any time, with a real crash (not a graceful degradation) as the result.
+`gpu-node/deploy-vllm.sh`'s default `GPU_MEM_UTIL` was lowered from 0.04 to 0.03
+after this was observed, and `REPLICA_1=true` remains available as an escape
+hatch — treat both as probabilistic, not guaranteed, and always confirm with
+`bash gpu-node/healthcheck.sh` rather than assuming a past success still holds.
+Full incident log: `docs/TEST_PLAN.md` TC-GPU-05.
 
 Deploy script: `gpu-node/deploy-vllm.sh` (idempotent `docker run` over SSH).
 Verified live:
@@ -307,7 +321,16 @@ helm install llm-d-baseline oci://ghcr.io/llm-d/charts/llm-d-router-gateway --ve
   --set httpRoute.headerMatches.x-llm-d-pool=baseline \
   -n llm-d
 kubectl apply -f $DEMO/manifests/06-hpa.yaml
+kubectl apply -f $DEMO/manifests/optional/baseline/podmonitor-baseline.yaml
 ```
+
+> Without this last PodMonitor, Prometheus (and therefore WVA) has no
+> visibility into `optimized-baseline-decode`'s own metrics — discovered live
+> in TC-WVA-06, where WVA logged `"No saturation metrics available for
+> model"` until this was added. If it doesn't show up in Prometheus targets
+> within ~30s, force a resync (same PodMonitor-creation race as the CPU
+> demo's `podMonitor/llm-d/decode`):
+> `kubectl annotate podmonitor -n llm-d optimized-baseline-decode resync="$(date +%s)" --overwrite`.
 
 ### 3.12 Prometheus + Grafana
 
@@ -421,11 +444,61 @@ TC-WVA-\*, TC-METRICS-\*, TC-NEG-\*). Summary of what's verified live in this ru
 | P/D disaggregated trace | 27 spans / 3 services: `pick_disagg_profile` ×3, `prepare_disaggregation` ×2, sidecar `prefill`/`decode`/`forward_request` | ✅ |
 | Metrics closed loop | Prometheus targets UP for 3 EPP ServiceMonitors + GPU-proxy PodMonitor; `vllm:time_to_first_token_seconds_count` = 6 (real GPU histogram) | ✅ |
 | Grafana dashboards | 7 llm-d dashboards loaded; vLLM Overview panel shows live data points | ✅ |
-| WVA autoscaling loop | `wva_desired_replicas` → external metrics API → HPA `1/1 (avg)` | ✅ |
+| WVA autoscaling loop (metric → external API → HPA target) | `wva_desired_replicas` → external metrics API → HPA `1/1 (avg)` | ✅ |
+| WVA actual scale-up under synthetic load | Found + fixed a missing PodMonitor for the baseline pool along the way; even after the fix, `llm-d-inference-sim` never showed measurable queue depth under the load driven (TC-WVA-06) | ⚠️ not reproduced |
+| 2nd real GPU replica | Achieved once (`REPLICA_1=true`) when the shared box had headroom, then one replica crashed under renewed contention minutes later — see §2 | ⚠️ possible, not reliable |
 
 ---
 
-## 6. Upstream drift found in this run (2026-08-24, vs. the CPU demo's 2026-08-03 baseline)
+## 6. Observability screenshots
+
+All screenshots below are from this live run (`docs/screenshots/`), not mockups.
+
+**Default route — real GPU precise-prefix trace** (14 spans / 2 services): the
+full scheduler subtree — `tokenize_render`, `produce_precise_prefix_cache`,
+`run_scheduler_profile` fanning out into 3 `llm_d.epp.scorer.*` children, then
+`pick_endpoints` — on a request actually served by the DGX Spark GPU.
+
+![Jaeger — real-GPU default-route trace](docs/screenshots/jaeger-traces.png)
+
+**P/D-disaggregated route trace** (27 spans / 3 services): `pick_disagg_profile`
+×3 (prefill profile, decode profile, and the combining pass), two full
+`run_scheduler_profile` subtrees, `prepare_disaggregation` ×2, and the
+`llm-d-routing-sidecar` service's real two-leg proxy (`forward_request` →
+`prefill` → `decode` → `HTTP POST` ×2).
+
+![Jaeger — P/D disaggregated trace](docs/screenshots/jaeger-pd-trace.png)
+
+**Prometheus targets** — all 3 EPP `ServiceMonitor`s and the `gpu-vllm-proxy`
+`PodMonitor` UP; the only DOWN targets are the Kind control-plane components
+that don't exist on this cluster (etcd/kube-proxy/scheduler/controller-manager),
+which is expected.
+
+![Prometheus targets page](docs/screenshots/prometheus-targets.png)
+
+**Prometheus query — real GPU TTFT histogram**, scraped through the
+`gpu-vllm-proxy` tunnel (`vllm:time_to_first_token_seconds_count`):
+
+![Prometheus query result — vLLM TTFT count](docs/screenshots/prometheus-query-ttft.png)
+
+**Grafana — the 7 llm-d dashboards loaded** by the installer:
+
+![Grafana dashboard list](docs/screenshots/grafana-dashboards-list.png)
+
+**Grafana — llm-d vLLM Overview**, live data points visible in Token
+Throughput, TTFT, Queue Time, Prefill/Decode Time, and Max Generation Token
+panels:
+
+![Grafana llm-d vLLM Overview dashboard](docs/screenshots/grafana-vllm-overview.png)
+
+**Grafana — llm-d Performance Dashboard** (E2E latency, KV-cache hit rate,
+request throughput):
+
+![Grafana llm-d Performance dashboard](docs/screenshots/grafana-performance.png)
+
+---
+
+## 7. Upstream drift found in this run (2026-08-24, vs. the CPU demo's 2026-08-03 baseline)
 
 The llm-d project moves fast; three weeks produced real breaking changes:
 
@@ -472,10 +545,18 @@ The llm-d project moves fast; three weeks produced real breaking changes:
 
 ## Known limitations (by design, not bugs)
 
-- **One real GPU replica, not two.** See §2 — the DGX Spark's unified memory is
-  shared with the user's ComfyUI session; live testing showed only ~1.1 GB free
-  after a single small vLLM replica. The CPU demo's "KV-routing decision becomes
-  visible with 2 replicas" scenario is not reproduced live here.
+- **Steady-state runs 1 real GPU replica; a 2nd is possible but not reliable.**
+  See §2 — the DGX Spark's unified memory is shared with the user's ComfyUI
+  session, whose usage fluctuates independently. A 2nd replica (`REPLICA_1=true`)
+  did start successfully once, then one of the two crashed under renewed memory
+  pressure minutes later. The demo ships with 1 replica as the dependable
+  default; the CPU demo's "KV-routing decision becomes visible with 2 replicas"
+  scenario is achievable opportunistically on this hardware, not guaranteed.
+- **A successful vLLM deploy can be evicted later by unrelated GPU load on the
+  same box.** Not just a startup-time risk — a running replica was observed to
+  crash mid-session (`Engine core initialization failed`) once another process's
+  memory usage grew. Always re-verify with `healthcheck.sh` rather than trusting
+  an earlier success.
 - **P/D KV transfer stays simulated.** True NIXL prefill/decode disaggregation
   needs ≥2 physical GPUs; this DGX Spark has 1. Scheduling, header handling, and
   the routing-sidecar's two-leg proxying are all real.
@@ -483,6 +564,6 @@ The llm-d project moves fast; three weeks produced real breaking changes:
   validated as a control-loop mechanism (Prometheus → external-metrics API → HPA),
   independent of which backend serves traffic — the same scope the CPU demo used.
 - **Real KV-cache-hit routing is not demonstrated live** in this run — see
-  "Upstream drift" item 7. The scheduler/scorer machinery around it (§5,
+  "Upstream drift" item 7. The scheduler/scorer machinery around it (§6,
   `llm_d.epp.scorer.*` spans, `pick_endpoints`) is fully exercised and correct;
   only the specific hit/miss outcome differs from the CPU demo's result.

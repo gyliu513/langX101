@@ -1,0 +1,20 @@
+---
+# Without this, Prometheus (and therefore WVA, which reads Prometheus) has no
+# visibility into optimized-baseline-decode's own vllm:* metrics -- WVA's
+# saturation engine will report "No saturation metrics available for model"
+# and never scale it, even though the control loop (metric -> external API ->
+# HPA) is otherwise working. Discovered live in this demo's TC-WVA-06.
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: optimized-baseline-decode
+  namespace: llm-d
+spec:
+  selector:
+    matchLabels:
+      app: optimized-baseline-decode
+      llm-d.ai/guide: optimized-baseline
+  podMetricsEndpoints:
+    - port: modelserver
+      path: /metrics
+      interval: 15s
