@@ -1,0 +1,21 @@
+## Kind overrides for the SECOND router release (`llm-d-pd`), P/D pool.
+## Layer after pd-router.values.yaml. No `tokenizer` (the P/D plugin chain
+## has no token-producer, so the EPP pod stays 1/1).
+router:
+  epp:
+    replicas: 1
+    image:
+      registry: ghcr.io/llm-d
+      repository: llm-d-router-endpoint-picker
+      tag: main
+      pullPolicy: IfNotPresent
+    resources:
+      requests: { cpu: "250m", memory: "512Mi" }
+      limits:   { cpu: "1", memory: "1Gi" }
+    flags:
+      v: 2
+  monitoring:
+    prometheus:
+      enabled: true
+      auth:
+        enabled: false

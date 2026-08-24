@@ -1,0 +1,34 @@
+## Kind overrides for the precise-prefix (real-GPU) router release "llm-d".
+## Chart/image names updated for upstream/main as of 2026-08-24 (the "-dev"
+## suffix was dropped from both the OCI chart and the EPP image repo since
+## the CPU-only llm-d-full-demo was built).
+router:
+  epp:
+    replicas: 1
+    image:
+      registry: ghcr.io/llm-d
+      repository: llm-d-router-endpoint-picker
+      tag: main
+      pullPolicy: IfNotPresent
+    resources:
+      requests: { cpu: "500m", memory: "512Mi" }
+      limits:   { cpu: "2", memory: "2Gi" }
+    flags:
+      v: 2
+  # The vllm-render sidecar only tokenizes for the token-producer, but the
+  # chart defaults it to 4 CPU / 8Gi -- trim it so the rest of the demo's
+  # pools (P/D, baseline, monitoring) fit on one Kind node.
+  tokenizer:
+    resources:
+      requests: { cpu: "500m", memory: "2Gi" }
+      limits:   { cpu: "2", memory: "4Gi" }
+  modelServers:
+    matchLabels:
+      llm-d.ai/guide: "precise-prefix-cache-routing"
+  monitoring:
+    prometheus:
+      enabled: true
+      auth:
+        # Unauthenticated /metrics scraping -- simplest path for a demo
+        # ServiceMonitor; avoids provisioning the SA-token-reader secret.
+        enabled: false

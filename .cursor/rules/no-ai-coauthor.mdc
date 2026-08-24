@@ -1,24 +1,42 @@
 ---
-description: Never add the AI as a git commit co-author
+description: Never add AI co-author trailers or Made with Cursor to git/PR metadata
 alwaysApply: true
 ---
 
-# No AI co-author on commits
+# No AI branding on commits or PRs
 
-When creating git commits or PRs:
+When creating git commits or pull requests:
 
 - Do **not** add a `Co-authored-by:` trailer for Cursor, Grok, or any AI assistant.
 - Do **not** pass `--trailer` / `Co-authored-by` in `git commit`.
 - Commit author stays the user only.
+- Do **not** append `Made with Cursor`, `Made-with: Cursor`, or similar Cursor/AI footers to the PR title or body.
 
 ```
 # ❌ BAD
 git commit -m "message" --trailer "Co-authored-by: Cursor <...>"
 
+gh pr create --body "$(cat <<'EOF'
+## Summary
+...
+
+Made with Cursor
+EOF
+)"
+
 # ✅ GOOD
 git commit -m "$(cat <<'EOF'
 Commit message here.
 
+EOF
+)"
+
+gh pr create --body "$(cat <<'EOF'
+## Summary
+...
+
+## Test plan
+...
 EOF
 )"
 ```

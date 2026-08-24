@@ -1,0 +1,119 @@
+---
+# Bridges the real GPU vLLM running on the DGX Spark (192.168.1.112, outside
+# the Kind cluster) into llm-d's InferencePool routing.
+#
+# WHY THIS EXISTS: llm-d's InferencePool selects backends by POD LABEL
+# (router.modelServers.matchLabels becomes InferencePool.spec.selector), and
+# the EPP resolves that selector via the Kubernetes Pod API -- it never goes
+# through a Service VIP. A Service pointing at an external IP would be
+# invisible to that selector. This Deployment gives the DGX-hosted vLLM a
+# real in-cluster Pod IP that the EPP/gateway can pick and dial.
+#
+# Two plain TCP proxies (socat, public `alpine/socat` image, no custom build)
+# run as separate containers in the same Pod:
+#   - http-proxy: Pod:8000 -> DGX:8000  (OpenAI HTTP API + /metrics)
+#   - kv-proxy:   Pod:5556 -> DGX:5556  (vLLM's ZMQ KV-cache-event PUB socket)
+# Both are byte-transparent (HTTP and ZMTP are both plain framed TCP), so the
+# EPP's token-producer/precise-prefix-cache-producer and Prometheus scraping
+# reach the real GPU vLLM unmodified.
+#
+# Only 1 replica: this DGX Spark's unified GPU memory is shared with the
+# user's ComfyUI session; live testing (2026-08-24) showed free VRAM drops
+# from ~5.3GB to ~1.1GB after a single small vLLM replica, leaving no room
+# for a second real replica. See docs/TEST_PLAN.md TC-GPU-* and the README
+# "Known limitations" section.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gpu-vllm-proxy
+  namespace: llm-d
+  labels:
+    llm-d.ai/role: decode
+    llm-d.ai/guide: precise-prefix-cache-routing
+    llm-d.ai/model: Qwen2.5-1.5B-Instruct
+    app.kubernetes.io/part-of: llm-d
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      llm-d.ai/guide: precise-prefix-cache-routing
+      llm-d.ai/role: decode
+  template:
+    metadata:
+      labels:
+        llm-d.ai/role: decode
+        llm-d.ai/guide: precise-prefix-cache-routing
+        llm-d.ai/model: Qwen2.5-1.5B-Instruct
+        app.kubernetes.io/part-of: llm-d
+    spec:
+      serviceAccountName: sa
+      containers:
+        - name: http-proxy
+          image: alpine/socat:1.8.0.1
+          imagePullPolicy: IfNotPresent
+          args:
+            - "-d"
+            - "TCP-LISTEN:8000,fork,reuseaddr"
+            - "TCP:$(DGX_HOST):$(DGX_PORT)"
+          env:
+            - name: DGX_HOST
+              value: "192.168.1.112"
+            - name: DGX_PORT
+              value: "8000"
+          ports:
+            - name: modelserver
+              containerPort: 8000
+              protocol: TCP
+          resources:
+            requests: { cpu: "50m", memory: "32Mi" }
+            limits: { cpu: "250m", memory: "128Mi" }
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: modelserver
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            tcpSocket:
+              port: modelserver
+            initialDelaySeconds: 10
+            periodSeconds: 20
+        - name: kv-proxy
+          image: alpine/socat:1.8.0.1
+          imagePullPolicy: IfNotPresent
+          args:
+            - "-d"
+            - "TCP-LISTEN:5556,fork,reuseaddr"
+            - "TCP:$(DGX_HOST):$(DGX_KV_PORT)"
+          env:
+            - name: DGX_HOST
+              value: "192.168.1.112"
+            - name: DGX_KV_PORT
+              value: "5556"
+          ports:
+            - name: kv-events
+              containerPort: 5556
+              protocol: TCP
+          resources:
+            requests: { cpu: "25m", memory: "16Mi" }
+            limits: { cpu: "100m", memory: "64Mi" }
+---
+# Lets Prometheus scrape the real vLLM's /metrics through the proxy Pod.
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: gpu-vllm-proxy
+  namespace: llm-d
+spec:
+  selector:
+    matchLabels:
+      llm-d.ai/guide: precise-prefix-cache-routing
+      llm-d.ai/role: decode
+  podMetricsEndpoints:
+    - port: modelserver
+      path: /metrics
+      interval: 15s
