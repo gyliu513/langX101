@@ -1,7 +1,0 @@
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: llm-d-demo
-  labels:
-    app.kubernetes.io/part-of: llm-d
-    app.kubernetes.io/managed-by: llm-d-observability-demo
