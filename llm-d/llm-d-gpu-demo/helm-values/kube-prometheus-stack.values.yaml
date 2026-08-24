@@ -1,0 +1,49 @@
+## Native equivalent of what
+## guides/recipes/observability/install-prometheus-grafana.sh generates in
+## "central" mode (one Prometheus watching ServiceMonitors/PodMonitors in ALL
+## namespaces -- fine for a single-tenant Kind demo cluster). Plain HTTP, no
+## TLS (this cluster has no cert-manager set up); WVA is told to allow plain
+## HTTP explicitly later (PROMETHEUS_ALLOW_HTTP=true) precisely because of
+## this choice.
+grafana:
+  adminPassword: admin
+  service:
+    type: ClusterIP
+    sessionAffinity: ""
+  sidecar:
+    dashboards:
+      enabled: true
+      searchNamespace: ALL
+    datasources:
+      defaultDatasourceEnabled: false
+  datasources:
+    datasources.yaml:
+      apiVersion: 1
+      datasources:
+      - name: Prometheus
+        type: prometheus
+        url: http://llmd-kube-prometheus-stack-prometheus.llm-d-monitoring.svc.cluster.local:9090
+        access: proxy
+        isDefault: true
+prometheus:
+  service:
+    type: ClusterIP
+    sessionAffinity: ""
+  prometheusSpec:
+    serviceMonitorSelectorNilUsesHelmValues: false
+    serviceMonitorSelector: {}
+    serviceMonitorNamespaceSelector: {}
+    podMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelector: {}
+    podMonitorNamespaceSelector: {}
+    ruleSelectorNilUsesHelmValues: false
+    ruleSelector: {}
+    ruleNamespaceSelector: {}
+    maximumStartupDurationSeconds: 300
+    resources:
+      limits:
+        memory: 8Gi
+        cpu: 4000m
+      requests:
+        memory: 4Gi
+        cpu: 1000m
