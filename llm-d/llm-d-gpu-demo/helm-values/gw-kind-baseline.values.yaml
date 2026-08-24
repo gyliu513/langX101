@@ -1,0 +1,24 @@
+## Third router release ("llm-d-baseline") -- plain optimized-baseline plugin
+## chain (chart default plugins config, no override), WVA/HPA autoscaling
+## target. Route via header x-llm-d-pool: baseline.
+router:
+  epp:
+    replicas: 1
+    image:
+      registry: ghcr.io/llm-d
+      repository: llm-d-router-endpoint-picker
+      tag: main
+      pullPolicy: IfNotPresent
+    resources:
+      requests: { cpu: "250m", memory: "512Mi" }
+      limits:   { cpu: "1", memory: "1Gi" }
+    flags:
+      v: 2
+  modelServers:
+    matchLabels:
+      llm-d.ai/guide: "optimized-baseline"
+  monitoring:
+    prometheus:
+      enabled: true
+      auth:
+        enabled: false

@@ -1,0 +1,17 @@
+## llm-d-inference-payload-processor (IPP) values. Ext_proc gRPC server
+## (:9004) run BEFORE the EPP via an AgentgatewayPolicy at PreRouting.
+##
+## --secure-serving is mandatory to disable: IPP defaults to a self-signed
+## TLS gRPC server, but agentgateway's extProc backendRef speaks plaintext
+## h2. Left on, every request 500s with a FailClosed ext_proc error that
+## kills ALL gateway traffic, not just the IPP hop.
+payloadProcessor:
+  tracing:
+    enabled: true
+    otelServiceName: "llm-d-inference-payload-processor"
+    otelExporterEndpoint: "http://otel-collector:4317"
+    sampling:
+      sampler: "parentbased_traceidratio"
+      samplerArg: "1.0"
+  flags:
+    secure-serving: false

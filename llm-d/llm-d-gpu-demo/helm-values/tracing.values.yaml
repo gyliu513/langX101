@@ -1,0 +1,10 @@
+## Enable distributed tracing for the llm-d EPP router
+## OTel Collector must be running at http://otel-collector:4317 in the same namespace
+
+router:
+  tracing:
+    enabled: true
+    otelExporterEndpoint: "http://otel-collector:4317"
+    sampling:
+      sampler: "parentbased_traceidratio"
+      samplerArg: "1.0"
