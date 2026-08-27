@@ -1,0 +1,27 @@
+## Resource + selector overrides for the router release "llm-d" on the
+## GPU-Kind single-node cluster (DGX Spark). Trimmed CPU/memory requests so
+## EPP + its tokenizer sidecar fit comfortably alongside the real vLLM Pod on
+## one node.
+router:
+  epp:
+    replicas: 1
+    image:
+      registry: ghcr.io/llm-d
+      repository: llm-d-router-endpoint-picker
+      tag: main
+      pullPolicy: IfNotPresent
+    resources:
+      requests: { cpu: "500m", memory: "512Mi" }
+      limits:   { cpu: "2", memory: "2Gi" }
+    flags:
+      v: 2
+  tokenizer:
+    resources:
+      requests: { cpu: "500m", memory: "2Gi" }
+      limits:   { cpu: "2", memory: "4Gi" }
+  modelServers:
+    matchLabels:
+      llm-d.ai/guide: "gpu-kind-native"
+  monitoring:
+    prometheus:
+      enabled: false
