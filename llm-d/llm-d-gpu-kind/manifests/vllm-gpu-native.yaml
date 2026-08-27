@@ -1,0 +1,80 @@
+# The real GPU model server, running as an ordinary Kubernetes Deployment.
+#
+# This is the whole point of this demo: compared to llm-d-gpu-demo (where the
+# real vLLM process lives outside Kind on a separate machine, reached through
+# a socat tunnel Pod), Kind itself now runs ON the GPU host, so this Pod is
+# scheduled, health-checked, and restarted by kubelet exactly like any other
+# workload -- `nvidia.com/gpu: 1` in resources.limits is the only GPU-specific
+# thing here. The EPP finds this Pod the same way it would find a CPU Pod:
+# via the label selector below (router.modelServers.matchLabels in the helm
+# values), never via a Service VIP.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vllm-qwen
+  namespace: llm-d
+  labels:
+    llm-d.ai/role: decode
+    llm-d.ai/guide: gpu-kind-native
+    llm-d.ai/model: Qwen2.5-1.5B-Instruct
+    app.kubernetes.io/part-of: llm-d
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      llm-d.ai/guide: gpu-kind-native
+      llm-d.ai/role: decode
+  template:
+    metadata:
+      labels:
+        llm-d.ai/role: decode
+        llm-d.ai/guide: gpu-kind-native
+        llm-d.ai/model: Qwen2.5-1.5B-Instruct
+        app.kubernetes.io/part-of: llm-d
+    spec:
+      serviceAccountName: sa
+      runtimeClassName: nvidia
+      containers:
+        - name: vllm
+          image: nvcr.io/nvidia/vllm:26.05-py3
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: VLLM_LOGGING_LEVEL
+              value: "INFO"
+          command: ["vllm", "serve", "Qwen/Qwen2.5-1.5B-Instruct"]
+          args:
+            - "--port=8000"
+            - "--block-size=64"
+            - "--gpu-memory-utilization=0.05"
+            - "--max-model-len=4096"
+            - "--enforce-eager"
+            - "--kv-events-config={\"enable_kv_cache_events\":true,\"publisher\":\"zmq\",\"endpoint\":\"tcp://*:5556\",\"topic\":\"kv@vllm-qwen:8000@Qwen/Qwen2.5-1.5B-Instruct\"}"
+          ports:
+            - name: modelserver
+              containerPort: 8000
+              protocol: TCP
+            - name: kv-events
+              containerPort: 5556
+              protocol: TCP
+          resources:
+            limits:
+              nvidia.com/gpu: 1
+            requests:
+              cpu: "1"
+              memory: "6Gi"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: modelserver
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 30
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: modelserver
+            initialDelaySeconds: 60
+            periodSeconds: 20

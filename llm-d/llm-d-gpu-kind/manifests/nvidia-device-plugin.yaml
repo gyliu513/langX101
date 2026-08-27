@@ -1,0 +1,56 @@
+# NVIDIA device plugin for Kubernetes.
+#
+# This is the component that turns "a GPU that Linux can see" into
+# "a schedulable Kubernetes resource". It runs as a DaemonSet, one Pod per
+# node; on each node it:
+#   1. talks to nvidia-container-runtime / NVML to enumerate physical GPUs
+#   2. registers a resource named `nvidia.com/gpu` with that node's kubelet
+#      over the kubelet device-plugin gRPC socket
+#      (/var/lib/kubelet/device-plugins/kubelet.sock)
+#   3. when the scheduler places a Pod that requests `nvidia.com/gpu: 1`, the
+#      device plugin tells kubelet which physical device to hand that Pod,
+#      and nvidia-container-runtime (registered as the `nvidia` RuntimeClass
+#      in this cluster) injects the actual /dev/nvidia* nodes + driver
+#      libraries into that Pod's container at creation time.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: nvidia-device-plugin-daemonset
+  namespace: kube-system
+spec:
+  selector:
+    matchLabels:
+      name: nvidia-device-plugin-ds
+  template:
+    metadata:
+      labels:
+        name: nvidia-device-plugin-ds
+    spec:
+      runtimeClassName: nvidia
+      tolerations:
+      - key: nvidia.com/gpu
+        operator: Exists
+        effect: NoSchedule
+      priorityClassName: system-node-critical
+      containers:
+      # v0.17.1 crashes on DGX Spark / GB10 (Grace-Blackwell unified memory):
+      # nvmlDeviceGetMemoryInfo returns "Not Supported" on UMA hardware and
+      # older plugin builds treat that as fatal. Fixed in v0.17.4+, which
+      # tolerates the "Not Supported" memory query and still registers the
+      # GPU as `nvidia.com/gpu`.
+      - image: nvcr.io/nvidia/k8s-device-plugin:v0.17.4
+        name: nvidia-device-plugin-ctr
+        env:
+        - name: FAIL_ON_INIT_ERROR
+          value: "false"
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: ["ALL"]
+        volumeMounts:
+        - name: device-plugin
+          mountPath: /var/lib/kubelet/device-plugins
+      volumes:
+      - name: device-plugin
+        hostPath:
+          path: /var/lib/kubelet/device-plugins

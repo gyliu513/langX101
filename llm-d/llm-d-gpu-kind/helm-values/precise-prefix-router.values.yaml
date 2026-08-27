@@ -1,0 +1,64 @@
+## EPP precise prefix-cache (KV-cache-aware) routing config for the REAL GPU
+## vLLM backend (via gpu-vllm-proxy). Layer this onto the helm install
+## INSTEAD OF a baseline/optimized-baseline plugin config.
+##
+## Model servers publish KV-cache events over ZMQ (per-pod socket :5556,
+## tunneled from the DGX Spark by gpu-vllm-proxy's kv-proxy container) and
+## the EPP's precise-prefix-cache-producer builds a per-pod block index
+## consumed by the prefix-cache-scorer -- this is the real KV-cache-aware
+## routing loop, now backed by real GPU inference instead of CPU/sim.
+##
+## Adapted from llm-d-full-demo's manifests/optional/precise-prefix/ (same
+## plugin chain); only the model name changed (Qwen2.5-0.5B -> 1.5B-Instruct).
+router:
+  tokenizer:
+    enabled: true
+    modelName: Qwen/Qwen2.5-1.5B-Instruct  # must match the deployed model + token-producer below
+
+  epp:
+    pluginsConfigFile: "precise-prefix-cache-routing-plugins.yaml"
+    pluginsCustomConfig:
+      precise-prefix-cache-routing-plugins.yaml: |
+        apiVersion: llm-d.ai/v1alpha1
+        kind: EndpointPickerConfig
+        plugins:
+          - type: token-producer
+            parameters:
+              modelName: Qwen/Qwen2.5-1.5B-Instruct
+              vllm:
+                url: "http://localhost:8000"
+          - type: endpoint-notification-source
+          - type: precise-prefix-cache-producer
+            parameters:
+              tokenProcessorConfig:
+                blockSize: 64  # must match vLLM --block-size on the DGX Spark
+              speculativeIndexing: true
+              indexerConfig:
+                kvBlockIndexConfig:
+                  enableMetrics: true
+              kvEventsConfig:
+                topicFilter: "kv@"
+                concurrency: 8
+                discoverPods: true
+                podDiscoveryConfig:
+                  socketPort: 5556
+          - type: prefix-cache-scorer
+            parameters:
+              prefixMatchInfoProducerName: precise-prefix-cache-producer
+          - type: kv-cache-utilization-scorer
+          - type: queue-scorer
+          - type: no-hit-lru-scorer
+        dataLayer:
+          sources:
+            - pluginRef: endpoint-notification-source
+              extractors:
+                - pluginRef: precise-prefix-cache-producer
+        schedulingProfiles:
+          - name: default
+            plugins:
+              - pluginRef: kv-cache-utilization-scorer
+                weight: 2.0
+              - pluginRef: queue-scorer
+                weight: 2.0
+              - pluginRef: prefix-cache-scorer
+                weight: 3.0

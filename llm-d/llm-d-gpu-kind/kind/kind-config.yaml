@@ -1,0 +1,22 @@
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: llm-d-gpu-kind
+nodes:
+- role: control-plane
+  # This is the "magic mount" trick: Kind has no --gpus flag, so there is no
+  # normal way to tell the nvidia-container-runtime "give this node container
+  # access to the GPU". But with
+  # accept-nvidia-visible-devices-as-volume-mounts=true set on the host (see
+  # setup-gpu-docker.sh), the runtime treats a bind-mount whose destination
+  # matches /var/run/nvidia-container-devices/<name> as equivalent to setting
+  # NVIDIA_VISIBLE_DEVICES=<name>. Mounting host's /dev/null (always exists,
+  # content irrelevant) at .../all means "expose all GPUs to this container".
+  extraMounts:
+  - hostPath: /dev/null
+    containerPath: /var/run/nvidia-container-devices/all
+  kubeadmConfigPatches:
+  - |
+    kind: KubeletConfiguration
+    maxPods: 250
+    evictionHard:
+      memory.available: "512Mi"
