@@ -23,7 +23,11 @@ router:
         - type: always-disagg-pd-decider
         - type: disagg-profile-handler
           parameters:
-            deciderPluginName: always-disagg-pd-decider
+            profiles:
+              decode: decode
+              prefill: prefill
+            deciders:
+              prefill: always-disagg-pd-decider
         - type: prefill-filter
         - type: decode-filter
         - type: prefix-cache-scorer
