@@ -12,6 +12,11 @@ This document records a **no-GPU, Apple-Silicon (arm64) Kind** deployment of llm
 > Gateway (agentgateway / Istio) propagates the trace context to the EPP `ext_proc`,
 > which the EPP adopts (PR #1514) — so the gateway hop and the EPP land in **one** trace.
 
+> **New to llm-d?** [`docs/request-lifecycle-zh.md`](docs/request-lifecycle-zh.md) is a
+> beginner-oriented walkthrough (Chinese) of exactly what happens, component by component
+> and CRD/CR field by field, for one prompt request — captured live against this same
+> 2026-08-28 re-run.
+
 ---
 
 ## 1. System Architecture / 系统架构
@@ -800,3 +805,27 @@ this document was re-executed. What changed since the previous run:
 | **2 model-server replicas** | Turns the prefix scorer from a formality into a visible decision (`top_scores=[7,4]`). Required cutting `router.tokenizer.resources` (4 CPU/8Gi default) and the model-server requests, or the second replica cannot schedule. |
 | **P/D pool** (Step 3.12) | A fourth service and the richest trace in the demo (21 spans): disagg profile scheduling + the sidecar's prefill/decode legs. Runs on `llm-d-inference-sim` because CPU vLLM has no NIXL. |
 | Second router release `llm-d-pd` | An EPP runs one plugin config, so P/D needs its own release; the chart namespaces by release name and the two pools coexist on one Gateway via a header-matched `HTTPRoute`. |
+
+---
+
+## Re-run log — 2026-08-28 against `main`
+
+Full clean re-run (fresh Kind cluster, all three images rebuilt from `upstream/main`:
+`llm-d-router@ead3e86f`, `llm-d-inference-payload-processor@ff85c3d`). Two **breaking**
+upstream changes had to be fixed to get a healthy cluster; everything else in Steps 3.1–3.12
+worked as documented.
+
+| Area | Change |
+| --- | --- |
+| **Router Gateway chart renamed** | `oci://ghcr.io/llm-d/charts/llm-d-router-gateway-dev` now 403s (artifact no longer published). Use **`oci://ghcr.io/llm-d/charts/llm-d-router-gateway`** (no `-dev` suffix) for both Step 3.7 and Step 3.12 installs — confirmed against `llm-d` repo's `guides/env.sh` (`ROUTER_GATEWAY_CHART`). Still only publishes the floating `v0` tag (this run pulled digest `sha256:c4a778aa…`). |
+| **`disagg-profile-handler` plugin params changed shape** | The old flat `parameters: {deciderPluginName: always-disagg-pd-decider}` (still used by most of the `llm-d` guides repo, not yet synced) now crash-loops the P/D EPP with `json: unknown field "deciderPluginName"`. Fixed in `manifests/optional/pd/pd-router.values.yaml` to the new nested format: `parameters: {profiles: {decode: decode, prefill: prefill}, deciders: {prefill: always-disagg-pd-decider}}`, matching `llm-d-router`'s own `deploy/config/sim-pd-epp-config.yaml`. A plain `helm upgrade` is not enough — the EPP pod has no config-checksum annotation, so `kubectl rollout restart deploy/llm-d-pd-epp -n llm-d` is required to pick up the fixed ConfigMap. |
+| Trace span names/shape | EPP span names dropped the `gateway.` prefix (`gateway.request` → `request`, `gateway.request_orchestration` → `request_orchestration`); the tokenizer hop renamed `HTTP POST` → `tokenize_render /v1/chat/completions/render`; per-scorer spans are now broken out under a `scoring` parent (`scorer.prefix-cache-scorer`, etc.) instead of one summary span. Precise-prefix trace grew **10 → 15 spans**; P/D trace grew **21 → 28 spans**. |
+| Monitoring stack | `kube-prometheus-stack` 88.1.3 (operator v0.93.0) → **88.5.4** (operator v0.93.1). |
+| HF model download | This run completed in **~39 s** (vs. ~22 min previously) — bandwidth/CDN variance, not a guaranteed steady-state; still pre-seed per Step 3.8. |
+| New doc | Added [`docs/request-lifecycle-zh.md`](docs/request-lifecycle-zh.md) — a beginner-oriented, component-by-component and CRD/CR-field-by-field walkthrough of one prompt's full lifecycle, built entirely from this run's live `kubectl get -o yaml` / Jaeger / Prometheus output. |
+
+> If you hit `CrashLoopBackOff` on an EPP after rebuilding from `upstream/main` with your own
+> `values.yaml`, check the logs for a JSON `unknown field` error first — it almost always means
+> a plugin's parameter schema moved ahead of the guide/values file you copied, not a YAML
+> indentation mistake. Cross-check against the plugin's own `deploy/config/*.yaml` in
+> `llm-d-router` for the current shape.
