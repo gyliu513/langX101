@@ -17,6 +17,12 @@ This document records a **no-GPU, Apple-Silicon (arm64) Kind** deployment of llm
 > and CRD/CR field by field, for one prompt request — captured live against this same
 > 2026-08-28 re-run.
 
+> **Metrics → traces (exemplars):** [`docs/pr2774-exemplars-verify-zh.md`](docs/pr2774-exemplars-verify-zh.md)
+> verifies llm-d-router [PR #2774](https://github.com/llm-d/llm-d-router/pull/2774) (issue
+> [#2637](https://github.com/llm-d/llm-d-router/issues/2637)) on this stack: OpenMetrics
+> exemplars on `llm_d_epp_request_duration_seconds`, Prometheus `exemplar-storage`, and a
+> Grafana exemplar → Jaeger jump. Note the chart is now `llm-d-router-gateway` (no `-dev`).
+
 ---
 
 ## 1. System Architecture / 系统架构
