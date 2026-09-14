@@ -1,0 +1,36 @@
+## Layer onto the kube-prometheus-stack release (llmd) so Grafana can jump
+## from a Prometheus exemplar (trace_id label) to the trace behind it.
+##
+##   helm upgrade llmd prometheus-community/kube-prometheus-stack \
+##     -n llm-d-monitoring --reuse-values -f helm-values/grafana-exemplar-datasources.values.yaml
+##
+## Two destinations for the same trace_id label:
+##  - "Jaeger UI": external link into the Jaeger UI (needs the port-forward on :16686).
+##    This is the one that works reliably: Grafana's Prometheus datasource builds the
+##    *internal* exemplar link with queryType "traceql" (it assumes Tempo), which the
+##    Jaeger datasource does not understand and answers with "No data".
+##  - "Jaeger" datasource: kept so the trace_id is still a clickable datasource link
+##    (Grafana >= 13.2 shows both).
+grafana:
+  datasources:
+    datasources.yaml:
+      apiVersion: 1
+      datasources:
+      - name: Jaeger
+        type: jaeger
+        uid: jaeger
+        url: http://jaeger-collector.llm-d.svc.cluster.local:16686
+        access: proxy
+      - name: Prometheus
+        type: prometheus
+        uid: prometheus
+        url: http://llmd-kube-prometheus-stack-prometheus.llm-d-monitoring.svc.cluster.local:9090
+        access: proxy
+        isDefault: true
+        jsonData:
+          exemplarTraceIdDestinations:
+          - name: trace_id
+            url: http://localhost:16686/trace/$${__value.raw}   # $$ escapes Grafana provisioning env expansion
+            urlDisplayLabel: Open in Jaeger UI
+          - name: trace_id
+            datasourceUid: jaeger

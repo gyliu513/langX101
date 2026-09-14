@@ -12,6 +12,12 @@
 > context 传给 EPP 的 `ext_proc`，EPP 再 adopt（PR #1514）——于是 gateway 这一跳和 EPP 落到
 > **同一条** trace 里。
 
+> **指标 → trace（exemplar）：** [`docs/pr2774-exemplars-verify-zh.md`](docs/pr2774-exemplars-verify-zh.md)
+> 在这套环境上验证了 llm-d-router [PR #2774](https://github.com/llm-d/llm-d-router/pull/2774)
+> （issue [#2637](https://github.com/llm-d/llm-d-router/issues/2637)）：`llm_d_epp_request_duration_seconds`
+> 的 OpenMetrics exemplar、Prometheus `exemplar-storage`、Grafana exemplar → Jaeger 跳转。
+> 注意 chart 已改名为 `llm-d-router-gateway`（没有 `-dev` 了）。
+
 ---
 
 ## 1. 系统架构 / System Architecture
