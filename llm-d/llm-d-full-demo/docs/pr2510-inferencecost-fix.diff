@@ -1,0 +1,114 @@
+--- a/guides/recipes/observability/inferencecost/install-opencost.sh	2026-09-16 13:53:44
++++ b/guides/recipes/observability/inferencecost/install-opencost.sh	2026-09-16 14:13:01
+@@ -297,7 +297,7 @@
+       return 0
+     fi
+     sleep 1
+-    (( i++ ))
++    i=$(( i + 1 ))
+   done
+   log_warn "Could not establish port-forward to Prometheus — config checks may fail."
+ }
+@@ -382,7 +382,7 @@
+   # 4. model_name in vLLM metrics matches llm-d.ai/model pod labels
+   local metric_models pod_models mismatches
+   metric_models=$(query_prometheus_labels 'group by(model_name)(vllm:prompt_tokens_total)' 'model_name' 2>/dev/null || echo "")
+-  pod_models=$($KCMD get pods --all-namespaces -l "llm-d.ai/inference-serving=true" \
++  pod_models=$($KCMD get pods --all-namespaces -l "llm-d.ai/model" \
+     -o jsonpath='{.items[*].metadata.labels.llm-d\.ai/model}' 2>/dev/null \
+     | tr ' ' '\n' | sort -u || echo "")
+ 
+@@ -571,22 +571,6 @@
+     log_info "Creating namespace ${OPENCOST_NAMESPACE}..."
+     $KCMD create namespace "${OPENCOST_NAMESPACE}"
+   fi
+-
+-  # Deploy pricing ConfigMap with Helm adoption annotations so the opencost
+-  # Helm release can manage it without ownership conflicts.
+-  log_info "Deploying pricing ConfigMap..."
+-  $KCMD create configmap opencost-custom-pricing \
+-    --from-file=default.json="${OPENCOST_PRICING_JSON}" \
+-    --namespace "${OPENCOST_NAMESPACE}" \
+-    --dry-run=client -o yaml \
+-  | $KCMD annotate --local -f - \
+-      meta.helm.sh/release-name="${OPENCOST_RELEASE_NAME}" \
+-      meta.helm.sh/release-namespace="${OPENCOST_NAMESPACE}" \
+-      -o yaml \
+-  | $KCMD label --local -f - \
+-      app.kubernetes.io/managed-by=Helm \
+-      -o yaml \
+-  | $KCMD apply -f -
+ 
+   # Deploy metrics-config ConfigMap with Helm adoption annotations.
+   log_info "Deploying metrics-config ConfigMap..."
+@@ -643,12 +627,16 @@
+   customPricing:
+     enabled: true
+     configmapName: opencost-custom-pricing
++    createConfigmap: true
++    provider: custom
++    costModel:
++$(jq -r 'del(.provider) | to_entries[] | "      \(.key): \"\(.value)\""' "${OPENCOST_PRICING_JSON}")
+ EOF
+ 
+   log_info "Installing OpenCost in namespace ${OPENCOST_NAMESPACE}..."
+   local image_sets=()
+   if [[ -n "$OPENCOST_IMAGE_REPO" ]]; then
+-    log_info "OpenCost image: ${OPENCOST_IMAGE_REPO}:${OPENCOST_IMAGE_TAG}"
++    log_info "OpenCost image: ${OPENCOST_IMAGE_REGISTRY}/${OPENCOST_IMAGE_REPO}:${OPENCOST_IMAGE_TAG}"
+     image_sets=(
+       --set "opencost.exporter.image.registry=${OPENCOST_IMAGE_REGISTRY}"
+       --set "opencost.exporter.image.repository=${OPENCOST_IMAGE_REPO}"
+@@ -659,7 +647,7 @@
+     --namespace "${OPENCOST_NAMESPACE}" \
+     --create-namespace \
+     -f "${OPENCOST_VALUES_YAML}" \
+-    "${image_sets[@]}"
++    ${image_sets[@]+"${image_sets[@]}"}
+ 
+   log_success "OpenCost installed."
+ 
+@@ -677,7 +665,7 @@
+   local prom_svc_name
+   prom_svc_name=$(echo "$PROMETHEUS_ENDPOINT" | sed 's|http[s]*://||' | cut -d. -f1)
+   log_info "Access the Prometheus UI:"
+-  log_info "  kubectl port-forward -n ${OPENCOST_NAMESPACE} svc/${prom_svc_name} 9092:80"
++  log_info "  kubectl port-forward -n ${OPENCOST_NAMESPACE} svc/${prom_svc_name} 9092:9090"
+   log_info "  Open: http://localhost:9092"
+   echo ""
+   log_info "Query inference cost metrics (start a port-forward first):"
+@@ -746,8 +734,8 @@
+     detect_prometheus || true
+     if [[ -n "$PROMETHEUS_ENDPOINT" ]]; then
+       start_prometheus_portforward
+-      check_llmd_config
+-      local check_rc=$?
++      local check_rc=0
++      check_llmd_config || check_rc=$?
+       stop_prometheus_portforward
+     else
+       log_warn "Could not determine Prometheus endpoint — skipping llm-d config checks."
+--- a/guides/recipes/observability/inferencecost/manifests/metrics-config.yaml	2026-09-16 14:13:01
++++ b/guides/recipes/observability/inferencecost/manifests/metrics-config.yaml	2026-09-16 14:13:01
+@@ -8,13 +8,13 @@
+     {
+       "useLabelsWhitelist": true,
+       "labelsWhiteList": {
+-        "llm_d_ai_role": true,
+-        "llm_d_ai_model": true,
+-        "llm_d_ai_accelerator_vendor": true,
+-        "llm_d_ai_accelerator_variant": true,
+-        "llm_d_ai_engine_type": true,
+-        "llm_d_ai_inference_serving": true,
+-        "llm_d_ai_managed": true,
+-        "llm_d_ai_inference_shared": true
++        "llm-d.ai/role": true,
++        "llm-d.ai/model": true,
++        "llm-d.ai/accelerator-vendor": true,
++        "llm-d.ai/accelerator-variant": true,
++        "llm-d.ai/engine-type": true,
++        "llm-d.ai/inference-serving": true,
++        "llm-d.ai/managed": true,
++        "llm-d.ai/inference-shared": true
+       }
+     }

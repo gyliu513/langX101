@@ -18,6 +18,12 @@
 > 的 OpenMetrics exemplar、Prometheus `exemplar-storage`、Grafana exemplar → Jaeger 跳转。
 > 注意 chart 已改名为 `llm-d-router-gateway`（没有 `-dev` 了）。
 
+> **推理成本（OpenCost）：** [`docs/pr2510-inferencecost-verify-zh.md`](docs/pr2510-inferencecost-verify-zh.md)
+> （[English](docs/pr2510-inferencecost-verify.md)）在这套环境上跑了 llm-d [PR #2510](https://github.com/llm-d/llm-d/pull/2510)
+> 的 OpenCost 推理成本 recipe。OpenCost 的 `llm_*` 指标和 `/inferenceCost` API 在 sim pod 上能用，但 PR 自带的安装脚本
+> 会静默退出（`set -e` 下的 `(( i++ ))`），而且确认过的价格会被 Helm chart 的 $1.25/core·h 占位价替换
+> （$11.52/h → 修复后 $0.159/h）。补丁见 [`docs/pr2510-inferencecost-fix.diff`](docs/pr2510-inferencecost-fix.diff)。
+
 ---
 
 ## 1. 系统架构 / System Architecture
