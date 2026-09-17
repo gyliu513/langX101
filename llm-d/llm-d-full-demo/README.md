@@ -23,6 +23,13 @@ This document records a **no-GPU, Apple-Silicon (arm64) Kind** deployment of llm
 > exemplars on `llm_d_epp_request_duration_seconds`, Prometheus `exemplar-storage`, and a
 > Grafana exemplar → Jaeger jump. Note the chart is now `llm-d-router-gateway` (no `-dev`).
 
+> **Inference cost (OpenCost):** [`docs/pr2510-inferencecost-verify.md`](docs/pr2510-inferencecost-verify.md)
+> ([中文](docs/pr2510-inferencecost-verify-zh.md)) runs llm-d [PR #2510](https://github.com/llm-d/llm-d/pull/2510)'s
+> OpenCost inference-cost recipe on this stack. OpenCost's `llm_*` gauges and `/inferenceCost` API work on the
+> sim pods, but the installer as shipped exits silently (`(( i++ ))` under `set -e`) and its confirmed prices are
+> replaced by the Helm chart's $1.25/core-hr placeholders ($11.52/hr → $0.159/hr once fixed). Patch in
+> [`docs/pr2510-inferencecost-fix.diff`](docs/pr2510-inferencecost-fix.diff).
+
 ---
 
 ## 1. System Architecture / 系统架构
