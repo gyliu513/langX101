@@ -1,0 +1,61 @@
+## EPP plugin chain for the P/D-disaggregated pool (second router release).
+## An EPP runs exactly one plugin config, so P/D gets its own release
+## (`llm-d-pd`): the chart namespaces everything by release name
+## (Deployment llm-d-pd-epp, InferencePool llm-d-pd), so it coexists with the
+## precise-prefix release on the same Gateway.
+##
+## Plugin set follows llm-d guides/pd-disaggregation/router (2026-09 main):
+## `disagg-headers-handler` no longer exists ("plugin type ... is not
+## registered" crash-loop) and disagg-profile-handler only takes `deciders`.
+router:
+  epp:
+    replicas: 1
+    flags:
+      v: 2
+    pluginsConfigFile: "pd-config.yaml"
+    pluginsCustomConfig:
+      pd-config.yaml: |
+        apiVersion: llm-d.ai/v1alpha1
+        kind: EndpointPickerConfig
+        plugins:
+        # Decides per request whether to disaggregate (always, for the demo)
+        # and drives the two scheduling profiles below.
+        - type: always-disagg-pd-decider
+        - type: disagg-profile-handler
+          parameters:
+            deciders:
+              prefill: always-disagg-pd-decider
+        - type: prefill-filter
+        - type: decode-filter
+        - type: prefix-cache-scorer
+        - type: queue-scorer
+        - type: kv-cache-utilization-scorer
+        - type: active-request-scorer
+        - type: max-score-picker
+        schedulingProfiles:
+        - name: prefill
+          plugins:
+          - pluginRef: prefill-filter
+          - pluginRef: prefix-cache-scorer
+            weight: 3
+          - pluginRef: queue-scorer
+            weight: 2
+          - pluginRef: kv-cache-utilization-scorer
+            weight: 2
+          - pluginRef: max-score-picker
+        - name: decode
+          plugins:
+          - pluginRef: decode-filter
+          - pluginRef: active-request-scorer
+            weight: 2
+          - pluginRef: prefix-cache-scorer
+            weight: 3
+          - pluginRef: max-score-picker
+
+  modelServers:
+    type: vllm
+    protocol: http
+    targetPorts:
+      - number: 8000
+    matchLabels:
+      llm-d.ai/guide: "pd-disaggregation"

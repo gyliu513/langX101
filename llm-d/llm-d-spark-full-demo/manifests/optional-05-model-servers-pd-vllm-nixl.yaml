@@ -1,0 +1,217 @@
+---
+# *** NOT USED BY THE DEMO -- kept as the record of an attempt. ***
+#
+# P/D-disaggregated pool with REAL vLLM prefill + decode Pods and REAL
+# KV-cache transfer over NIXL (image: localhost/vllm-nixl:26.08, see
+# images/vllm-nixl/Dockerfile). On the DGX Spark (GB10, unified memory) this
+# does NOT come up: right after the log line "Initializing NIXL worker" the
+# process's host memory grows without bound (>60 GiB in ~3 min) until it is
+# OOMKilled -- with UCX_TLS=tcp, with the default UCX transports, and with
+# kv_buffer_device=cpu alike. The demo uses manifests/05-model-servers-pd.yaml
+# (llm-d-inference-sim) instead. See README "P/D on a real GPU: what blocked it".
+#
+# Everything below is otherwise the upstream llm-d GPU P/D shape
+# (guides/pd-disaggregation/modelserver/gpu/vllm/base) adapted to this host.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pd-prefill
+  namespace: llm-d
+  labels:
+    app: pd-prefill
+    llm-d.ai/role: prefill
+    llm-d.ai/guide: pd-disaggregation
+    llm-d.ai/model: Qwen2.5-1.5B-Instruct
+    app.kubernetes.io/part-of: llm-d
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: pd-prefill
+      llm-d.ai/guide: pd-disaggregation
+  template:
+    metadata:
+      labels:
+        app: pd-prefill
+        llm-d.ai/role: prefill
+        llm-d.ai/guide: pd-disaggregation
+        llm-d.ai/model: Qwen2.5-1.5B-Instruct
+        app.kubernetes.io/part-of: llm-d
+    spec:
+      serviceAccountName: sa
+      runtimeClassName: nvidia
+      containers:
+        - name: modelserver
+          image: localhost/vllm-nixl:26.08
+          imagePullPolicy: IfNotPresent
+          # args only -- keep the NGC ENTRYPOINT (CUDA forward-compat setup).
+          args:
+            - "vllm"
+            - "serve"
+            - "Qwen/Qwen2.5-1.5B-Instruct"
+            - "--port=8000"
+            - "--block-size=64"
+            - "--max-model-len=8192"
+            - "--enforce-eager"
+            - "--kv-cache-memory-bytes=4294967296"
+            - "--gpu-memory-utilization=0.10"
+            - "--disable-access-log-for-endpoints=/health,/metrics,/v1/models"
+            - "--kv-transfer-config"
+            - '{"kv_connector":"NixlConnector","kv_role":"kv_both","kv_buffer_device":"cuda","kv_connector_extra_config":{"backends":["UCX"]}}'
+            - "--no-disable-hybrid-kv-cache-manager"
+            - "--otlp-traces-endpoint=http://otel-collector:4317"
+            - "--collect-detailed-traces=all"
+          ports:
+            - name: modelserver
+              containerPort: 8000
+              protocol: TCP
+            - name: nixl
+              containerPort: 5600
+              protocol: TCP
+          env:
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            - name: VLLM_NIXL_SIDE_CHANNEL_HOST
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            - name: HF_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: llm-d-hf-token
+                  key: HF_TOKEN
+            - name: HF_HOME
+              value: /root/.cache/huggingface
+            - name: HF_HUB_OFFLINE
+              value: "1"
+            - name: DO_NOT_TRACK
+              value: "1"
+          resources:
+            requests: { cpu: "2", memory: 8Gi, nvidia.com/gpu: 1 }
+            limits:   { cpu: "4", memory: 48Gi, nvidia.com/gpu: 1 }
+          volumeMounts:
+            - { mountPath: /dev/shm, name: dshm }
+            - { mountPath: /root/.cache/huggingface, name: hf-cache }
+          startupProbe:
+            httpGet: { path: /health, port: modelserver }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 90
+          readinessProbe:
+            httpGet: { path: /v1/models, port: modelserver }
+            periodSeconds: 10
+      volumes:
+        - name: dshm
+          emptyDir: { medium: Memory, sizeLimit: 4Gi }
+        - name: hf-cache
+          hostPath: { path: /root/.cache/huggingface, type: DirectoryOrCreate }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pd-decode
+  namespace: llm-d
+  labels:
+    app: pd-decode
+    llm-d.ai/role: decode
+    llm-d.ai/guide: pd-disaggregation
+    llm-d.ai/model: Qwen2.5-1.5B-Instruct
+    app.kubernetes.io/part-of: llm-d
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: pd-decode
+      llm-d.ai/guide: pd-disaggregation
+  template:
+    metadata:
+      labels:
+        app: pd-decode
+        llm-d.ai/role: decode
+        llm-d.ai/guide: pd-disaggregation
+        llm-d.ai/model: Qwen2.5-1.5B-Instruct
+        app.kubernetes.io/part-of: llm-d
+    spec:
+      serviceAccountName: sa
+      runtimeClassName: nvidia
+      initContainers:
+        - name: routing-proxy
+          image: ghcr.io/llm-d/llm-d-router-disagg-sidecar:v0.10.0
+          imagePullPolicy: IfNotPresent
+          restartPolicy: Always
+          args:
+            - --port=8000
+            - --model-server-port=8200
+            - --kv-connector=nixlv2
+            - --zap-log-level=1
+            - --secure-proxy=false
+            - --tracing=true
+          env:
+            - { name: OTEL_SERVICE_NAME, value: "llm-d-routing-sidecar" }
+            - { name: OTEL_EXPORTER_OTLP_ENDPOINT, value: "http://otel-collector:4317" }
+            - { name: OTEL_TRACES_EXPORTER, value: "otlp" }
+            - { name: OTEL_TRACES_SAMPLER, value: "parentbased_traceidratio" }
+            - { name: OTEL_TRACES_SAMPLER_ARG, value: "1.0" }
+          ports:
+            - { name: sidecar, containerPort: 8000, protocol: TCP }
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+      containers:
+        - name: modelserver
+          image: localhost/vllm-nixl:26.08
+          imagePullPolicy: IfNotPresent
+          args:
+            - "vllm"
+            - "serve"
+            - "Qwen/Qwen2.5-1.5B-Instruct"
+            - "--port=8200"
+            - "--block-size=64"
+            - "--max-model-len=8192"
+            - "--enforce-eager"
+            - "--kv-cache-memory-bytes=4294967296"
+            - "--gpu-memory-utilization=0.10"
+            - "--disable-access-log-for-endpoints=/health,/metrics,/v1/models"
+            - "--kv-transfer-config"
+            - '{"kv_connector":"NixlConnector","kv_role":"kv_both","kv_buffer_device":"cuda","kv_connector_extra_config":{"backends":["UCX"]}}'
+            - "--no-disable-hybrid-kv-cache-manager"
+            - "--otlp-traces-endpoint=http://otel-collector:4317"
+            - "--collect-detailed-traces=all"
+          ports:
+            - { name: modelserver, containerPort: 8200, protocol: TCP }
+            - { name: nixl, containerPort: 5600, protocol: TCP }
+          env:
+            - name: POD_IP
+              valueFrom: { fieldRef: { fieldPath: status.podIP } }
+            - name: VLLM_NIXL_SIDE_CHANNEL_HOST
+              valueFrom: { fieldRef: { fieldPath: status.podIP } }
+            - name: HF_TOKEN
+              valueFrom: { secretKeyRef: { name: llm-d-hf-token, key: HF_TOKEN } }
+            - { name: HF_HOME, value: /root/.cache/huggingface }
+            - { name: HF_HUB_OFFLINE, value: "1" }
+            - { name: DO_NOT_TRACK, value: "1" }
+          resources:
+            requests: { cpu: "2", memory: 8Gi, nvidia.com/gpu: 1 }
+            limits:   { cpu: "4", memory: 48Gi, nvidia.com/gpu: 1 }
+          volumeMounts:
+            - { mountPath: /dev/shm, name: dshm }
+            - { mountPath: /root/.cache/huggingface, name: hf-cache }
+          startupProbe:
+            httpGet: { path: /health, port: modelserver }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 90
+          readinessProbe:
+            httpGet: { path: /v1/models, port: modelserver }
+            periodSeconds: 10
+      volumes:
+        - name: dshm
+          emptyDir: { medium: Memory, sizeLimit: 4Gi }
+        - name: hf-cache
+          hostPath: { path: /root/.cache/huggingface, type: DirectoryOrCreate }

@@ -1,0 +1,8 @@
+## EPP span export to the in-namespace OTel Collector (-> Jaeger).
+router:
+  tracing:
+    enabled: true
+    otelExporterEndpoint: "http://otel-collector:4317"
+    sampling:
+      sampler: "parentbased_traceidratio"
+      samplerArg: "1.0"

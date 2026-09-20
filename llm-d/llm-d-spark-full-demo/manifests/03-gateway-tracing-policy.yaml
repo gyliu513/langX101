@@ -1,0 +1,21 @@
+# Make agentgateway export ITS OWN spans (the trace root `POST /*`) to the
+# OTel Collector and start a trace even for requests without an incoming
+# traceparent. Without this the EPP spans are orphan roots.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: gateway-tracing
+  namespace: llm-d
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: llm-d-inference-gateway
+  frontend:
+    tracing:
+      backendRef:
+        kind: Service
+        name: otel-collector
+        port: 4317
+      protocol: GRPC
+      randomSampling: "true"

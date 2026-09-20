@@ -1,0 +1,93 @@
+# GPU plumbing for Pods inside the Kind node.
+#
+# RuntimeClass/nvidia: a named handle to the `nvidia` runtime registered in
+# the node's *nested* containerd (/etc/containerd/conf.d/99-nvidia.toml,
+# written by `nvidia-ctk runtime configure --runtime=containerd`). Only Pods
+# that set `runtimeClassName: nvidia` get /dev/nvidia* + driver libs injected;
+# everything else keeps using plain runc.
+apiVersion: node.k8s.io/v1
+kind: RuntimeClass
+metadata:
+  name: nvidia
+handler: nvidia
+---
+# Time-slicing: the DGX Spark has ONE physical GPU, but this demo runs several
+# vLLM Pods on it (2 precise-prefix replicas + P/D prefill + decode). With
+# `replicas: 4` the plugin advertises `nvidia.com/gpu: 4`, so up to four Pods
+# can each request `nvidia.com/gpu: 1` and the scheduler still does real
+# accounting. The Pods share the GPU by time-slicing (no memory isolation --
+# each vLLM must size its own --gpu-memory-utilization budget).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nvidia-device-plugin-config
+  namespace: kube-system
+data:
+  config.yaml: |
+    version: v1
+    sharing:
+      timeSlicing:
+        renameByDefault: false
+        failRequestsGreaterThanOne: false
+        resources:
+        - name: nvidia.com/gpu
+          replicas: 4
+---
+# NVIDIA device plugin: enumerates GPUs via NVML and registers the
+# `nvidia.com/gpu` extended resource with kubelet, so Pods can request it and
+# the scheduler can account for it.
+#
+# Version must be >= v0.17.4: GB10 (DGX Spark) has unified CPU/GPU memory, so
+# nvmlDeviceGetMemoryInfo() returns "Not Supported"; older plugins treat that as
+# fatal (NVIDIA/k8s-device-plugin#1482).
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: nvidia-device-plugin-daemonset
+  namespace: kube-system
+spec:
+  selector:
+    matchLabels:
+      name: nvidia-device-plugin-ds
+  updateStrategy:
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        name: nvidia-device-plugin-ds
+    spec:
+      tolerations:
+      - key: nvidia.com/gpu
+        operator: Exists
+        effect: NoSchedule
+      priorityClassName: system-node-critical
+      # The plugin itself needs the driver libs -> run it under the nvidia
+      # runtime too.
+      runtimeClassName: nvidia
+      containers:
+      - image: nvcr.io/nvidia/k8s-device-plugin:v0.20.0
+        name: nvidia-device-plugin-ctr
+        args: ["--config-file=/config/config.yaml"]
+        env:
+        - name: FAIL_ON_INIT_ERROR
+          value: "false"
+        - name: NVIDIA_VISIBLE_DEVICES
+          value: all
+        - name: NVIDIA_DRIVER_CAPABILITIES
+          value: all
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: ["ALL"]
+        volumeMounts:
+        - name: device-plugin
+          mountPath: /var/lib/kubelet/device-plugins
+        - name: config
+          mountPath: /config
+      volumes:
+      - name: device-plugin
+        hostPath:
+          path: /var/lib/kubelet/device-plugins
+      - name: config
+        configMap:
+          name: nvidia-device-plugin-config

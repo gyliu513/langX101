@@ -1,0 +1,32 @@
+## Kind-on-DGX-Spark overrides for the P/D router release (`llm-d-pd`).
+## Smaller than the precise-prefix EPP (no token-producer, no render calls).
+router:
+  epp:
+    image:
+      registry: ghcr.io/llm-d
+      repository: llm-d-router-endpoint-picker
+      tag: main
+      pullPolicy: IfNotPresent
+    resources:
+      requests: { cpu: "250m", memory: "512Mi" }
+      limits:   { cpu: "1", memory: "2Gi" }
+  tokenizer:
+    enabled: false
+  inferencePool:
+    failureMode: "FailOpen"
+  monitoring:
+    interval: "10s"
+    prometheus:
+      enabled: true
+      auth:
+        enabled: false
+
+# The chart renders a header-matched HTTPRoute for this release:
+# requests carrying `x-llm-d-pool: pd` go to InferencePool llm-d-pd. A rule
+# with a header match is more specific than the default release's bare `/`
+# PathPrefix, so everything else still reaches the precise-prefix pool.
+httpRoute:
+  create: true
+  inferenceGatewayName: llm-d-inference-gateway
+  headerMatches:
+    x-llm-d-pool: pd

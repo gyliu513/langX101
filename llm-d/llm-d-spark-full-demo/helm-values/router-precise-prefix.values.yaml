@@ -1,0 +1,80 @@
+## EPP plugin chain for precise (KV-event-driven) prefix-cache-aware routing.
+##
+## Derived from llm-d guides/precise-prefix-cache-routing/router/*.values.yaml
+## (2026-09-18 main) with the scheduling profile kept as the weighted-scorer
+## form so the routing decision is easy to read off the trace
+## (top_scores=[7,4] = prefix 3.0 + kv-util 2.0 + queue 2.0).
+router:
+  epp:
+    replicas: 1
+    flags:
+      v: 2
+      ha-enable-leader-election: false
+    env:
+      - name: HF_TOKEN
+        valueFrom:
+          secretKeyRef:
+            name: llm-d-hf-token
+            key: HF_TOKEN
+
+    pluginsConfigFile: "precise-prefix-cache-routing-plugins.yaml"
+    pluginsCustomConfig:
+      precise-prefix-cache-routing-plugins.yaml: |
+        apiVersion: llm-d.ai/v1alpha1
+        kind: EndpointPickerConfig
+        plugins:
+          # Tokenizes the incoming prompt over HTTP against the render Service
+          # (manifests/02-model-servers.yaml) so every downstream plugin works
+          # in real token IDs, not characters.
+          - type: token-producer
+            parameters:
+              modelName: Qwen/Qwen2.5-1.5B-Instruct
+              vllm:
+                url: "http://precise-prefix-cache-routing-render:8000"
+          - type: endpoint-notification-source
+          # Builds the per-Pod KV-block index from the ZMQ events vLLM
+          # publishes (--kv-events-config). blockSizeTokens MUST equal vLLM's
+          # --block-size.
+          - type: precise-prefix-cache-producer
+            parameters:
+              tokenProcessorConfig:
+                blockSizeTokens: 64
+              speculativeIndexing: true
+              indexerConfig:
+                kvBlockIndexConfig:
+                  enableMetrics: true
+              kvEventsConfig:
+                topicFilter: "kv@"
+                concurrency: 8
+                discoverPods: true
+                podDiscoveryConfig:
+                  socketPort: 5556
+                  replaySocketPort: 5559
+          - type: prefix-cache-scorer
+            parameters:
+              prefixMatchInfoProducerName: precise-prefix-cache-producer
+          - type: kv-cache-utilization-scorer
+          - type: queue-scorer
+          - type: no-hit-lru-scorer
+        dataLayer:
+          sources:
+            - pluginRef: endpoint-notification-source
+              extractors:
+                - pluginRef: precise-prefix-cache-producer
+        schedulingProfiles:
+          - name: default
+            plugins:
+              - pluginRef: kv-cache-utilization-scorer
+                weight: 2.0
+              - pluginRef: queue-scorer
+                weight: 2.0
+              - pluginRef: prefix-cache-scorer
+                weight: 3.0
+
+  modelServers:
+    type: vllm
+    protocol: http
+    targetPorts:
+      - number: 8000
+    matchLabels:
+      llm-d.ai/guide: "precise-prefix-cache-routing"

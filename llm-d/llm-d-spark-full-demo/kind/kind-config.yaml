@@ -1,0 +1,28 @@
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: llm-d
+nodes:
+- role: control-plane
+  kubeadmConfigPatches:
+  - |
+    kind: KubeletConfiguration
+    maxPods: 250
+    evictionHard:
+      memory.available: "512Mi"
+  extraMounts:
+  # GPU passthrough into the Kind node container.
+  #
+  # Kind has no `--gpus` flag. With
+  # `accept-nvidia-visible-devices-as-volume-mounts = true` in
+  # /etc/nvidia-container-runtime/config.toml, the nvidia runtime treats a
+  # bind-mount whose *destination* is /var/run/nvidia-container-devices/<id>
+  # exactly like `NVIDIA_VISIBLE_DEVICES=<id>` -- so this one mount is what
+  # injects /dev/nvidia* and the driver libraries into the node container.
+  # The hostPath is irrelevant (it just has to exist); `all` = every GPU.
+  - hostPath: /dev/null
+    containerPath: /var/run/nvidia-container-devices/all
+  # Persistent Hugging Face cache: host ~/llm-d-cache -> node /root/.cache.
+  # The vLLM Deployments mount the node path as HF_HOME so model weights are
+  # downloaded once and survive Pod restarts and cluster re-creation.
+  - hostPath: /home/gyliu/llm-d-cache
+    containerPath: /root/.cache
