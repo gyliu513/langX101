@@ -1,0 +1,20 @@
+# Attach the IPP to the Gateway as a PreRouting ext_proc. The IPP extracts the
+# W3C trace context from the ext_proc request headers and re-injects it into
+# the headers it forwards, so the EPP becomes a CHILD of the IPP span.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: ipp-extproc
+  namespace: llm-d
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: llm-d-inference-gateway
+  traffic:
+    phase: PreRouting
+    extProc:
+      backendRef:
+        kind: Service
+        name: payload-processor
+        port: 9004

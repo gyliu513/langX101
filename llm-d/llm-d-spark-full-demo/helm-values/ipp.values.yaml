@@ -1,0 +1,22 @@
+## llm-d Inference Payload Processor (IPP) -- a second ext_proc server that
+## runs BEFORE routing and lifts body fields into headers (model ->
+## X-Gateway-Model-Name). provider.name=none deploys only the workload; the
+## agentgateway wiring is manifests/04-ipp-extproc-policy.yaml.
+provider:
+  name: none
+
+payloadProcessor:
+  image:
+    tag: v0.1.0            # published multi-arch release
+    pullPolicy: IfNotPresent
+  flags:
+    # MANDATORY with agentgateway: the IPP defaults to TLS gRPC (self-signed),
+    # agentgateway's extProc speaks plaintext h2. Leave it on and EVERY
+    # request 500s (failure_mode=FailClosed on a broken ext_proc).
+    secure-serving: false
+  tracing:
+    enabled: true
+    otelExporterEndpoint: "http://otel-collector:4317"
+    sampling:
+      sampler: "parentbased_traceidratio"
+      samplerArg: "1.0"

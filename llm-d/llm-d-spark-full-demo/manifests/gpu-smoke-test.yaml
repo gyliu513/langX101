@@ -1,0 +1,16 @@
+# Proves the whole GPU chain (host docker -> Kind node -> nested containerd ->
+# Pod) works before any llm-d component is involved.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: gpu-smoke-test
+spec:
+  restartPolicy: Never
+  runtimeClassName: nvidia
+  containers:
+  - name: cuda
+    image: nvcr.io/nvidia/cuda:13.0.1-base-ubuntu24.04
+    command: ["nvidia-smi"]
+    resources:
+      limits:
+        nvidia.com/gpu: 1

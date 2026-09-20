@@ -1,0 +1,196 @@
+---
+# Precise-prefix pool: 2 REAL vLLM replicas on the GB10 GPU.
+#
+# Only two things make this a GPU Pod: `runtimeClassName: nvidia` (so the
+# node's nested containerd injects /dev/nvidia* + driver libs) and
+# `resources.limits["nvidia.com/gpu"]: 1` (one of the 4 time-sliced replicas
+# the device plugin advertises). Everything else is an ordinary Deployment.
+#
+# Labels must match `router.modelServers.matchLabels` in
+# helm-values/router-spark.values.yaml -- that is how the InferencePool /
+# EPP find these Pods (via the Pod API, never through a Service).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: precise-prefix-vllm
+  namespace: llm-d
+  labels:
+    llm-d.ai/role: decode
+    llm-d.ai/guide: precise-prefix-cache-routing
+    llm-d.ai/model: Qwen2.5-1.5B-Instruct
+    app.kubernetes.io/part-of: llm-d
+spec:
+  # 2 replicas so the EPP scheduler actually has a choice: the
+  # prefix-cache-scorer can only show KV-aware routing with >1 candidate.
+  replicas: 2
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      llm-d.ai/guide: precise-prefix-cache-routing
+      llm-d.ai/role: decode
+  template:
+    metadata:
+      labels:
+        llm-d.ai/role: decode
+        llm-d.ai/guide: precise-prefix-cache-routing
+        llm-d.ai/model: Qwen2.5-1.5B-Instruct
+        app.kubernetes.io/part-of: llm-d
+    spec:
+      serviceAccountName: sa
+      runtimeClassName: nvidia
+      containers:
+        - name: modelserver
+          # NVIDIA's DGX Spark vLLM build (vLLM 0.27.1). The upstream
+          # docker.io/vllm/vllm-openai image has no GB10/aarch64 variant.
+          image: nvcr.io/nvidia/vllm:26.08-py3
+          imagePullPolicy: IfNotPresent
+          # NO `command:` here -- on purpose. The image ENTRYPOINT
+          # (/opt/nvidia/nvidia_entrypoint.sh) prepends /usr/local/cuda/compat/
+          # lib.real to LD_LIBRARY_PATH, which is what turns on CUDA Forward
+          # Compatibility (user-mode driver 615 / CUDA 13.4 on the host's
+          # kernel driver 580 / CUDA 13.0). Setting `command: ["vllm","serve"]`
+          # bypasses the ENTRYPOINT and FlashInfer's JIT-compiled PTX then
+          # fails with "the provided PTX was compiled with an unsupported
+          # toolchain" (cudaErrorUnsupportedPtxVersion). `args` alone replaces
+          # CMD and keeps the ENTRYPOINT.
+          args:
+            - "vllm"
+            - "serve"
+            - "Qwen/Qwen2.5-1.5B-Instruct"
+            - "--port=8000"
+            # 64-token KV blocks -- must equal tokenProcessorConfig.blockSizeTokens
+            # in the EPP's precise-prefix-cache-producer config.
+            - "--block-size=64"
+            - "--max-model-len=8192"
+            # Skip CUDA-graph capture so a cold Pod is serving in ~1 min instead
+            # of several. Costs some decode throughput; fine for a demo.
+            - "--enforce-eager"
+            # GB10 unified memory: "free GPU memory" == free system memory and
+            # it fluctuates (page cache, other Pods starting), so vLLM's
+            # profiling-based sizing (--gpu-memory-utilization) dies with
+            # "Error in memory profiling. Initial free memory X, current free
+            # memory Y" whenever Y > X. An explicit KV budget skips that
+            # profiling entirely: 6 GiB ~= 224k tokens of KV for this model
+            # (28 layers x 2 x 2 KV-heads x 128 x bf16 = 28 KiB/token).
+            # Four vLLM Pods share this GPU (2 here + P/D prefill + decode).
+            - "--kv-cache-memory-bytes=6442450944"
+            # Still needed alongside it: vLLM checks at startup that
+            # free >= gpu_memory_utilization * total (default 0.92 x 121 GiB
+            # -> "Free memory on device ... is less than desired GPU memory
+            # utilization"). 0.10 x 121 GiB = 12 GiB comfortably fits.
+            - "--gpu-memory-utilization=0.10"
+            - "--disable-access-log-for-endpoints=/health,/metrics,/v1/models,/v1/completions/render,/v1/chat/completions/render"
+            # Publish KV-cache block add/evict events over ZMQ. The EPP's
+            # precise-prefix-cache-producer dials tcp://<podIP>:5556 directly
+            # (discoverPods: true) and replays missed events from :5559.
+            - "--kv-events-config"
+            - '{"enable_kv_cache_events":true,"publisher":"zmq","endpoint":"tcp://*:5556","replay_endpoint":"tcp://*:5559","topic":"kv@$(POD_IP):8000@Qwen/Qwen2.5-1.5B-Instruct"}'
+            # Real vLLM exports OpenTelemetry spans -- unlike the inference-sim,
+            # so the model server becomes its own service in the Jaeger trace.
+            - "--otlp-traces-endpoint=http://otel-collector:4317"
+            - "--collect-detailed-traces=all"
+          ports:
+            - name: modelserver
+              containerPort: 8000
+              protocol: TCP
+            - name: kv-events
+              containerPort: 5556
+              protocol: TCP
+            - name: kv-replay
+              containerPort: 5559
+              protocol: TCP
+          env:
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            - name: HF_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: llm-d-hf-token
+                  key: HF_TOKEN
+            # Node path backed by host ~/llm-d-cache (kind/kind-config.yaml),
+            # pre-seeded with the model so Pods start without downloading.
+            - name: HF_HOME
+              value: /root/.cache/huggingface
+            - name: HF_HUB_OFFLINE
+              value: "1"
+            - name: DO_NOT_TRACK
+              value: "1"
+            # Service name for the spans vLLM exports via --otlp-traces-endpoint
+            # (otherwise Jaeger shows them as "unknown_service").
+            - name: OTEL_SERVICE_NAME
+              value: "vllm-precise-prefix"
+            - name: VLLM_LOGGING_LEVEL
+              value: "INFO"
+          resources:
+            requests:
+              cpu: "2"
+              memory: 6Gi
+              nvidia.com/gpu: 1
+            limits:
+              cpu: "4"
+              memory: 16Gi
+              nvidia.com/gpu: 1
+          volumeMounts:
+            - mountPath: /dev/shm
+              name: dshm
+            - mountPath: /root/.cache/huggingface
+              name: hf-cache
+          startupProbe:
+            httpGet:
+              path: /health
+              port: modelserver
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 90   # 15 min budget for a cold start
+          readinessProbe:
+            httpGet:
+              path: /v1/models
+              port: modelserver
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: modelserver
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 3
+      volumes:
+        - name: dshm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 4Gi
+        - name: hf-cache
+          hostPath:
+            path: /root/.cache/huggingface
+            type: DirectoryOrCreate
+---
+# Tokenizer ("render") endpoint for the EPP's token-producer plugin.
+#
+# This is how upstream llm-d does it now: instead of a separate vllm-render
+# sidecar in the EPP Pod (4 CPU / 8Gi by default), the EPP tokenizes prompts
+# against the model servers' own /v1/chat/completions/render endpoint. This
+# Service owns no Pods -- it fronts the decode Pods above. Only Ready Pods get
+# traffic, so render calls never hit a Pod still loading weights.
+apiVersion: v1
+kind: Service
+metadata:
+  name: precise-prefix-cache-routing-render
+  namespace: llm-d
+  labels:
+    app.kubernetes.io/component: vllm-render
+    llm-d.ai/guide: precise-prefix-cache-routing
+spec:
+  selector:
+    llm-d.ai/guide: precise-prefix-cache-routing
+    llm-d.ai/role: decode
+  ports:
+    - name: render-http
+      port: 8000
+      targetPort: modelserver
+      protocol: TCP

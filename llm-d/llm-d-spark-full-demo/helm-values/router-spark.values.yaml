@@ -1,0 +1,25 @@
+## Kind-on-DGX-Spark overrides for the precise-prefix router release.
+router:
+  epp:
+    image:
+      registry: ghcr.io/llm-d
+      repository: llm-d-router-endpoint-picker   # published multi-arch (arm64 ok)
+      tag: main
+      pullPolicy: IfNotPresent
+    resources:
+      requests: { cpu: "500m", memory: "1Gi" }
+      limits:   { cpu: "2", memory: "4Gi" }
+  # No vllm-render sidecar: token-producer uses the render Service that
+  # fronts the model servers (see manifests/02-model-servers.yaml).
+  tokenizer:
+    enabled: false
+  inferencePool:
+    failureMode: "FailOpen"
+  # ServiceMonitor for the EPP's :9090/metrics (llm_d_epp_*). Needs the
+  # prometheus-operator CRDs before `helm install`.
+  monitoring:
+    interval: "10s"
+    prometheus:
+      enabled: true
+      auth:
+        enabled: false
