@@ -749,10 +749,73 @@ $ kubectl describe node llm-d-control-plane | sed -n '/Allocated resources/,/Eve
 
 ---
 
-## 5. Test — end to end
+## 5. Access and test
 
-`scripts/port-forward.sh` exposes Jaeger (:16686), Prometheus (:9091),
-Grafana (:3000) and the Gateway (:8080) on localhost.
+### 5.0 How to reach everything
+
+Nothing in the cluster is exposed by itself (Kind's `LoadBalancer` Service
+stays `<pending>`). Two ways in:
+
+**On the Spark** — `scripts/port-forward.sh` forwards the four entry points
+to `localhost` (it kills any previous `kubectl port-forward` first):
+
+```console
+$ export PATH=$HOME/bin:$PATH        # kind/kubectl/helm live in ~/bin (Step 1)
+$ cd ~/llm-d-spark-full-demo && ./scripts/port-forward.sh
+Jaeger     http://127.0.0.1:16686
+Prometheus http://127.0.0.1:9091
+Grafana    http://127.0.0.1:3000
+Gateway    http://127.0.0.1:8080
+```
+
+**From another machine on the LAN (e.g. a laptop)** — bind the forwards to
+all interfaces and use the Spark's IP, or open an SSH tunnel:
+
+```console
+$ BIND=0.0.0.0 ./scripts/port-forward.sh                     # on the Spark
+$ # then from the laptop:
+$ for p in 8080/v1/models 16686/api/services 9091/-/ready 3000/api/health; do
+    curl -s -o /dev/null -w "http://192.168.1.48:$p -> %{http_code}\n" http://192.168.1.48:$p; done
+http://192.168.1.48:8080/v1/models -> 200
+http://192.168.1.48:16686/api/services -> 200
+http://192.168.1.48:9091/-/ready -> 200
+http://192.168.1.48:3000/api/health -> 200
+$ # alternative that needs nothing bound on the Spark (pick free local ports):
+$ ssh -N -L 26686:127.0.0.1:16686 -L 13000:127.0.0.1:3000 -L 19091:127.0.0.1:9091 -L 18080:127.0.0.1:8080 gyliu@192.168.1.48
+```
+
+| What | URL (on the Spark, after `port-forward.sh`) | Notes |
+| --- | --- | --- |
+| **Gateway** (OpenAI-compatible API) | `http://localhost:8080/v1/chat/completions`, `/v1/models` | model name `Qwen/Qwen2.5-1.5B-Instruct`; add header `x-llm-d-pool: pd` to hit the P/D pool. Without port-forward: NodePort `http://172.18.0.2:30586` (host only) or in-cluster `http://llm-d-inference-gateway.llm-d:80` |
+| **Jaeger** UI / API | `http://localhost:16686` — Service = `llm-d-inference-gateway` → *Find Traces* | `scripts/trace-tree.py` and `scripts/span-attrs.py` read `/api/traces` |
+| **Prometheus** | `http://localhost:9091` — *Status → Targets*, *Graph* | `/api/v1/query?query=…` for scripts |
+| **Grafana** | `http://localhost:3000` — **admin / admin** — *Dashboards → llm-d Performance Dashboard* | 7 llm-d dashboards; set the time range to the last 30 min |
+| **Cluster** | `kubectl -n llm-d get pods`, `kubectl -n llm-d logs deploy/<name>` | EPP: `deploy/llm-d-epp` (`-c epp`); vLLM: `deploy/precise-prefix-vllm`; IPP: `deploy/payload-processor`; sidecar: `deploy/pd-decode -c routing-proxy` |
+| **GPU** | `nvidia-smi --query-compute-apps=pid,process_name,used_memory --format=csv` on the host | two `VLLM::EngineCore` rows ≈ 10.4 GB each are the Kind Pods |
+
+### 5.0.1 Five-minute test checklist
+
+Each line is one command plus what "good" looks like; §5.1–§5.6 show the
+full output.
+
+| # | Command (on the Spark, `port-forward.sh` running) | Expected |
+| --- | --- | --- |
+| 1 | `kubectl -n llm-d get pods` | 10 Pods `Running`, `precise-prefix-vllm-*` ×2 and `pd-decode` `2/2`, `RESTARTS 0` |
+| 2 | `curl -s localhost:8080/v1/models \| jq -r '.data[].id'` | `Qwen/Qwen2.5-1.5B-Instruct` |
+| 3 | `curl -s -X POST localhost:8080/v1/chat/completions -H 'Content-Type: application/json' -d '{"model":"Qwen/Qwen2.5-1.5B-Instruct","messages":[{"role":"user","content":"hi"}],"max_tokens":8}' \| jq -r '.choices[0].message.content, .system_fingerprint'` | a greeting + `vllm-0.27.1+…` (proves it is real vLLM, not the sim) |
+| 4 | `nvidia-smi --query-compute-apps=pid,process_name,used_memory --format=csv` | two `VLLM::EngineCore` rows (proves it ran on the GB10) |
+| 5 | `python3 scripts/trace-tree.py` | tree rooted at `[llm-d-inference-gateway] POST /*` → IPP → EPP → `[vllm-precise-prefix] llm_request`; `services=4` |
+| 6 | `./scripts/drive-traffic.sh 6 && sleep 8 && python3 scripts/span-attrs.py 6` | first trace `max_match_blocks: 0`, `top_scores '[4,4]'`; later ones `max_match_blocks: 1`, `'[7,4]'` with the same `top_endpoints[0]` (§5.3) |
+| 7 | `./scripts/drive-traffic.sh 1 pd && sleep 8 && python3 scripts/trace-tree.py` | `pick_disagg_profile` ×3, `prepare_disaggregation`, `[llm-d-routing-sidecar] … prefill → decode`; `spans=28 services=4` |
+| 8 | `curl -s 'localhost:9091/api/v1/targets?state=active' \| jq -r '.data.activeTargets[] \| select(.scrapePool \| startswith("podMonitor/llm-d") or startswith("serviceMonitor/llm-d/")) \| "\(.scrapePool) \(.health)"'` | 6 lines, all `up` (§5.5) |
+| 9 | `curl -s localhost:9091/api/v1/query --data-urlencode 'query=sum by (pod) (vllm:prefix_cache_hits_total)' \| jq -r '.data.result[] \| "\(.metric.pod) \(.value[1])"'` | one `precise-prefix-vllm-*` pod with a large count, the other ≈ 0 (the sticky replica); `pd-*` rows are the sim's fake counters |
+| 10 | open `http://localhost:3000` → *llm-d Performance Dashboard* | KV Cache Hit Rate > 0 %, TTFT p50 tens of ms, "EPP Pool Health" shows 2 ready Pods per pool |
+
+If step 3 hangs or 500s: `kubectl -n llm-d logs deploy/llm-d-inference-gateway --tail 50`
+(a failed ext_proc — e.g. IPP with `secure-serving` left on — fails *all*
+traffic); if a vLLM Pod is not `Ready`: `kubectl -n llm-d logs
+deploy/precise-prefix-vllm | grep -E 'ERROR|Error' | head` and compare with
+the three incidents in Step 9.
 
 ### 5.1 One request through the Gateway
 

@@ -707,10 +707,71 @@ $ kubectl describe node llm-d-control-plane | sed -n '/Allocated resources/,/Eve
 
 ---
 
-## 5. 测试——端到端
+## 5. 访问与测试
 
-`scripts/port-forward.sh` 把 Jaeger（:16686）、Prometheus（:9091）、Grafana（:3000）和
-Gateway（:8080）暴露到 localhost。
+### 5.0 怎么访问各个入口
+
+集群里没有任何东西是自动暴露的（Kind 的 `LoadBalancer` Service 一直是 `<pending>`）。
+两种进入方式：
+
+**在 Spark 上** —— `scripts/port-forward.sh` 把四个入口转发到 `localhost`（它会先杀掉
+之前的 `kubectl port-forward`）：
+
+```console
+$ export PATH=$HOME/bin:$PATH        # kind/kubectl/helm live in ~/bin (Step 1)
+$ cd ~/llm-d-spark-full-demo && ./scripts/port-forward.sh
+Jaeger     http://127.0.0.1:16686
+Prometheus http://127.0.0.1:9091
+Grafana    http://127.0.0.1:3000
+Gateway    http://127.0.0.1:8080
+```
+
+**从局域网里的另一台机器（比如笔记本）** —— 把转发绑到所有网卡并用 Spark 的 IP 访问，
+或者开一条 SSH 隧道：
+
+```console
+$ BIND=0.0.0.0 ./scripts/port-forward.sh                     # on the Spark
+$ # then from the laptop:
+$ for p in 8080/v1/models 16686/api/services 9091/-/ready 3000/api/health; do
+    curl -s -o /dev/null -w "http://192.168.1.48:$p -> %{http_code}\n" http://192.168.1.48:$p; done
+http://192.168.1.48:8080/v1/models -> 200
+http://192.168.1.48:16686/api/services -> 200
+http://192.168.1.48:9091/-/ready -> 200
+http://192.168.1.48:3000/api/health -> 200
+$ # alternative that needs nothing bound on the Spark (pick free local ports):
+$ ssh -N -L 26686:127.0.0.1:16686 -L 13000:127.0.0.1:3000 -L 19091:127.0.0.1:9091 -L 18080:127.0.0.1:8080 gyliu@192.168.1.48
+```
+
+| 入口 | URL（在 Spark 上，跑 `port-forward.sh` 之后） | 说明 |
+| --- | --- | --- |
+| **Gateway**（OpenAI 兼容 API） | `http://localhost:8080/v1/chat/completions`、`/v1/models` | 模型名 `Qwen/Qwen2.5-1.5B-Instruct`；加 header `x-llm-d-pool: pd` 打到 P/D 池。不用 port-forward 的话：NodePort `http://172.18.0.2:30586`（仅宿主机）或集群内 `http://llm-d-inference-gateway.llm-d:80` |
+| **Jaeger** UI / API | `http://localhost:16686` —— Service = `llm-d-inference-gateway` → *Find Traces* | `scripts/trace-tree.py` 和 `scripts/span-attrs.py` 读的是 `/api/traces` |
+| **Prometheus** | `http://localhost:9091` —— *Status → Targets*、*Graph* | 脚本用 `/api/v1/query?query=…` |
+| **Grafana** | `http://localhost:3000` —— **admin / admin** —— *Dashboards → llm-d Performance Dashboard* | 7 个 llm-d 看板；时间范围设成最近 30 分钟 |
+| **集群** | `kubectl -n llm-d get pods`、`kubectl -n llm-d logs deploy/<name>` | EPP：`deploy/llm-d-epp`（`-c epp`）；vLLM：`deploy/precise-prefix-vllm`；IPP：`deploy/payload-processor`；sidecar：`deploy/pd-decode -c routing-proxy` |
+| **GPU** | 宿主机上 `nvidia-smi --query-compute-apps=pid,process_name,used_memory --format=csv` | 两行约 10.4 GB 的 `VLLM::EngineCore` 就是 Kind 里的 Pod |
+
+### 5.0.1 五分钟测试清单
+
+每一行是一条命令加上"正常"该长什么样；§5.1–§5.6 有完整输出。
+
+| # | 命令（在 Spark 上，`port-forward.sh` 运行中） | 预期 |
+| --- | --- | --- |
+| 1 | `kubectl -n llm-d get pods` | 10 个 Pod `Running`，`precise-prefix-vllm-*` ×2 和 `pd-decode` 为 `2/2`，`RESTARTS 0` |
+| 2 | `curl -s localhost:8080/v1/models \| jq -r '.data[].id'` | `Qwen/Qwen2.5-1.5B-Instruct` |
+| 3 | `curl -s -X POST localhost:8080/v1/chat/completions -H 'Content-Type: application/json' -d '{"model":"Qwen/Qwen2.5-1.5B-Instruct","messages":[{"role":"user","content":"hi"}],"max_tokens":8}' \| jq -r '.choices[0].message.content, .system_fingerprint'` | 一句问候 + `vllm-0.27.1+…`（证明是真 vLLM，不是 sim） |
+| 4 | `nvidia-smi --query-compute-apps=pid,process_name,used_memory --format=csv` | 两行 `VLLM::EngineCore`（证明跑在 GB10 上） |
+| 5 | `python3 scripts/trace-tree.py` | 以 `[llm-d-inference-gateway] POST /*` 为根的树 → IPP → EPP → `[vllm-precise-prefix] llm_request`；`services=4` |
+| 6 | `./scripts/drive-traffic.sh 6 && sleep 8 && python3 scripts/span-attrs.py 6` | 第一条 trace `max_match_blocks: 0`、`top_scores '[4,4]'`；后面的 `max_match_blocks: 1`、`'[7,4]'`，且 `top_endpoints[0]` 相同（§5.3） |
+| 7 | `./scripts/drive-traffic.sh 1 pd && sleep 8 && python3 scripts/trace-tree.py` | `pick_disagg_profile` ×3、`prepare_disaggregation`、`[llm-d-routing-sidecar] … prefill → decode`；`spans=28 services=4` |
+| 8 | `curl -s 'localhost:9091/api/v1/targets?state=active' \| jq -r '.data.activeTargets[] \| select(.scrapePool \| startswith("podMonitor/llm-d") or startswith("serviceMonitor/llm-d/")) \| "\(.scrapePool) \(.health)"'` | 6 行，全部 `up`（§5.5） |
+| 9 | `curl -s localhost:9091/api/v1/query --data-urlencode 'query=sum by (pod) (vllm:prefix_cache_hits_total)' \| jq -r '.data.result[] \| "\(.metric.pod) \(.value[1])"'` | 一个 `precise-prefix-vllm-*` Pod 计数很大，另一个 ≈ 0（粘住的那个副本）；`pd-*` 行是 sim 的假计数 |
+| 10 | 打开 `http://localhost:3000` → *llm-d Performance Dashboard* | KV Cache Hit Rate > 0 %，TTFT p50 几十毫秒，"EPP Pool Health" 每个池显示 2 个 ready Pod |
+
+如果第 3 步卡住或返回 500：`kubectl -n llm-d logs deploy/llm-d-inference-gateway --tail 50`
+（一个失败的 ext_proc——比如 IPP 没关 `secure-serving`——会让*全部*流量失败）；如果某个
+vLLM Pod 不是 `Ready`：`kubectl -n llm-d logs
+deploy/precise-prefix-vllm | grep -E 'ERROR|Error' | head`，对照 Step 9 的三次事故。
 
 ### 5.1 一个请求穿过 Gateway
 
