@@ -26,7 +26,7 @@ useful parts of this document.
 | `nvidia.com/gpu` as a schedulable resource (×4 time-sliced) | NVIDIA device plugin inside Kind | real |
 | 2 × vLLM 0.27.1 replicas, `Qwen2.5-1.5B-Instruct`, publishing KV-cache events | GPU Pods in Kind | **real GPU** |
 | agentgateway (Gateway API + Inference Extension) | Kind | real |
-| Inference Payload Processor (IPP) | Kind | real |
+| Inference Payload Processor (IPP), built from `main` | Kind | real, in the trace |
 | EPP with `precise-prefix-cache-producer` (KV-event-driven routing) | Kind | real, **KV-cache hits reproduced** |
 | P/D EPP + routing sidecar (2 scheduling profiles, prefill→decode legs) | Kind | real scheduling, **simulated KV transfer** (see §7) |
 | OTel Collector → Jaeger; agentgateway, EPP, sidecar **and vLLM itself** emit spans | Kind | real |
@@ -49,24 +49,25 @@ The request path and the trace it produces:
 ```
 
 ```console
-$ python3 scripts/trace-tree.py        # one /v1/chat/completions, 17 spans, 3 services
-[llm-d-inference-gateway] POST /*  (283.5 ms)
-  [llm-d-router/epp] request
-    [llm-d-router/epp] request_orchestration
-      [llm-d-router/epp] tokenize
-        [llm-d-router/epp] tokenize_render /v1/chat/completions/render
-      [llm-d-router/epp] produce_precise_prefix_cache
-        [llm-d-router/epp] match_block_keys
-          [llm-d-router/epp] index_walk
-      [llm-d-router/epp] run_scheduler_profile
-        [llm-d-router/epp] filter_endpoints
-        [llm-d-router/epp] scoring
-          [llm-d-router/epp] scorer.kv-cache-utilization-scorer
-          [llm-d-router/epp] scorer.queue-scorer
-          [llm-d-router/epp] scorer.prefix-cache-scorer
-        [llm-d-router/epp] pick_endpoints
-      [llm-d-router/epp] index_add
-    [vllm-precise-prefix] llm_request                 # <- real vLLM's own span
+$ python3 scripts/trace-tree.py        # one /v1/chat/completions, 18 spans, 4 services
+[llm-d-inference-gateway] POST /*  (284.2 ms)
+  [inference.llm-d.ai/inference-payload-processor] gateway.request
+    [llm-d-router/epp] request
+      [llm-d-router/epp] request_orchestration
+        [llm-d-router/epp] tokenize
+          [llm-d-router/epp] tokenize_render /v1/chat/completions/render
+        [llm-d-router/epp] produce_precise_prefix_cache
+          [llm-d-router/epp] match_block_keys
+            [llm-d-router/epp] index_walk
+        [llm-d-router/epp] run_scheduler_profile
+          [llm-d-router/epp] filter_endpoints
+          [llm-d-router/epp] scoring
+            [llm-d-router/epp] scorer.kv-cache-utilization-scorer
+            [llm-d-router/epp] scorer.queue-scorer
+            [llm-d-router/epp] scorer.prefix-cache-scorer
+          [llm-d-router/epp] pick_endpoints
+        [llm-d-router/epp] index_add
+      [vllm-precise-prefix] llm_request               # <- real vLLM's own span
 ```
 
 ## 1. How this differs from `llm-d-full-demo`
@@ -80,7 +81,7 @@ $ python3 scripts/trace-tree.py        # one /v1/chat/completions, 17 spans, 3 s
 | KV-cache hit routing (`top_scores=[7,4]`) | reproduced | **reproduced on real vLLM KV events** (did not reproduce on the previous DGX Spark attempt) |
 | vLLM in the trace | never (sim exports nothing) | **yes** — `vllm-precise-prefix` service, `llm_request` span |
 | P/D pool | `llm-d-inference-sim` (CPU vLLM has no NIXL) | `llm-d-inference-sim` (NIXL cannot initialize on GB10 — §7) |
-| Images built locally | 3 (EPP, sidecar, IPP for arm64) | **0** — all llm-d images are published multi-arch now; only an optional `vllm+nixl` derivative |
+| Images built locally | 3 (EPP, sidecar, IPP for arm64) | **1** — the IPP from `main` (its `v0.1.0` release predates trace-context propagation); EPP and sidecar are published multi-arch |
 | TTFT p50 | seconds (CPU) | **31 ms** |
 
 ## 2. Versions used
@@ -95,7 +96,7 @@ $ python3 scripts/trace-tree.py        # one /v1/chat/completions, 17 spans, 3 s
 | Gateway API / GAIE CRDs | v1.5.1 / v1.5.0 (llm-d `install-gateway-crds.sh` defaults) |
 | agentgateway | v1.4.1 (the version llm-d's CI pins) |
 | llm-d router chart | `oci://ghcr.io/llm-d/charts/llm-d-router-gateway` `v0`; EPP `ghcr.io/llm-d/llm-d-router-endpoint-picker:main` |
-| IPP | chart `payload-processor-0.2.0`, image `ghcr.io/llm-d/llm-d-inference-payload-processor:v0.1.0` |
+| IPP | chart `payload-processor-0.2.0`, image built from `main` @ `77418c1` (2026-09-17) as `…:main-local` — see Step 11 |
 | routing sidecar / inference-sim | `llm-d-router-disagg-sidecar:v0.10.0` / `llm-d-inference-sim:v0.11.0` |
 | vLLM | `nvcr.io/nvidia/vllm:26.08-py3` = vLLM `0.27.1+93523f72.dev`, torch `2.14.0a0+nv26.08`, CUDA 13.4 (digest `sha256:4b16878d…`) |
 | kube-prometheus-stack | 91.4.1 (operator v0.94.0) |
@@ -615,8 +616,16 @@ prometheus-llmd-kube-prometheus-stack-prometheus-0       2/2     Running   0    
 
 ### Step 11 — Inference Payload Processor (IPP)
 
+Build it from `main` (native arm64 build, ~5 min) and import it into the
+node — the reason is in the callout below:
+
 ```console
 $ git clone https://github.com/llm-d/llm-d-inference-payload-processor.git ~/llm-d-inference-payload-processor
+$ cd ~/llm-d-inference-payload-processor && git log -1 --format='%h %cd' --date=short
+77418c1 2026-09-17
+$ docker build -t ghcr.io/llm-d/llm-d-inference-payload-processor:main-local -f Dockerfile .
+$ docker save ghcr.io/llm-d/llm-d-inference-payload-processor:main-local | docker exec -i llm-d-control-plane ctr -n k8s.io images import -
+$ cd ~/llm-d-spark-full-demo
 $ helm install ipp ~/llm-d-inference-payload-processor/config/charts/payload-processor \
     -n llm-d -f helm-values/ipp.values.yaml
 $ kubectl apply -f manifests/04-ipp-extproc-policy.yaml         # PreRouting ext_proc on the Gateway
@@ -626,11 +635,35 @@ gateway-tracing   True       True       56m
 ipp-extproc       True       True       5s
 ```
 
-[`ipp.values.yaml`](helm-values/ipp.values.yaml) sets the published `v0.1.0`
+[`ipp.values.yaml`](helm-values/ipp.values.yaml) sets the `main-local`
 image, tracing to the collector, and **`flags.secure-serving: false`** —
 mandatory with agentgateway (its ext_proc speaks plaintext h2; the IPP
 defaults to self-signed TLS, and a broken ext_proc fails *all* traffic
 closed).
+
+> ### ⚠️ Why not the published `v0.1.0` image
+>
+> The first pass used the chart's default `…:v0.1.0` (multi-arch, pullable).
+> The IPP worked — its log showed `parsed field from body: field=model` and
+> `updated base model header` for every request — but its `gateway.request`
+> span always landed in a **separate trace** with its own trace ID, and the
+> EPP hung directly under the gateway. `phase: PostRouting` behaved the same.
+> That looked like an agentgateway regression (the 2026-08-03 full-demo run
+> on v1.1.0 stitched it) until checking the IPP history:
+> ```console
+> $ git log -1 --format='v0.1.0 = %h %cd' --date=short v0.1.0
+> v0.1.0 = bce1a1d 2026-07-12
+> $ git merge-base --is-ancestor c719723 v0.1.0 || echo 'v0.1.0 lacks #159'
+> v0.1.0 lacks #159      # "extract upstream traceparent, re-parent server span, inject on egress"
+> $ git merge-base --is-ancestor 161bfcd v0.1.0 || echo 'v0.1.0 lacks #312'
+> v0.1.0 lacks #312      # "export root spans without client traceparent on ext_proc"
+> ```
+> `v0.1.0` is from **before** the IPP learned to read the `traceparent` at
+> all; the August run only stitched because it used an image built from
+> `main`. With `main-local` the very next request produced the 4-service
+> trace in §5.2 — so agentgateway v1.4.1 does pass trace context to the
+> `PreRouting` ext_proc, and the fix is simply a newer IPP build. Worth an
+> upstream ask for a release that includes #159.
 
 ### Step 12 — The P/D-disaggregated pool
 
@@ -742,47 +775,47 @@ $ kubectl -n llm-d logs deploy/llm-d-epp | grep 'Connected subscriber'
 {"logger":"zmq-subscriber","body":"Connected subscriber socket","endpoint":"tcp://10.244.0.23:5556"}
 ```
 
-### 5.2 The stitched trace (gateway → EPP → vLLM)
+### 5.2 The stitched trace (gateway → IPP → EPP → vLLM)
 
 ```console
 $ curl -s http://localhost:16686/api/services | python3 -c "import sys,json;print(sorted(json.load(sys.stdin)['data']))"
 ['inference.llm-d.ai/inference-payload-processor', 'llm-d-inference-gateway', 'llm-d-router/epp', 'llm-d-routing-sidecar', 'vllm-precise-prefix']
 $ python3 scripts/trace-tree.py
-[llm-d-inference-gateway] POST /*  (257.4 ms)
-  [llm-d-router/epp] request  (223.4 ms)
-    [llm-d-router/epp] request_orchestration  (14.8 ms)
-      [llm-d-router/epp] tokenize  (13.6 ms)
-        [llm-d-router/epp] tokenize_render /v1/chat/completions/render  (12.4 ms)
-      [llm-d-router/epp] produce_precise_prefix_cache  (0.4 ms)
-      [llm-d-router/epp] run_scheduler_profile  (0.1 ms)
-        [llm-d-router/epp] filter_endpoints
-        [llm-d-router/epp] scoring
-          [llm-d-router/epp] scorer.kv-cache-utilization-scorer
-          [llm-d-router/epp] scorer.queue-scorer
-          [llm-d-router/epp] scorer.prefix-cache-scorer
-        [llm-d-router/epp] pick_endpoints
-    [vllm-precise-prefix] llm_request  (195.3 ms)
--- traceID=df6f0800d5269185aac45b70a0315799 spans=14 services=3
+[llm-d-inference-gateway] POST /*  (284.2 ms)
+  [inference.llm-d.ai/inference-payload-processor] gateway.request  (283.8 ms)
+    [llm-d-router/epp] request  (282.3 ms)
+      [llm-d-router/epp] request_orchestration  (2.6 ms)
+        [llm-d-router/epp] tokenize  (2.3 ms)
+          [llm-d-router/epp] tokenize_render /v1/chat/completions/render  (2.3 ms)
+        [llm-d-router/epp] produce_precise_prefix_cache  (0.1 ms)
+          [llm-d-router/epp] match_block_keys  (0.0 ms)
+            [llm-d-router/epp] index_walk  (0.0 ms)
+        [llm-d-router/epp] run_scheduler_profile  (0.1 ms)
+          [llm-d-router/epp] filter_endpoints  (0.0 ms)
+          [llm-d-router/epp] scoring  (0.0 ms)
+            [llm-d-router/epp] scorer.kv-cache-utilization-scorer  (0.0 ms)
+            [llm-d-router/epp] scorer.queue-scorer  (0.0 ms)
+            [llm-d-router/epp] scorer.prefix-cache-scorer  (0.0 ms)
+          [llm-d-router/epp] pick_endpoints  (0.0 ms)
+        [llm-d-router/epp] index_add  (0.0 ms)
+      [vllm-precise-prefix] llm_request  (277.1 ms)
+-- traceID=09407c59fba819ce7280444822be185a spans=18 services=4
 ```
 
-![Jaeger: gateway → EPP → vLLM](docs/screenshots/jaeger-precise-prefix-trace.png)
+![Jaeger: gateway → IPP → EPP → vLLM](docs/screenshots/jaeger-precise-prefix-trace.png)
 
-`Services 3 | Depth 6 | Total Spans 17` on a later, cache-warm request: the
-`tokenize_render` hop is the EPP calling the model servers' `/render`
-endpoint, `match_block_keys` → `index_walk` are the KV-block index lookup,
-`index_add` records the blocks this request will create, and
+`Services 4 | Depth 7 | Total Spans 18`, one trace rooted at the gateway.
+Because the IPP runs at `PreRouting` and re-injects the trace context into
+the headers it forwards, **the EPP is a child of the IPP**, not of the
+gateway. The `tokenize_render` hop is the EPP calling the model servers'
+`/render` endpoint, `match_block_keys` → `index_walk` are the KV-block index
+lookup, `index_add` records the blocks this request will create, and
 `vllm-precise-prefix llm_request` is **vLLM's own span**, exported with
 `--otlp-traces-endpoint` and parented under the EPP because agentgateway
 forwards the `traceparent` header to the Pod.
 
-> **The IPP works but is not in this trace.** Its span lands in a *separate*
-> trace (`gateway.request`, 1 span) with a different trace ID, while its log
-> proves it processed the same request
-> (`parsed field from body: field=model`, `updated base model header`). On
-> this agentgateway (v1.4.1) the `PreRouting` ext_proc call carries no
-> `traceparent`; `phase: PostRouting` was tried and behaves the same. The
-> 2026-08-03 full-demo run on agentgateway v1.1.0 *did* stitch it. Recorded
-> as a regression to report upstream, not chased further here.
+> With the published IPP `v0.1.0` image this trace has 3 services and the
+> IPP span is a separate root — see the callout in Step 11.
 
 ### 5.3 KV-cache-aware routing on real vLLM events
 
@@ -833,37 +866,40 @@ $ curl -sS -X POST http://localhost:8080/v1/chat/completions -H 'Content-Type: a
     -d '{"model":"Qwen/Qwen2.5-1.5B-Instruct","messages":[{"role":"user","content":"hello pd"}],"max_tokens":16}'
 {…"choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":"Testing, testing "}}]}
 $ python3 scripts/trace-tree.py
-[llm-d-inference-gateway] POST /*  (25.5 ms)
-  [llm-d-router/epp] request
-    [llm-d-router/epp] request_orchestration
-      [llm-d-router/epp] tokenize
-      [llm-d-router/epp] pick_disagg_profile              # prefill profile
-      [llm-d-router/epp] run_scheduler_profile
-        [llm-d-router/epp] filter_endpoints
-        [llm-d-router/epp] scoring
-          [llm-d-router/epp] scorer.active-request-scorer
-          [llm-d-router/epp] scorer.prefix-cache-scorer
-        [llm-d-router/epp] pick_endpoints
-      [llm-d-router/epp] pick_disagg_profile              # decode profile
-      [llm-d-router/epp] run_scheduler_profile
-        [llm-d-router/epp] filter_endpoints
-        [llm-d-router/epp] scoring
-          [llm-d-router/epp] scorer.prefix-cache-scorer
-          [llm-d-router/epp] scorer.queue-scorer
-          [llm-d-router/epp] scorer.kv-cache-utilization-scorer
-        [llm-d-router/epp] pick_endpoints
-      [llm-d-router/epp] pick_disagg_profile
-      [llm-d-router/epp] prepare_disaggregation
-    [llm-d-routing-sidecar] llm_d.pd_proxy.POST /v1/chat/completions
-      [llm-d-routing-sidecar] forward_request
-        [llm-d-routing-sidecar] prefill
-          [llm-d-routing-sidecar] HTTP POST               # -> pd-prefill
-          [llm-d-routing-sidecar] decode
-            [llm-d-routing-sidecar] HTTP POST             # -> pd-decode (local)
--- traceID=4327857acbe9ef35f1e73afb4b32c039 spans=27 services=3
+[llm-d-inference-gateway] POST /*  (5.2 ms)
+  [inference.llm-d.ai/inference-payload-processor] gateway.request  (4.7 ms)
+    [llm-d-router/epp] request  (2.6 ms)
+      [llm-d-router/epp] request_orchestration
+        [llm-d-router/epp] tokenize
+        [llm-d-router/epp] pick_disagg_profile            # prefill profile
+        [llm-d-router/epp] run_scheduler_profile
+          [llm-d-router/epp] filter_endpoints
+          [llm-d-router/epp] scoring
+            [llm-d-router/epp] scorer.active-request-scorer
+            [llm-d-router/epp] scorer.prefix-cache-scorer
+          [llm-d-router/epp] pick_endpoints
+        [llm-d-router/epp] pick_disagg_profile            # decode profile
+        [llm-d-router/epp] run_scheduler_profile
+          [llm-d-router/epp] filter_endpoints
+          [llm-d-router/epp] scoring
+            [llm-d-router/epp] scorer.prefix-cache-scorer
+            [llm-d-router/epp] scorer.queue-scorer
+            [llm-d-router/epp] scorer.kv-cache-utilization-scorer
+          [llm-d-router/epp] pick_endpoints
+        [llm-d-router/epp] pick_disagg_profile
+        [llm-d-router/epp] prepare_disaggregation
+      [llm-d-routing-sidecar] llm_d.pd_proxy.POST /v1/chat/completions
+        [llm-d-routing-sidecar] forward_request
+          [llm-d-routing-sidecar] prefill
+            [llm-d-routing-sidecar] HTTP POST             # -> pd-prefill
+            [llm-d-routing-sidecar] decode
+              [llm-d-routing-sidecar] HTTP POST           # -> pd-decode (local)
+-- traceID=c765418bfa80068caa9450d21239e026 spans=28 services=4
 ```
 
 ![Jaeger: P/D trace](docs/screenshots/jaeger-pd-trace.png)
+
+`Services 4 | Depth 8 | Total Spans 28`.
 
 ### 5.5 Metrics: Prometheus targets and queries
 
@@ -1040,9 +1076,9 @@ the EPP's ZMQ subscriber (§5.1) and the proxy's upstream both point at
 
 ### 6.5 Hop 4 — the EPP decides which Pod (the plugin chain)
 
-The proxy opens a second ext_proc stream to `llm-d-epp:9002`, this time
-**with the `traceparent`**, so the EPP's `request` span becomes a child of
-`POST /*`. Inside `request_orchestration` the EPP runs the chain from
+The proxy opens a second ext_proc stream to `llm-d-epp:9002`, carrying the
+`traceparent` the IPP re-injected, so the EPP's `request` span becomes a
+child of the IPP's `gateway.request` (itself a child of `POST /*`). Inside `request_orchestration` the EPP runs the chain from
 `router-precise-prefix.values.yaml`, in this order:
 
 | Plugin | What it does on this request | Span |
@@ -1113,16 +1149,17 @@ standalone collector), which forwards to Jaeger. Producers:
 | Producer | Turned on by | Span(s) | Parent |
 | --- | --- | --- | --- |
 | agentgateway proxy | `AgentgatewayPolicy/gateway-tracing` (`frontend.tracing`, `randomSampling: "true"`) | `POST /*` | root |
-| IPP | chart `payloadProcessor.tracing.enabled` | `gateway.request` | *separate trace on agentgateway v1.4.1* (§5.2 note) |
+| IPP | chart `payloadProcessor.tracing.enabled` | `gateway.request` | gateway (needs a build with #159 — Step 11) |
 | EPP (both releases) | `router.tracing.enabled` (`tracing.values.yaml`) | `request`, `request_orchestration`, `tokenize*`, `produce_precise_prefix_cache`, `match_block_keys`, `index_walk`, `index_add`, `run_scheduler_profile`, `filter_endpoints`, `scoring`, `scorer.*`, `pick_endpoints`, `pick_disagg_profile`, `prepare_disaggregation` | gateway |
 | routing sidecar | `--tracing=true` + `OTEL_*` env | `llm_d.pd_proxy.*`, `forward_request`, `prefill`, `decode`, `HTTP POST` | P/D EPP |
 | **vLLM** | `--otlp-traces-endpoint` + `--collect-detailed-traces=all`, `OTEL_SERVICE_NAME` | `llm_request` | EPP |
 | inference-sim | `OTEL_*` env | *(exports nothing, any version)* | — |
 
-Context propagation is plain W3C `traceparent`: the proxy creates it, passes
-it on both ext_proc streams (EPP: yes; IPP: not on this version) and on the
-upstream HTTP request to the Pod; the sidecar re-injects it into its two
-legs. `llm-d-kv-cache` never appears as a Jaeger service — it is a Go
+Context propagation is plain W3C `traceparent`: the proxy creates it and
+passes it on both ext_proc streams and on the upstream HTTP request to the
+Pod; the IPP extracts it from the ext_proc request headers and re-injects it
+into the headers it forwards (so the EPP hangs under the IPP); the sidecar
+re-injects it into its two legs. `llm-d-kv-cache` never appears as a Jaeger service — it is a Go
 library inside the EPP, so its spans (`match_block_keys`, `index_walk`,
 `index_add`) carry the EPP's service name.
 
@@ -1201,7 +1238,7 @@ legs — is real and visible in the 27-span trace of §5.4.
 | vLLM memory sizing on GB10 | Use `--kv-cache-memory-bytes` (skips profiling) **and** a small `--gpu-memory-utilization` (passes the free-memory pre-check). |
 | KV-cache hit routing | Reproduced on real vLLM events: `max_match_blocks 0→1`, `top_scores [4,4]→[7,4]`, `vllm:prefix_cache_hits_total` 320 on the sticky replica. |
 | vLLM in Jaeger | New: real vLLM exports `llm_request` spans stitched under the EPP; set `OTEL_SERVICE_NAME` or it shows as `unknown_service`. |
-| IPP trace | Functionally fine, but not stitched on agentgateway v1.4.1 (was on v1.1.0). |
+| IPP trace | The published `v0.1.0` image (2026-07-12) predates trace-context extraction (#159), so its span is a separate root; a `main` build stitches gateway → IPP → EPP → vLLM. Not an agentgateway issue. |
 | Upstream drift since 2026-08-28 | `disagg-headers-handler` removed; `blockSize` → `blockSizeTokens`; `replaySocketPort`; tokenizer via render Service; `httpRoute.headerMatches`; all llm-d images multi-arch; agentgateway CI pin v1.4.1; kube-prometheus-stack 91.4.1. |
 | NIXL on GB10 | Blocked (§7). |
 
@@ -1225,7 +1262,8 @@ the model download.
   competes with vLLM; size from `mem_get_info()` and expect
   `No available memory for the cache blocks` if the budget moves.
 - **P/D KV transfer is simulated** (§7).
-- **IPP trace not stitched** on this agentgateway version.
+- **IPP must be built from `main`** until a release newer than `v0.1.0`
+  exists (Step 11).
 - **`--enforce-eager`** trades some decode throughput for a ~1 min cold
   start; drop it for benchmarks (and expect CUDA-graph capture time).
 
@@ -1246,7 +1284,7 @@ helm-values/router-spark.values.yaml          EPP image/resources/selector/monit
 helm-values/router-pd.values.yaml             P/D EPP plugin chain
 helm-values/router-pd-spark.values.yaml       P/D release overrides + header-matched HTTPRoute
 helm-values/tracing.values.yaml               EPP -> otel-collector
-helm-values/ipp.values.yaml                   IPP chart values
+helm-values/ipp.values.yaml                   IPP chart values (main-local image, secure-serving off)
 images/vllm-nixl/Dockerfile                   NGC vLLM + nixl runtime (see §7)
 scripts/port-forward.sh                       Jaeger/Prometheus/Grafana/Gateway on localhost
 scripts/drive-traffic.sh                      N identical long prompts (optionally to the P/D pool)

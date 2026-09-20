@@ -22,7 +22,7 @@ English version: [`README.md`](README.md).
 | `nvidia.com/gpu` 作为可调度资源（time-slicing ×4） | Kind 内的 NVIDIA device plugin | 真实 |
 | 2 × vLLM 0.27.1 副本，`Qwen2.5-1.5B-Instruct`，发布 KV-cache 事件 | Kind 内的 GPU Pod | **真实 GPU** |
 | agentgateway（Gateway API + Inference Extension） | Kind | 真实 |
-| Inference Payload Processor（IPP） | Kind | 真实 |
+| Inference Payload Processor（IPP），从 `main` 构建 | Kind | 真实，在 trace 里 |
 | 带 `precise-prefix-cache-producer` 的 EPP（KV 事件驱动路由） | Kind | 真实，**KV-cache 命中已复现** |
 | P/D EPP + routing sidecar（2 个调度 profile，prefill→decode 两跳） | Kind | 调度真实，**KV 传输为模拟**（见 §7） |
 | OTel Collector → Jaeger；agentgateway、EPP、sidecar **以及 vLLM 自己**都发 span | Kind | 真实 |
@@ -45,24 +45,25 @@ English version: [`README.md`](README.md).
 ```
 
 ```console
-$ python3 scripts/trace-tree.py        # one /v1/chat/completions, 17 spans, 3 services
-[llm-d-inference-gateway] POST /*  (283.5 ms)
-  [llm-d-router/epp] request
-    [llm-d-router/epp] request_orchestration
-      [llm-d-router/epp] tokenize
-        [llm-d-router/epp] tokenize_render /v1/chat/completions/render
-      [llm-d-router/epp] produce_precise_prefix_cache
-        [llm-d-router/epp] match_block_keys
-          [llm-d-router/epp] index_walk
-      [llm-d-router/epp] run_scheduler_profile
-        [llm-d-router/epp] filter_endpoints
-        [llm-d-router/epp] scoring
-          [llm-d-router/epp] scorer.kv-cache-utilization-scorer
-          [llm-d-router/epp] scorer.queue-scorer
-          [llm-d-router/epp] scorer.prefix-cache-scorer
-        [llm-d-router/epp] pick_endpoints
-      [llm-d-router/epp] index_add
-    [vllm-precise-prefix] llm_request                 # <- real vLLM's own span
+$ python3 scripts/trace-tree.py        # one /v1/chat/completions, 18 spans, 4 services
+[llm-d-inference-gateway] POST /*  (284.2 ms)
+  [inference.llm-d.ai/inference-payload-processor] gateway.request
+    [llm-d-router/epp] request
+      [llm-d-router/epp] request_orchestration
+        [llm-d-router/epp] tokenize
+          [llm-d-router/epp] tokenize_render /v1/chat/completions/render
+        [llm-d-router/epp] produce_precise_prefix_cache
+          [llm-d-router/epp] match_block_keys
+            [llm-d-router/epp] index_walk
+        [llm-d-router/epp] run_scheduler_profile
+          [llm-d-router/epp] filter_endpoints
+          [llm-d-router/epp] scoring
+            [llm-d-router/epp] scorer.kv-cache-utilization-scorer
+            [llm-d-router/epp] scorer.queue-scorer
+            [llm-d-router/epp] scorer.prefix-cache-scorer
+          [llm-d-router/epp] pick_endpoints
+        [llm-d-router/epp] index_add
+      [vllm-precise-prefix] llm_request               # <- real vLLM's own span
 ```
 
 ## 1. 和 `llm-d-full-demo` 的区别
@@ -76,7 +77,7 @@ $ python3 scripts/trace-tree.py        # one /v1/chat/completions, 17 spans, 3 s
 | KV-cache 命中路由（`top_scores=[7,4]`） | 已复现 | **在真实 vLLM KV 事件上复现**（上一次 DGX Spark 尝试没有复现） |
 | trace 里有 vLLM | 从来没有（sim 不导出任何 span） | **有**——`vllm-precise-prefix` 服务，`llm_request` span |
 | P/D 池 | `llm-d-inference-sim`（CPU vLLM 没有 NIXL） | `llm-d-inference-sim`（NIXL 在 GB10 上无法初始化——§7） |
-| 本地构建的镜像 | 3 个（EPP、sidecar、IPP 的 arm64 版） | **0 个**——llm-d 的镜像现在都是 multi-arch 发布；只有一个可选的 `vllm+nixl` 派生镜像 |
+| 本地构建的镜像 | 3 个（EPP、sidecar、IPP 的 arm64 版） | **1 个**——从 `main` 构建的 IPP（它的 `v0.1.0` 发布版早于 trace-context 传播）；EPP 和 sidecar 都有 multi-arch 发布 |
 | TTFT p50 | 秒级（CPU） | **31 ms** |
 
 ## 2. 使用的版本
@@ -91,7 +92,7 @@ $ python3 scripts/trace-tree.py        # one /v1/chat/completions, 17 spans, 3 s
 | Gateway API / GAIE CRD | v1.5.1 / v1.5.0（llm-d `install-gateway-crds.sh` 的默认值） |
 | agentgateway | v1.4.1（llm-d CI 所 pin 的版本） |
 | llm-d router chart | `oci://ghcr.io/llm-d/charts/llm-d-router-gateway` `v0`；EPP `ghcr.io/llm-d/llm-d-router-endpoint-picker:main` |
-| IPP | chart `payload-processor-0.2.0`，镜像 `ghcr.io/llm-d/llm-d-inference-payload-processor:v0.1.0` |
+| IPP | chart `payload-processor-0.2.0`，镜像从 `main` @ `77418c1`（2026-09-17）构建为 `…:main-local`——见 Step 11 |
 | routing sidecar / inference-sim | `llm-d-router-disagg-sidecar:v0.10.0` / `llm-d-inference-sim:v0.11.0` |
 | vLLM | `nvcr.io/nvidia/vllm:26.08-py3` = vLLM `0.27.1+93523f72.dev`，torch `2.14.0a0+nv26.08`，CUDA 13.4（digest `sha256:4b16878d…`） |
 | kube-prometheus-stack | 91.4.1（operator v0.94.0） |
@@ -584,8 +585,15 @@ prometheus-llmd-kube-prometheus-stack-prometheus-0       2/2     Running   0    
 
 ### Step 11 —— Inference Payload Processor（IPP）
 
+从 `main` 构建它（原生 arm64 构建，约 5 分钟）并导入 node——原因见下面的提示框：
+
 ```console
 $ git clone https://github.com/llm-d/llm-d-inference-payload-processor.git ~/llm-d-inference-payload-processor
+$ cd ~/llm-d-inference-payload-processor && git log -1 --format='%h %cd' --date=short
+77418c1 2026-09-17
+$ docker build -t ghcr.io/llm-d/llm-d-inference-payload-processor:main-local -f Dockerfile .
+$ docker save ghcr.io/llm-d/llm-d-inference-payload-processor:main-local | docker exec -i llm-d-control-plane ctr -n k8s.io images import -
+$ cd ~/llm-d-spark-full-demo
 $ helm install ipp ~/llm-d-inference-payload-processor/config/charts/payload-processor \
     -n llm-d -f helm-values/ipp.values.yaml
 $ kubectl apply -f manifests/04-ipp-extproc-policy.yaml         # PreRouting ext_proc on the Gateway
@@ -595,9 +603,29 @@ gateway-tracing   True       True       56m
 ipp-extproc       True       True       5s
 ```
 
-[`ipp.values.yaml`](helm-values/ipp.values.yaml) 指定了已发布的 `v0.1.0` 镜像、往 collector
+[`ipp.values.yaml`](helm-values/ipp.values.yaml) 指定了 `main-local` 镜像、往 collector
 导出 trace，以及 **`flags.secure-serving: false`**——配 agentgateway 时这是必须的（它的
 ext_proc 走明文 h2；IPP 默认自签 TLS，而一个坏掉的 ext_proc 会让*全部*流量 fail-closed）。
+
+> ### ⚠️ 为什么不用已发布的 `v0.1.0` 镜像
+>
+> 第一遍用的是 chart 默认的 `…:v0.1.0`（multi-arch，可以直接拉）。IPP 是工作的——它的日志
+> 对每个请求都打出 `parsed field from body: field=model` 和 `updated base model header`——但它的
+> `gateway.request` span 总是落在一条**单独的 trace** 里，有自己的 trace ID，而 EPP 直接挂在
+> gateway 下面。`phase: PostRouting` 行为相同。这看起来像是 agentgateway 的回归
+> （2026-08-03 在 v1.1.0 上的 full-demo 是串联的），直到查了 IPP 的历史：
+> ```console
+> $ git log -1 --format='v0.1.0 = %h %cd' --date=short v0.1.0
+> v0.1.0 = bce1a1d 2026-07-12
+> $ git merge-base --is-ancestor c719723 v0.1.0 || echo 'v0.1.0 lacks #159'
+> v0.1.0 lacks #159      # "extract upstream traceparent, re-parent server span, inject on egress"
+> $ git merge-base --is-ancestor 161bfcd v0.1.0 || echo 'v0.1.0 lacks #312'
+> v0.1.0 lacks #312      # "export root spans without client traceparent on ext_proc"
+> ```
+> `v0.1.0` 来自 IPP 学会读取 `traceparent` **之前**；八月那次能串联，只是因为它用的是从 `main`
+> 构建的镜像。换成 `main-local` 之后，紧接着的第一个请求就产生了 §5.2 里的 4 服务 trace——所以
+> agentgateway v1.4.1 确实会把 trace context 传给 `PreRouting` 的 ext_proc，修复只是换一个更新的
+> IPP 构建而已。值得向上游要一个包含 #159 的 release。
 
 ### Step 12 —— P/D 分离池
 
@@ -704,43 +732,45 @@ $ kubectl -n llm-d logs deploy/llm-d-epp | grep 'Connected subscriber'
 {"logger":"zmq-subscriber","body":"Connected subscriber socket","endpoint":"tcp://10.244.0.23:5556"}
 ```
 
-### 5.2 串联起来的 trace（gateway → EPP → vLLM）
+### 5.2 串联起来的 trace（gateway → IPP → EPP → vLLM）
 
 ```console
 $ curl -s http://localhost:16686/api/services | python3 -c "import sys,json;print(sorted(json.load(sys.stdin)['data']))"
 ['inference.llm-d.ai/inference-payload-processor', 'llm-d-inference-gateway', 'llm-d-router/epp', 'llm-d-routing-sidecar', 'vllm-precise-prefix']
 $ python3 scripts/trace-tree.py
-[llm-d-inference-gateway] POST /*  (257.4 ms)
-  [llm-d-router/epp] request  (223.4 ms)
-    [llm-d-router/epp] request_orchestration  (14.8 ms)
-      [llm-d-router/epp] tokenize  (13.6 ms)
-        [llm-d-router/epp] tokenize_render /v1/chat/completions/render  (12.4 ms)
-      [llm-d-router/epp] produce_precise_prefix_cache  (0.4 ms)
-      [llm-d-router/epp] run_scheduler_profile  (0.1 ms)
-        [llm-d-router/epp] filter_endpoints
-        [llm-d-router/epp] scoring
-          [llm-d-router/epp] scorer.kv-cache-utilization-scorer
-          [llm-d-router/epp] scorer.queue-scorer
-          [llm-d-router/epp] scorer.prefix-cache-scorer
-        [llm-d-router/epp] pick_endpoints
-    [vllm-precise-prefix] llm_request  (195.3 ms)
--- traceID=df6f0800d5269185aac45b70a0315799 spans=14 services=3
+[llm-d-inference-gateway] POST /*  (284.2 ms)
+  [inference.llm-d.ai/inference-payload-processor] gateway.request  (283.8 ms)
+    [llm-d-router/epp] request  (282.3 ms)
+      [llm-d-router/epp] request_orchestration  (2.6 ms)
+        [llm-d-router/epp] tokenize  (2.3 ms)
+          [llm-d-router/epp] tokenize_render /v1/chat/completions/render  (2.3 ms)
+        [llm-d-router/epp] produce_precise_prefix_cache  (0.1 ms)
+          [llm-d-router/epp] match_block_keys  (0.0 ms)
+            [llm-d-router/epp] index_walk  (0.0 ms)
+        [llm-d-router/epp] run_scheduler_profile  (0.1 ms)
+          [llm-d-router/epp] filter_endpoints  (0.0 ms)
+          [llm-d-router/epp] scoring  (0.0 ms)
+            [llm-d-router/epp] scorer.kv-cache-utilization-scorer  (0.0 ms)
+            [llm-d-router/epp] scorer.queue-scorer  (0.0 ms)
+            [llm-d-router/epp] scorer.prefix-cache-scorer  (0.0 ms)
+          [llm-d-router/epp] pick_endpoints  (0.0 ms)
+        [llm-d-router/epp] index_add  (0.0 ms)
+      [vllm-precise-prefix] llm_request  (277.1 ms)
+-- traceID=09407c59fba819ce7280444822be185a spans=18 services=4
 ```
 
-![Jaeger: gateway → EPP → vLLM](docs/screenshots/jaeger-precise-prefix-trace.png)
+![Jaeger: gateway → IPP → EPP → vLLM](docs/screenshots/jaeger-precise-prefix-trace.png)
 
-后面一次缓存已热的请求是 `Services 3 | Depth 6 | Total Spans 17`：`tokenize_render` 这一跳是
-EPP 调用模型服务的 `/render` 端点，`match_block_keys` → `index_walk` 是 KV block 索引的查找，
-`index_add` 记录本请求将会创建的 block，而 `vllm-precise-prefix llm_request` 是 **vLLM 自己的
-span**——由 `--otlp-traces-endpoint` 导出，并且因为 agentgateway 把 `traceparent` 头转发给了
-Pod，它挂在 EPP 之下。
+`Services 4 | Depth 7 | Total Spans 18`，一条以 gateway 为根的 trace。因为 IPP 跑在
+`PreRouting` 并把 trace context 重新注入它转发的 header，**EPP 是 IPP 的子 span**，而不是
+gateway 的。`tokenize_render` 这一跳是 EPP 调用模型服务的 `/render` 端点，
+`match_block_keys` → `index_walk` 是 KV block 索引的查找，`index_add` 记录本请求将会创建的
+block，而 `vllm-precise-prefix llm_request` 是 **vLLM 自己的 span**——由
+`--otlp-traces-endpoint` 导出，并且因为 agentgateway 把 `traceparent` 头转发给了 Pod，它挂在
+EPP 之下。
 
-> **IPP 在工作，但不在这条 trace 里。** 它的 span 落在一条*单独的* trace（`gateway.request`，
-> 1 个 span）里，trace ID 不同，而它的日志证明它处理了同一个请求
-> （`parsed field from body: field=model`、`updated base model header`）。在这个 agentgateway
-> （v1.4.1）上，`PreRouting` 的 ext_proc 调用不携带 `traceparent`；试过
-> `phase: PostRouting`，行为相同。2026-08-03 在 agentgateway v1.1.0 上的 full-demo 是*能*串
-> 起来的。记为一个要报给上游的回归，这里不再深究。
+> 用已发布的 IPP `v0.1.0` 镜像时，这条 trace 只有 3 个服务，IPP 的 span 是一个单独的
+> root——见 Step 11 的提示框。
 
 ### 5.3 基于真实 vLLM 事件的 KV-cache 感知路由
 
@@ -788,37 +818,40 @@ $ curl -sS -X POST http://localhost:8080/v1/chat/completions -H 'Content-Type: a
     -d '{"model":"Qwen/Qwen2.5-1.5B-Instruct","messages":[{"role":"user","content":"hello pd"}],"max_tokens":16}'
 {…"choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":"Testing, testing "}}]}
 $ python3 scripts/trace-tree.py
-[llm-d-inference-gateway] POST /*  (25.5 ms)
-  [llm-d-router/epp] request
-    [llm-d-router/epp] request_orchestration
-      [llm-d-router/epp] tokenize
-      [llm-d-router/epp] pick_disagg_profile              # prefill profile
-      [llm-d-router/epp] run_scheduler_profile
-        [llm-d-router/epp] filter_endpoints
-        [llm-d-router/epp] scoring
-          [llm-d-router/epp] scorer.active-request-scorer
-          [llm-d-router/epp] scorer.prefix-cache-scorer
-        [llm-d-router/epp] pick_endpoints
-      [llm-d-router/epp] pick_disagg_profile              # decode profile
-      [llm-d-router/epp] run_scheduler_profile
-        [llm-d-router/epp] filter_endpoints
-        [llm-d-router/epp] scoring
-          [llm-d-router/epp] scorer.prefix-cache-scorer
-          [llm-d-router/epp] scorer.queue-scorer
-          [llm-d-router/epp] scorer.kv-cache-utilization-scorer
-        [llm-d-router/epp] pick_endpoints
-      [llm-d-router/epp] pick_disagg_profile
-      [llm-d-router/epp] prepare_disaggregation
-    [llm-d-routing-sidecar] llm_d.pd_proxy.POST /v1/chat/completions
-      [llm-d-routing-sidecar] forward_request
-        [llm-d-routing-sidecar] prefill
-          [llm-d-routing-sidecar] HTTP POST               # -> pd-prefill
-          [llm-d-routing-sidecar] decode
-            [llm-d-routing-sidecar] HTTP POST             # -> pd-decode (local)
--- traceID=4327857acbe9ef35f1e73afb4b32c039 spans=27 services=3
+[llm-d-inference-gateway] POST /*  (5.2 ms)
+  [inference.llm-d.ai/inference-payload-processor] gateway.request  (4.7 ms)
+    [llm-d-router/epp] request  (2.6 ms)
+      [llm-d-router/epp] request_orchestration
+        [llm-d-router/epp] tokenize
+        [llm-d-router/epp] pick_disagg_profile            # prefill profile
+        [llm-d-router/epp] run_scheduler_profile
+          [llm-d-router/epp] filter_endpoints
+          [llm-d-router/epp] scoring
+            [llm-d-router/epp] scorer.active-request-scorer
+            [llm-d-router/epp] scorer.prefix-cache-scorer
+          [llm-d-router/epp] pick_endpoints
+        [llm-d-router/epp] pick_disagg_profile            # decode profile
+        [llm-d-router/epp] run_scheduler_profile
+          [llm-d-router/epp] filter_endpoints
+          [llm-d-router/epp] scoring
+            [llm-d-router/epp] scorer.prefix-cache-scorer
+            [llm-d-router/epp] scorer.queue-scorer
+            [llm-d-router/epp] scorer.kv-cache-utilization-scorer
+          [llm-d-router/epp] pick_endpoints
+        [llm-d-router/epp] pick_disagg_profile
+        [llm-d-router/epp] prepare_disaggregation
+      [llm-d-routing-sidecar] llm_d.pd_proxy.POST /v1/chat/completions
+        [llm-d-routing-sidecar] forward_request
+          [llm-d-routing-sidecar] prefill
+            [llm-d-routing-sidecar] HTTP POST             # -> pd-prefill
+            [llm-d-routing-sidecar] decode
+              [llm-d-routing-sidecar] HTTP POST           # -> pd-decode (local)
+-- traceID=c765418bfa80068caa9450d21239e026 spans=28 services=4
 ```
 
 ![Jaeger: P/D trace](docs/screenshots/jaeger-pd-trace.png)
+
+`Services 4 | Depth 8 | Total Spans 28`。
 
 ### 5.5 指标：Prometheus target 与查询
 
@@ -980,8 +1013,9 @@ Pod 地址。
 
 ### 6.5 第 4 跳 —— EPP 决定去哪个 Pod（插件链）
 
-代理向 `llm-d-epp:9002` 再开一条 ext_proc 流，这次**带着 `traceparent`**，所以 EPP 的
-`request` span 成为 `POST /*` 的子 span。在 `request_orchestration` 里，EPP 按
+代理向 `llm-d-epp:9002` 再开一条 ext_proc 流，带着 IPP 重新注入的 `traceparent`，所以 EPP 的
+`request` span 成为 IPP 的 `gateway.request`（它本身是 `POST /*` 的子 span）的子 span。在
+`request_orchestration` 里，EPP 按
 `router-precise-prefix.values.yaml` 的顺序跑这条链：
 
 | 插件 | 对这个请求做了什么 | Span |
@@ -1041,14 +1075,15 @@ topic 下发布 `BlockStored` / `BlockRemoved` 事件。EPP 这一侧由 `kvEven
 | 生产者 | 由什么开启 | Span | 父级 |
 | --- | --- | --- | --- |
 | agentgateway 代理 | `AgentgatewayPolicy/gateway-tracing`（`frontend.tracing`，`randomSampling: "true"`） | `POST /*` | root |
-| IPP | chart 的 `payloadProcessor.tracing.enabled` | `gateway.request` | *在 agentgateway v1.4.1 上是单独一条 trace*（§5.2 注） |
+| IPP | chart 的 `payloadProcessor.tracing.enabled` | `gateway.request` | gateway（需要包含 #159 的构建——Step 11） |
 | EPP（两个 release） | `router.tracing.enabled`（`tracing.values.yaml`） | `request`、`request_orchestration`、`tokenize*`、`produce_precise_prefix_cache`、`match_block_keys`、`index_walk`、`index_add`、`run_scheduler_profile`、`filter_endpoints`、`scoring`、`scorer.*`、`pick_endpoints`、`pick_disagg_profile`、`prepare_disaggregation` | gateway |
 | routing sidecar | `--tracing=true` + `OTEL_*` 环境变量 | `llm_d.pd_proxy.*`、`forward_request`、`prefill`、`decode`、`HTTP POST` | P/D EPP |
 | **vLLM** | `--otlp-traces-endpoint` + `--collect-detailed-traces=all`，`OTEL_SERVICE_NAME` | `llm_request` | EPP |
 | inference-sim | `OTEL_*` 环境变量 | *（任何版本都不导出）* | — |
 
-上下文传播就是普通的 W3C `traceparent`：代理创建它，在两条 ext_proc 流上传递（EPP：是；
-IPP：这个版本不传），也放在发往 Pod 的上游 HTTP 请求里；sidecar 把它重新注入自己的两跳。
+上下文传播就是普通的 W3C `traceparent`：代理创建它，在两条 ext_proc 流上和发往 Pod 的上游
+HTTP 请求里传递；IPP 从 ext_proc 的请求头里提取它，再重新注入自己转发的 header（所以 EPP
+挂在 IPP 之下）；sidecar 把它重新注入自己的两跳。
 `llm-d-kv-cache` 永远不会作为 Jaeger 里的独立服务出现——它是编译进 EPP 的 Go 库，所以它的
 span（`match_block_keys`、`index_walk`、`index_add`）带的是 EPP 的服务名。
 
@@ -1116,7 +1151,7 @@ prefill/decode 加 NIXL KV 传输。发现按顺序如下：
 | GB10 上 vLLM 的内存规划 | 用 `--kv-cache-memory-bytes`（跳过 profiling）**加上**一个小的 `--gpu-memory-utilization`（通过空闲内存预检查）。 |
 | KV-cache 命中路由 | 在真实 vLLM 事件上复现：`max_match_blocks 0→1`、`top_scores [4,4]→[7,4]`、粘住的副本上 `vllm:prefix_cache_hits_total` 达 320。 |
 | Jaeger 里的 vLLM | 新增：真实 vLLM 导出 `llm_request` span 并挂在 EPP 之下；要设 `OTEL_SERVICE_NAME`，否则显示为 `unknown_service`。 |
-| IPP trace | 功能正常，但在 agentgateway v1.4.1 上没有串联（v1.1.0 时是串联的）。 |
+| IPP trace | 已发布的 `v0.1.0` 镜像（2026-07-12）早于 trace-context 提取（#159），所以它的 span 是单独的 root；`main` 构建能串起 gateway → IPP → EPP → vLLM。不是 agentgateway 的问题。 |
 | 2026-08-28 以来的上游漂移 | `disagg-headers-handler` 被移除；`blockSize` → `blockSizeTokens`；`replaySocketPort`；tokenizer 改走 render Service；`httpRoute.headerMatches`；llm-d 全部镜像 multi-arch；agentgateway CI pin v1.4.1；kube-prometheus-stack 91.4.1。 |
 | GB10 上的 NIXL | 被卡住（§7）。 |
 
@@ -1136,7 +1171,7 @@ Step 2 的主机配置（`default-runtime: nvidia`、volume-mounts 开关）会�
 - **共享的统一内存。** 机器上的其他东西（ComfyUI、浏览器）都在和 vLLM 抢内存；按
   `mem_get_info()` 规划，预算一变就可能看到 `No available memory for the cache blocks`。
 - **P/D 的 KV 传输是模拟的**（§7）。
-- **IPP trace 没有串联**，在这个 agentgateway 版本上。
+- **IPP 必须从 `main` 构建**，直到出现比 `v0.1.0` 更新的 release（Step 11）。
 - **`--enforce-eager`** 用一部分 decode 吞吐换来约 1 分钟的冷启动；做 benchmark 时去掉它
   （并预留 CUDA-graph 捕获的时间）。
 
@@ -1157,7 +1192,7 @@ helm-values/router-spark.values.yaml          EPP image/resources/selector/monit
 helm-values/router-pd.values.yaml             P/D EPP plugin chain
 helm-values/router-pd-spark.values.yaml       P/D release overrides + header-matched HTTPRoute
 helm-values/tracing.values.yaml               EPP -> otel-collector
-helm-values/ipp.values.yaml                   IPP chart values
+helm-values/ipp.values.yaml                   IPP chart values (main-local image, secure-serving off)
 images/vllm-nixl/Dockerfile                   NGC vLLM + nixl runtime (see §7)
 scripts/port-forward.sh                       Jaeger/Prometheus/Grafana/Gateway on localhost
 scripts/drive-traffic.sh                      N identical long prompts (optionally to the P/D pool)

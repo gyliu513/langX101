@@ -7,7 +7,11 @@ provider:
 
 payloadProcessor:
   image:
-    tag: v0.1.0            # published multi-arch release
+    # Built locally from `main` (README Step 11). The published v0.1.0 release
+    # (2026-07-12) predates IPP #159/#312: it never extracts the upstream
+    # traceparent, so its span is always a separate root trace instead of the
+    # gateway -> IPP -> EPP chain.
+    tag: main-local
     pullPolicy: IfNotPresent
   flags:
     # MANDATORY with agentgateway: the IPP defaults to TLS gRPC (self-signed),
