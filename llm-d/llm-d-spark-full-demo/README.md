@@ -1354,4 +1354,5 @@ scripts/drive-traffic.sh                      N identical long prompts (optional
 scripts/trace-tree.py                         newest Jaeger trace as a span tree
 scripts/span-attrs.py                         routing-decision attributes of the last N traces
 docs/screenshots/                             captured from this run
+kubecon-obs-demo/                             KubeCon talk demo: TTFT alert -> exemplar -> trace -> logs -> root cause, on llm-d v1.0 (see its README)
 ```

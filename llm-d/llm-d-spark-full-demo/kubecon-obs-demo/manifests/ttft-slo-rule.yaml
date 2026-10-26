@@ -1,0 +1,28 @@
+# The latency SLO alert the demo starts from (step 1). llm-d ships EPP
+# availability/error alerts (guides/recipes/observability/alerts/), not a
+# latency SLO, so this is "your own rule" next to them.
+#
+# P99 of the EPP's time to first token, from the router v1.0.0 histogram
+# llm_d_epp_request_ttft_seconds (router#3350). The threshold is sized for
+# this demo's 1.5B model on one GB10: cache hits answer in tens of ms, a
+# cold ~5k-token prefill takes a few hundred.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: llm-d-ttft-slo
+  namespace: llm-d
+spec:
+  groups:
+  - name: llm-d.ttft-slo
+    rules:
+    - alert: LLMDTTFTP99OverSLO
+      expr: |
+        histogram_quantile(0.99,
+          sum by (le) (rate(llm_d_epp_request_ttft_seconds_bucket{namespace="llm-d"}[2m]))
+        ) > 0.25
+      for: 2m
+      labels:
+        severity: warning
+      annotations:
+        summary: "P99 TTFT {{ $value | humanizeDuration }} is over the 250ms SLO"
+        description: "P99 of llm_d_epp_request_ttft_seconds over 2m has been above 250ms for 2 minutes."
