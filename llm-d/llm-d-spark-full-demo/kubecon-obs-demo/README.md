@@ -36,6 +36,7 @@ cluster, `llm-d-obs`, built with the parent's GPU recipe
 | [`screenshots/s17-s19-2-grafana-ttft-exemplar.png`](screenshots/s17-s19-2-grafana-ttft-exemplar.png) | 17, and 19 step 2 | Grafana: P99/P50 of `llm_d_epp_request_ttft_seconds` from 00:10 to 00:25; P99 jumps from ~0.2 s to ~0.6 s at 00:18:45. Hovering the highest exemplar diamond shows its labels, `trace_id a4f86e2f…`, and the *Open in Jaeger UI* link |
 | [`screenshots/s19-3-jaeger-trace-annotated.png`](screenshots/s19-3-jaeger-trace-annotated.png) | 19, step 3 | Jaeger: that trace (gateway → EPP → vLLM, 18 spans). A = `match_block_keys` (`longest_chain 59`, `pods_matched 1`), B = `scorer.prefix-cache-scorer` (`score.max 1`, `weight 0`), C = vLLM `llm_request` (`time_in_model_prefill 0.569`, `time_to_first_token 0.765`, `prompt_tokens 3829`) |
 | [`screenshots/s20-4-logs-by-trace-id.png`](screenshots/s20-4-logs-by-trace-id.png) | 20, step 4 | `kubectl logs deploy/llm-d-epp \| jq 'select(.trace_id=="a4f86e2f…")'`: the three EPP log lines of that request |
+| [`screenshots/extra-grafana-dashboard-ttft-and-hit-rate.png`](screenshots/extra-grafana-dashboard-ttft-and-hit-rate.png) | (backup) | The whole dashboard at the same moment: the TTFT panel above the per-pod vLLM prefix-cache hit rate, which drops from ~100 % to ~65 % at the change |
 | [`screenshots/s20-5-root-cause.png`](screenshots/s20-5-root-cause.png) | 20, step 5 | `helm history` (revision 4 at 00:18:07), the one-line diff between the two EPP configs (`weight: 3.0` → `0.0`), and the same attributes from a trace taken with weight 3.0 next to the slow one |
 
 The same request (`trace_id a4f86e2fec8c185a0d94f4bf28e61697`, 2026-10-26
@@ -194,7 +195,11 @@ first request took 33 s, is out of frame). The script collects the exemplar
 markers (`data-testid="data-testid Exemplar marker"`), hovers them by mouse
 coordinates (an open tooltip covers its neighbours, so it moves away and
 presses Escape in between, and waits ~1.3 s for the tooltip), and saves the
-frame where the tooltip shows the chosen `trace_id`. Before the change the
+frame where the tooltip shows the chosen `trace_id` (that run rendered the
+whole dashboard, kept as the *extra* image above). The slide image is the
+single-panel view from [`scripts/hover-top-exemplar.py`](scripts/hover-top-exemplar.py),
+which hovers the highest diamond after the change; that diamond is the
+`a4f86e2f…` exemplar. Before the change the
 panel's P99 reads a flat ~200 ms: the slowest 1 % fall in the 0.1-0.2 s
 histogram bucket and `histogram_quantile` interpolates to near its top; the
 client measured 0.15-0.16 s.
@@ -261,6 +266,7 @@ scripts/create-cluster.sh                Kind + GPU runtime + image import
 scripts/install-stack.sh                 gateway, router, vLLM, tracing, monitoring, rules
 scripts/session-traffic.py               multi-session long-prefix load
 scripts/capture-ui.py                    Grafana / Prometheus / Jaeger screenshots (headless Chromium)
+scripts/hover-top-exemplar.py            the single-panel Grafana frame with the exemplar tooltip
 scripts/capture-jaeger.py                Jaeger span tree + per-span Tags tables
 scripts/compose-jaeger.py                annotated Jaeger image for the slide
 scripts/compare-traces.py                routing attributes of two traces side by side
