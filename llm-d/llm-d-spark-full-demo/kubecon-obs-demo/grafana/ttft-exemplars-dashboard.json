@@ -1,0 +1,66 @@
+{
+  "dashboard": {
+    "uid": "llm-d-ttft-exemplars",
+    "title": "llm-d TTFT (exemplars)",
+    "tags": ["llm-d", "kubecon-obs-demo"],
+    "timezone": "browser",
+    "refresh": "10s",
+    "time": { "from": "now-30m", "to": "now" },
+    "schemaVersion": 39,
+    "panels": [
+      {
+        "id": 1,
+        "type": "timeseries",
+        "title": "EPP time to first token (P99 / P50) with exemplars",
+        "description": "llm_d_epp_request_ttft_seconds (router v1.0.0). Diamonds are exemplars: each carries the trace_id of a sampled request and links to Jaeger.",
+        "gridPos": { "x": 0, "y": 0, "w": 24, "h": 12 },
+        "datasource": { "type": "prometheus", "uid": "${DS_UID}" },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "s",
+            "min": 0,
+            "custom": { "lineWidth": 2, "fillOpacity": 8, "showPoints": "never" }
+          },
+          "overrides": []
+        },
+        "options": {
+          "legend": { "displayMode": "list", "placement": "bottom" },
+          "tooltip": { "mode": "single" }
+        },
+        "targets": [
+          {
+            "refId": "A",
+            "datasource": { "type": "prometheus", "uid": "${DS_UID}" },
+            "expr": "histogram_quantile(0.99, sum by (le) (rate(llm_d_epp_request_ttft_seconds_bucket{namespace=\"llm-d\"}[1m])))",
+            "legendFormat": "P99 TTFT",
+            "exemplar": true
+          },
+          {
+            "refId": "B",
+            "datasource": { "type": "prometheus", "uid": "${DS_UID}" },
+            "expr": "histogram_quantile(0.5, sum by (le) (rate(llm_d_epp_request_ttft_seconds_bucket{namespace=\"llm-d\"}[1m])))",
+            "legendFormat": "P50 TTFT",
+            "exemplar": false
+          }
+        ]
+      },
+      {
+        "id": 2,
+        "type": "timeseries",
+        "title": "vLLM prefix-cache hit rate per pod",
+        "gridPos": { "x": 0, "y": 12, "w": 24, "h": 8 },
+        "datasource": { "type": "prometheus", "uid": "${DS_UID}" },
+        "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1 }, "overrides": [] },
+        "targets": [
+          {
+            "refId": "A",
+            "datasource": { "type": "prometheus", "uid": "${DS_UID}" },
+            "expr": "sum by (pod) (rate(vllm:prefix_cache_hits_total{namespace=\"llm-d\",pod=~\"precise-prefix-vllm.*\"}[1m])) / sum by (pod) (rate(vllm:prefix_cache_queries_total{namespace=\"llm-d\",pod=~\"precise-prefix-vllm.*\"}[1m]))",
+            "legendFormat": "{{pod}}"
+          }
+        ]
+      }
+    ]
+  },
+  "overwrite": true
+}

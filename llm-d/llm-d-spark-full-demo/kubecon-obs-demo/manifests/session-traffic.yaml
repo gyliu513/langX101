@@ -1,0 +1,37 @@
+# Runs scripts/session-traffic.py inside the cluster, straight at the Gateway
+# Service. (Driving it through `kubectl port-forward` on the host was not
+# stable for a 30-minute run: the forward dropped and every in-flight stream
+# hung.) Reuses the NGC vLLM image already imported into the node for its
+# python3; no GPU is requested.
+#
+#   kubectl -n llm-d create configmap session-traffic --from-file=scripts/session-traffic.py
+#   kubectl apply -f manifests/session-traffic.yaml
+#   kubectl -n llm-d logs -f deploy/session-traffic
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: session-traffic
+  namespace: llm-d
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: session-traffic }
+  template:
+    metadata:
+      labels: { app: session-traffic }
+    spec:
+      containers:
+      - name: traffic
+        image: nvcr.io/nvidia/vllm:26.08-py3
+        imagePullPolicy: IfNotPresent
+        args: ["python3", "-u", "/app/session-traffic.py",
+               "--gateway", "http://llm-d-inference-gateway.llm-d.svc:80",
+               "--sessions", "44", "--concurrency", "3"]
+        resources:
+          requests: { cpu: "500m", memory: 512Mi }
+          limits: { cpu: "2", memory: 2Gi }
+        volumeMounts:
+        - { name: app, mountPath: /app }
+      volumes:
+      - name: app
+        configMap: { name: session-traffic }
