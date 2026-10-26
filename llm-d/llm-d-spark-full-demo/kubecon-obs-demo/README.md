@@ -233,7 +233,9 @@ at the revert, so they cannot be re-read today.
    flags the error when the `:status` response header's `RawValue` is not
    `"200"` (added for Envoy in llm-d-router#3330, still the same on `main`);
    agentgateway appears to send the status in `Value`, leaving `RawValue`
-   empty. Worth an issue against llm-d-router.
+   empty (confirmed in agentgateway `crates/agentgateway/src/http/ext_proc/headers.rs`,
+   v1.4.1 and `main`). Filed as
+   [llm-d/llm-d-router#3641](https://github.com/llm-d/llm-d-router/issues/3641).
 2. **An EPP rollout drops about a second of traffic.** Each `helm upgrade`
    restarted the single EPP replica; agentgateway logged `ext_proc failed:
    ... Connection refused` and returned 500 for ~1 s (65-112 requests at
@@ -245,9 +247,16 @@ at the revert, so they cannot be re-read today.
    is empty below saturation, so the load scorers tie. Worth knowing when
    tuning weights: the trace's `llm_d.epp.picker.top_scores` shows by how
    much each decision was won.
-4. **Jaeger all-in-one keeps few traces.** The pre-change traces were gone
+4. **Related gaps the demo runs into**, tracked upstream: P/D sidecar
+   connector logs carry no `trace_id`
+   ([llm-d/llm-d-router#3629](https://github.com/llm-d/llm-d-router/issues/3629)),
+   no logs pipeline recipe, so step 4 is `kubectl logs | jq`
+   ([llm-d/llm-d#2926](https://github.com/llm-d/llm-d/issues/2926)),
+   exemplars only on the EPP
+   ([llm-d/llm-d-router#3584](https://github.com/llm-d/llm-d-router/issues/3584)).
+5. **Jaeger all-in-one keeps few traces.** The pre-change traces were gone
    20 minutes later. Save the traces you will need (`/api/traces/<id>`).
-5. **Tailscale SSH and `ssh -N` tunnels** kept dropping from the laptop;
+6. **Tailscale SSH and `ssh -N` tunnels** kept dropping from the laptop;
    running the browser on the Spark itself avoided tunnels altogether.
 
 ## Files
