@@ -156,7 +156,8 @@ All times EDT, 2026-10-25/26.
 | 00:19:04 | `LLMDTTFTP99OverSLO` pending, **firing** two minutes later (value 0.615) |
 | 00:21:52 | The demo request `a4f86e2f…`: TTFT 0.765 s, prefill 0.569 s for 3829 prompt tokens |
 | 00:33 | Grafana, Prometheus and Jaeger captured |
-| 00:42:44 | Rev 5: weight back to 3.0. Three minutes later the "before" trace `ee729b07…` is taken: same prefix, prefill 52 ms |
+| 00:42:44 | Rev 5: weight back to 3.0; the session traffic keeps running |
+| 07:09:37 | The "before" trace `ee729b07…` is taken from that traffic, still on rev 5 (weight 3.0): prefill 52 ms. It is the first trace returned by a Jaeger query for requests after the revert that has `llm_request`, `scorer.prefix-cache-scorer` and `match_block_keys`, `pods_matched == 1` and prefill under 0.1 s. It is a different session from `a4f86e2f…` (3,839 vs 3,829 prompt tokens), so it is the same kind of request, not the same prompt |
 
 The two traces side by side (`scripts/compare-traces.py traces/before-ee729b07.json traces/after-a4f86e2f.json`):
 
@@ -172,7 +173,7 @@ vLLM prefill                         52 ms          569 ms
 vLLM TTFT                            66 ms          765 ms
 ```
 
-The index sees the same thing in both (59 of 59 blocks cached on one pod).
+The two traces are different chat sessions of the same traffic, so this compares the same kind of request (one session's ~3.8k-token system prompt), not the same prompt. The index sees the same thing in both (59 of 59 blocks cached on one pod).
 With weight 3.0 that pod wins by 3 points; with weight 0.0 the two pods are
 0.07 apart on load alone and the request lands on the one without the
 prefix. Both full traces are saved under [`traces/`](traces/) because the
