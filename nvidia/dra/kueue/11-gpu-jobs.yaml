@@ -1,0 +1,63 @@
+# Two batch Jobs, each needs one GPU through a ResourceClaimTemplate.
+# Kueue charges 1 nvidia.com/dra-gpu per Job; quota is 1, so only one Job is
+# admitted (unsuspended) at a time and the other one waits *inside Kueue*
+# (suspended, no Pod, no ResourceClaim) instead of as a Pending Pod.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  namespace: kueue-dra
+  name: train-a
+  labels:
+    kueue.x-k8s.io/queue-name: gpu-lq
+spec:
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: cuda
+        image: nvcr.io/nvidia/k8s/cuda-sample:nbody-cuda11.6.0-ubuntu18.04
+        command: ["bash", "-c"]
+        args:
+        - |
+          nvidia-smi -L
+          /tmp/sample -benchmark -numbodies=524288 | tail -3
+          echo "pretend to train for 45s ..."; sleep 45; echo done
+        resources:
+          requests:
+            cpu: "1"
+            memory: 1Gi
+          claims:
+          - name: gpu
+      resourceClaims:
+      - name: gpu
+        resourceClaimTemplateName: single-gpu
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  namespace: kueue-dra
+  name: train-b
+  labels:
+    kueue.x-k8s.io/queue-name: gpu-lq
+spec:
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: cuda
+        image: nvcr.io/nvidia/k8s/cuda-sample:nbody-cuda11.6.0-ubuntu18.04
+        command: ["bash", "-c"]
+        args:
+        - |
+          nvidia-smi -L
+          /tmp/sample -benchmark -numbodies=524288 | tail -3
+          echo "pretend to train for 45s ..."; sleep 45; echo done
+        resources:
+          requests:
+            cpu: "1"
+            memory: 1Gi
+          claims:
+          - name: gpu
+      resourceClaims:
+      - name: gpu
+        resourceClaimTemplateName: single-gpu

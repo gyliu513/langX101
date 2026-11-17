@@ -1,0 +1,14 @@
+# Helm values for dra-driver-nvidia-gpu v0.5.1 on a single DGX Spark (GB10).
+# GPU allocation is still marked "not officially supported" upstream, so the
+# chart refuses to enable it unless this override is set.
+gpuResourcesEnabledOverride: true
+resources:
+  gpus:
+    enabled: true
+  # ComputeDomains = Multi-Node NVLink (IMEX). A single Spark has no MNNVL
+  # fabric, so turn this part off.
+  computeDomains:
+    enabled: false
+featureGates:
+  # Needed for GpuConfig.sharing.strategy=TimeSlicing (example 5).
+  TimeSlicingSettings: true

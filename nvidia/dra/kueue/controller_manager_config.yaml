@@ -1,0 +1,55 @@
+# Kueue v0.20.6 controller config = the release default (comments dropped)
+# plus the resources.deviceClassMappings block at the end.
+apiVersion: config.kueue.x-k8s.io/v1beta2
+kind: Configuration
+health:
+  healthProbeBindAddress: :8081
+metrics:
+  bindAddress: :8443
+webhook:
+  port: 9443
+leaderElection:
+  leaderElect: true
+  resourceName: c1f6bfd2.kueue.x-k8s.io
+controller:
+  groupKindConcurrency:
+    Job.batch: 5
+    Pod: 5
+    Workload.kueue.x-k8s.io: 10
+    LocalQueue.kueue.x-k8s.io: 5
+    Cohort.kueue.x-k8s.io: 1
+    ClusterQueue.kueue.x-k8s.io: 5
+    ResourceFlavor.kueue.x-k8s.io: 1
+clientConnection:
+  qps: 300
+  burst: 500
+integrations:
+  frameworks:
+  - "batch/job"
+  - "kubeflow.org/mpijob"
+  - "ray.io/rayjob"
+  - "ray.io/raycluster"
+  - "ray.io/rayservice"
+  - "jobset.x-k8s.io/jobset"
+  - "workload.codeflare.dev/appwrapper"
+  - "trainer.kubeflow.org/trainjob"
+  - "pod"
+  - "deployment"
+  - "statefulset"
+  - "leaderworkerset.x-k8s.io/leaderworkerset"
+# --- added for DRA -------------------------------------------------------
+# Kueue cannot count "a ResourceClaimTemplate asking for 1 device of class
+# gpu.nvidia.com" as quota by itself. This mapping turns every device
+# requested from the gpu.nvidia.com DeviceClass into 1 unit of the logical
+# resource "nvidia.com/dra-gpu", which ClusterQueues can then put a quota on.
+# The same mapping also covers Pods that ask for the classic extended
+# resource nvidia.com/gpu: the driver's gpu.nvidia.com DeviceClass sets
+# extendedResourceName: nvidia.com/gpu, and Kueue charges such Pods to the
+# mapped name (see 14-extended-resource.yaml).
+# (KueueDRAIntegration and KueueDRAIntegrationExtendedResource are beta and
+# on by default in v0.20, so no --feature-gates flag is needed.)
+resources:
+  deviceClassMappings:
+  - name: nvidia.com/dra-gpu
+    deviceClassNames:
+    - gpu.nvidia.com

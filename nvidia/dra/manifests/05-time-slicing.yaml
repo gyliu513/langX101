@@ -1,0 +1,51 @@
+# Example 5: driver-specific configuration through an opaque GpuConfig.
+# One claim, two containers, and the NVIDIA driver is told to configure
+# the GPU for time-slicing (interval Long) before handing it out.
+# Both containers run the CUDA nbody benchmark on the same GPU at once.
+apiVersion: resource.k8s.io/v1
+kind: ResourceClaimTemplate
+metadata:
+  namespace: dra-demo
+  name: timesliced-gpu
+spec:
+  spec:
+    devices:
+      requests:
+      - name: gpu
+        exactly:
+          deviceClassName: gpu.nvidia.com
+      config:
+      - requests: ["gpu"]
+        opaque:
+          driver: gpu.nvidia.com
+          parameters:
+            apiVersion: resource.nvidia.com/v1beta1
+            kind: GpuConfig
+            sharing:
+              strategy: TimeSlicing
+              timeSlicingConfig:
+                interval: Long
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  namespace: dra-demo
+  name: timesliced
+spec:
+  restartPolicy: Never
+  containers:
+  - name: nbody-0
+    image: nvcr.io/nvidia/k8s/cuda-sample:nbody-cuda11.6.0-ubuntu18.04
+    command: ["/tmp/sample", "-benchmark", "-numbodies=524288"]
+    resources:
+      claims:
+      - name: gpu
+  - name: nbody-1
+    image: nvcr.io/nvidia/k8s/cuda-sample:nbody-cuda11.6.0-ubuntu18.04
+    command: ["/tmp/sample", "-benchmark", "-numbodies=524288"]
+    resources:
+      claims:
+      - name: gpu
+  resourceClaims:
+  - name: gpu
+    resourceClaimTemplateName: timesliced-gpu

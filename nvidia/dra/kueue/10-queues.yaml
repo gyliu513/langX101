@@ -1,0 +1,69 @@
+# Kueue objects for the DRA demo.
+# The ClusterQueue owns exactly 1 unit of nvidia.com/dra-gpu (the logical
+# resource that kueue/controller_manager_config.yaml maps from the
+# gpu.nvidia.com DeviceClass) -- the Spark has one GB10.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: kueue-dra
+---
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: ResourceFlavor
+metadata:
+  name: spark-gb10
+---
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: ClusterQueue
+metadata:
+  name: gpu-cq
+spec:
+  namespaceSelector: {}
+  queueingStrategy: BestEffortFIFO
+  resourceGroups:
+  - coveredResources: ["cpu", "memory", "nvidia.com/dra-gpu"]
+    flavors:
+    - name: spark-gb10
+      resources:
+      - name: cpu
+        nominalQuota: 8
+      - name: memory
+        nominalQuota: 16Gi
+      - name: nvidia.com/dra-gpu
+        nominalQuota: 1
+---
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: LocalQueue
+metadata:
+  namespace: kueue-dra
+  name: gpu-lq
+spec:
+  clusterQueue: gpu-cq
+---
+# Kueue only supports ResourceClaimTemplates (not pre-created ResourceClaims).
+apiVersion: resource.k8s.io/v1
+kind: ResourceClaimTemplate
+metadata:
+  namespace: kueue-dra
+  name: single-gpu
+spec:
+  spec:
+    devices:
+      requests:
+      - name: gpu
+        exactly:
+          deviceClassName: gpu.nvidia.com
+---
+# Asks for 2 GPUs in one claim (count: 2); used by 12-too-big-job.yaml.
+apiVersion: resource.k8s.io/v1
+kind: ResourceClaimTemplate
+metadata:
+  namespace: kueue-dra
+  name: two-gpus
+spec:
+  spec:
+    devices:
+      requests:
+      - name: gpu
+        exactly:
+          deviceClassName: gpu.nvidia.com
+          count: 2

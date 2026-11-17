@@ -1,0 +1,31 @@
+# kind cluster for testing the NVIDIA DRA driver on a DGX Spark (GB10, arm64).
+# Based on upstream demo/clusters/kind/scripts/kind-cluster-config.yaml
+# (kubernetes-sigs/dra-driver-nvidia-gpu v0.5.1), trimmed for a single-GPU host.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: dra
+# Kubernetes >= 1.34 serves resource.k8s.io/v1 (DRA GA) by default, so no
+# featureGates / runtime-config are needed here.
+containerdConfigPatches:
+# Let containerd inside the kind node resolve CDI device names
+# (the DRA kubelet plugin hands containerd CDI device IDs).
+- |-
+  [plugins."io.containerd.cri.v1.runtime"]
+    enable_cdi = true
+    cdi_spec_dirs = ["/etc/cdi", "/var/run/cdi"]
+nodes:
+- role: control-plane
+- role: worker
+  labels:
+    nvidia.com/gpu.present: "true"
+  extraMounts:
+  # Inject the host GPU (device nodes + driver libraries) into this kind node.
+  # Requires `accept-nvidia-visible-devices-as-volume-mounts = true` in
+  # /etc/nvidia-container-runtime/config.toml and Docker's default runtime = nvidia.
+  # The hostPath is irrelevant; the containerPath name selects the GPU(s).
+  - hostPath: /dev/null
+    containerPath: /var/run/nvidia-container-devices/cdi/runtime.nvidia.com/gpu/all
+  # The CDI spec the DRA driver generates calls `nvidia-ctk hook ...`;
+  # kind nodes don't ship nvidia-ctk, so borrow the host binary.
+  - hostPath: /usr/bin/nvidia-ctk
+    containerPath: /usr/bin/nvidia-ctk

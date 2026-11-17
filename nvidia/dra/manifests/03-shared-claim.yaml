@@ -1,0 +1,54 @@
+# Example 3: one standalone ResourceClaim referenced by two Pods.
+# Both Pods (and every container in them that lists the claim) see the
+# *same* physical GPU. The claim lives until it is deleted explicitly.
+apiVersion: resource.k8s.io/v1
+kind: ResourceClaim
+metadata:
+  namespace: dra-demo
+  name: shared-gpu
+spec:
+  devices:
+    requests:
+    - name: gpu
+      exactly:
+        deviceClassName: gpu.nvidia.com
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  namespace: dra-demo
+  name: shared-1
+spec:
+  containers:
+  - name: ctr
+    image: ubuntu:24.04
+    command: ["bash", "-c", "nvidia-smi -L; trap 'exit 0' TERM; sleep 9999 & wait"]
+    resources:
+      claims:
+      - name: gpu
+  resourceClaims:
+  - name: gpu
+    resourceClaimName: shared-gpu
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  namespace: dra-demo
+  name: shared-2
+spec:
+  containers:
+  - name: ctr0
+    image: ubuntu:24.04
+    command: ["bash", "-c", "nvidia-smi -L; trap 'exit 0' TERM; sleep 9999 & wait"]
+    resources:
+      claims:
+      - name: gpu
+  - name: ctr1
+    image: ubuntu:24.04
+    command: ["bash", "-c", "nvidia-smi -L; trap 'exit 0' TERM; sleep 9999 & wait"]
+    resources:
+      claims:
+      - name: gpu
+  resourceClaims:
+  - name: gpu
+    resourceClaimName: shared-gpu

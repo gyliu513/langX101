@@ -1,0 +1,40 @@
+# Negative test: Kueue's DRA integration only understands
+# ResourceClaimTemplates. A Job that points at a pre-created ResourceClaim
+# is marked inadmissible (Kueue cannot tell how much of the claim is "new"
+# usage that should be charged to the queue).
+apiVersion: resource.k8s.io/v1
+kind: ResourceClaim
+metadata:
+  namespace: kueue-dra
+  name: preallocated-gpu
+spec:
+  devices:
+    requests:
+    - name: gpu
+      exactly:
+        deviceClassName: gpu.nvidia.com
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  namespace: kueue-dra
+  name: uses-resourceclaim
+  labels:
+    kueue.x-k8s.io/queue-name: gpu-lq
+spec:
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: cuda
+        image: ubuntu:24.04
+        command: ["nvidia-smi", "-L"]
+        resources:
+          requests:
+            cpu: "1"
+            memory: 1Gi
+          claims:
+          - name: gpu
+      resourceClaims:
+      - name: gpu
+        resourceClaimName: preallocated-gpu
