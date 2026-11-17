@@ -1,0 +1,3 @@
+concurrency=1  n=4   TTFT p50=   129 ms p95=   130 ms  decode/req= 47.8 tok/s  aggregate=  46.5 tok/s  split={'vllm-0': 2, 'vllm-1': 2}
+concurrency=4  n=8   TTFT p50=   327 ms p95=   436 ms  decode/req= 28.2 tok/s  aggregate= 108.8 tok/s  split={'vllm-0': 4, 'vllm-1': 4}
+concurrency=8  n=16  TTFT p50=   288 ms p95=   353 ms  decode/req= 21.2 tok/s  aggregate= 165.9 tok/s  split={'vllm-0': 8, 'vllm-1': 8}

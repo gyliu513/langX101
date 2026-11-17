@@ -1,0 +1,23 @@
+# file-discovery endpoints (watched; rewrite atomically with `mv` to change the pool).
+# address MUST be a literal IPv4 (no hostnames). All vLLM replicas run on the
+# Spark with host networking, so 127.0.0.1 + distinct ports.
+#
+# rankIndex is (ab)used here to give each replica its own KV-event port:
+# the precise-prefix producer dials socketPort+rankIndex (5556/5557) and
+# replaySocketPort+rankIndex (5559/5560). Upstream PR llm-d-router#4288 adds a
+# proper per-entry zmqPort (issue #2959).
+endpoints:
+  - name: vllm-0
+    address: 127.0.0.1
+    port: "8000"
+    rankIndex: 0
+    labels:
+      llm-d.ai/inference-serving: "true"   # informational; verified NOT required for KV-event subscription
+      llm-d.ai/model: nemotron
+  - name: vllm-1
+    address: 127.0.0.1
+    port: "8001"
+    rankIndex: 1
+    labels:
+      llm-d.ai/inference-serving: "true"
+      llm-d.ai/model: nemotron

@@ -1,0 +1,39 @@
+# OTel Collector: one OTLP entry point for Envoy, EPP and vLLM.
+# traces -> Jaeger (OTLP gRPC on 127.0.0.1:14317)
+# spanmetrics -> Prometheus scrape on :8889 (RED metrics per service/span)
+receivers:
+  otlp:
+    protocols:
+      grpc: {endpoint: 0.0.0.0:4317}
+      http: {endpoint: 0.0.0.0:4318}
+processors:
+  batch: {}
+connectors:
+  spanmetrics:
+    namespace: traces.spanmetrics
+    histogram:
+      explicit:
+        buckets: [5ms, 10ms, 25ms, 50ms, 100ms, 250ms, 500ms, 1s, 2s, 5s, 10s, 30s]
+exporters:
+  otlp/jaeger:
+    endpoint: 127.0.0.1:14317
+    tls: {insecure: true}
+  prometheus:
+    endpoint: 0.0.0.0:8889
+  debug:
+    verbosity: basic
+service:
+  telemetry:
+    metrics:
+      readers:
+        - pull:
+            exporter:
+              prometheus: {host: 127.0.0.1, port: 8888}
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlp/jaeger, spanmetrics]
+    metrics/spanmetrics:
+      receivers: [spanmetrics]
+      exporters: [prometheus]
