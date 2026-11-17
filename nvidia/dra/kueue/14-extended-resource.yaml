@@ -1,0 +1,52 @@
+# DRA "extended resource" mode (KEP-5004, GA in Kubernetes 1.37).
+# The driver's gpu.nvidia.com DeviceClass already sets
+#   spec.extendedResourceName: nvidia.com/gpu
+# so a Pod can keep the classic device-plugin syntax
+#   resources.limits: {nvidia.com/gpu: 1}
+# and the scheduler creates a DRA ResourceClaim for it behind the scenes
+# (no ResourceClaimTemplate needed). Kueue sees that nvidia.com/gpu is backed
+# by gpu.nvidia.com, which is mapped to nvidia.com/dra-gpu, and charges the
+# same 1-GPU quota as the ResourceClaimTemplate Jobs.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  namespace: kueue-dra
+  name: ext-a
+  labels:
+    kueue.x-k8s.io/queue-name: gpu-lq
+spec:
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: cuda
+        image: nvcr.io/nvidia/k8s/cuda-sample:vectoradd-cuda12.5.0
+        command: ["bash", "-c", "nvidia-smi -L; /cuda-samples/vectorAdd | tail -2; sleep 30"]
+        resources:
+          requests:
+            cpu: "1"
+            memory: 1Gi
+          limits:
+            nvidia.com/gpu: 1
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  namespace: kueue-dra
+  name: ext-b
+  labels:
+    kueue.x-k8s.io/queue-name: gpu-lq
+spec:
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: cuda
+        image: nvcr.io/nvidia/k8s/cuda-sample:vectoradd-cuda12.5.0
+        command: ["bash", "-c", "nvidia-smi -L; /cuda-samples/vectorAdd | tail -2; sleep 30"]
+        resources:
+          requests:
+            cpu: "1"
+            memory: 1Gi
+          limits:
+            nvidia.com/gpu: 1

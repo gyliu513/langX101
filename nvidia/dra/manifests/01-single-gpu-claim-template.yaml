@@ -1,0 +1,39 @@
+# Example 1: one Pod gets one whole GPU through a ResourceClaimTemplate.
+# The scheduler creates a ResourceClaim from the template for the Pod,
+# picks a device from the gpu.nvidia.com DeviceClass, and the DRA kubelet
+# plugin injects that GPU into the container via CDI.
+apiVersion: resource.k8s.io/v1
+kind: ResourceClaimTemplate
+metadata:
+  namespace: dra-demo
+  name: single-gpu
+spec:
+  spec:
+    devices:
+      requests:
+      - name: gpu
+        exactly:
+          deviceClassName: gpu.nvidia.com
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  namespace: dra-demo
+  name: gpu-pod
+spec:
+  restartPolicy: Never
+  containers:
+  - name: vectoradd
+    image: nvcr.io/nvidia/k8s/cuda-sample:vectoradd-cuda12.5.0
+    command: ["bash", "-c"]
+    args:
+    - |
+      echo "== nvidia-smi -L"; nvidia-smi -L
+      echo "== NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-<unset>}"
+      echo "== vectorAdd"; /cuda-samples/vectorAdd
+    resources:
+      claims:
+      - name: gpu          # must match spec.resourceClaims[].name
+  resourceClaims:
+  - name: gpu
+    resourceClaimTemplateName: single-gpu

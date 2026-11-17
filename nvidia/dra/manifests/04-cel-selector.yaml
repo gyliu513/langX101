@@ -1,0 +1,74 @@
+# Example 4: pick devices by attribute with a CEL selector.
+# The ResourceSlice published by the driver carries attributes such as
+# productName, architecture and cudaComputeCapability. "blackwell-gpu"
+# matches the GB10; "h100-gpu" matches nothing on this node, so its Pod
+# stays Pending with "cannot allocate all claims".
+apiVersion: resource.k8s.io/v1
+kind: ResourceClaimTemplate
+metadata:
+  namespace: dra-demo
+  name: blackwell-gpu
+spec:
+  spec:
+    devices:
+      requests:
+      - name: gpu
+        exactly:
+          deviceClassName: gpu.nvidia.com
+          selectors:
+          - cel:
+              expression: |
+                device.attributes['gpu.nvidia.com'].architecture == 'Blackwell' &&
+                device.attributes['gpu.nvidia.com'].cudaComputeCapability.isGreaterThan(semver('12.0.0'))
+---
+apiVersion: resource.k8s.io/v1
+kind: ResourceClaimTemplate
+metadata:
+  namespace: dra-demo
+  name: h100-gpu
+spec:
+  spec:
+    devices:
+      requests:
+      - name: gpu
+        exactly:
+          deviceClassName: gpu.nvidia.com
+          selectors:
+          - cel:
+              expression: device.attributes['gpu.nvidia.com'].productName.lowerAscii().matches('h100')
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  namespace: dra-demo
+  name: cel-blackwell
+spec:
+  restartPolicy: Never
+  containers:
+  - name: ctr
+    image: ubuntu:24.04
+    command: ["bash", "-c", "nvidia-smi --query-gpu=name,compute_cap,uuid --format=csv"]
+    resources:
+      claims:
+      - name: gpu
+  resourceClaims:
+  - name: gpu
+    resourceClaimTemplateName: blackwell-gpu
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  namespace: dra-demo
+  name: cel-h100
+spec:
+  restartPolicy: Never
+  containers:
+  - name: ctr
+    image: ubuntu:24.04
+    command: ["bash", "-c", "nvidia-smi -L"]
+    resources:
+      claims:
+      - name: gpu
+  resourceClaims:
+  - name: gpu
+    resourceClaimTemplateName: h100-gpu

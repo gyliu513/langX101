@@ -1,0 +1,36 @@
+# Example 2: two Pods, each with its *own* claim from the same template.
+# A whole-GPU claim is exclusive, and the Spark has exactly one GPU,
+# so the second Pod stays Pending until the first one releases the GPU.
+apiVersion: v1
+kind: Pod
+metadata:
+  namespace: dra-demo
+  name: exclusive-1
+spec:
+  containers:
+  - name: ctr
+    image: ubuntu:24.04
+    command: ["bash", "-c", "nvidia-smi -L; trap 'exit 0' TERM; sleep 9999 & wait"]
+    resources:
+      claims:
+      - name: gpu
+  resourceClaims:
+  - name: gpu
+    resourceClaimTemplateName: single-gpu
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  namespace: dra-demo
+  name: exclusive-2
+spec:
+  containers:
+  - name: ctr
+    image: ubuntu:24.04
+    command: ["bash", "-c", "nvidia-smi -L; trap 'exit 0' TERM; sleep 9999 & wait"]
+    resources:
+      claims:
+      - name: gpu
+  resourceClaims:
+  - name: gpu
+    resourceClaimTemplateName: single-gpu

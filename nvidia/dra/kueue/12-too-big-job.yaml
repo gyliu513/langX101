@@ -1,0 +1,27 @@
+# A Job whose claim asks for 2 GPUs (count: 2). Kueue computes 2 units of
+# nvidia.com/dra-gpu, which can never fit the ClusterQueue's quota of 1,
+# so the Workload is never admitted and no Pod is ever created.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  namespace: kueue-dra
+  name: needs-two-gpus
+  labels:
+    kueue.x-k8s.io/queue-name: gpu-lq
+spec:
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: cuda
+        image: ubuntu:24.04
+        command: ["nvidia-smi", "-L"]
+        resources:
+          requests:
+            cpu: "1"
+            memory: 1Gi
+          claims:
+          - name: gpus
+      resourceClaims:
+      - name: gpus
+        resourceClaimTemplateName: two-gpus
