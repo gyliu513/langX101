@@ -1,0 +1,195 @@
+# llm-d without Kubernetes on one DGX Spark (GB10, aarch64).
+#
+# Everything uses host networking so that the EPP's file-discovery endpoints
+# (literal IPv4 only) can be 127.0.0.1 and every component reaches the others
+# on loopback, exactly like the upstream guide's `docker run --network host`.
+#
+# Profiles:
+#   obs     otel-collector, jaeger, prometheus, grafana
+#   model   vllm-0, vllm-1 (Nemotron on the GB10 GPU)
+#   router  epp, envoy
+#
+#   docker compose --profile obs --profile model --profile router up -d
+#
+# Ports on the host:
+#   8081  Envoy listener (client entry point)        19000 Envoy admin
+#   9002  EPP ext_proc gRPC   9003 EPP health        9090  EPP /metrics
+#   8000  vllm-0 OpenAI API   5556 KV events  5559 KV replay
+#   8001  vllm-1 OpenAI API   5557 KV events  5560 KV replay
+#   4317/4318 OTel Collector (OTLP gRPC/HTTP)        8889 collector spanmetrics
+#   16686 Jaeger UI (OTLP in on 14317)               9091 Prometheus   3000 Grafana
+
+x-vllm: &vllm
+  image: ${VLLM_IMAGE:-nvcr.io/nvidia/vllm:26.08-py3}
+  profiles: ["model"]
+  network_mode: host
+  ipc: host
+  restart: unless-stopped
+  # NEVER override `entrypoint:` on the NGC vLLM image: its entrypoint turns on
+  # CUDA forward-compat libs; without it FlashInfer JIT fails on GB10 with
+  # cudaErrorUnsupportedPtxVersion. Compose `command:` keeps the entrypoint.
+  deploy:
+    resources:
+      reservations:
+        devices:
+          - driver: nvidia
+            count: all
+            capabilities: [gpu]
+  volumes:
+    - ${HF_CACHE:-${HOME}/llm-d-cache/huggingface}:/root/.cache/huggingface
+    - ${HOME}/llm-d-cache/vllm-compile:/root/.cache/vllm
+  healthcheck:
+    test: ["CMD-SHELL", "curl -sf http://127.0.0.1:$${PORT}/health || exit 1"]
+    interval: 15s
+    timeout: 5s
+    retries: 3
+    start_period: 900s
+
+x-vllm-env: &vllm-env
+  HF_HUB_OFFLINE: "${HF_HUB_OFFLINE:-1}"
+  DO_NOT_TRACK: "1"
+  OTEL_EXPORTER_OTLP_TRACES_INSECURE: "true"
+  OTEL_EXPORTER_OTLP_TRACES_PROTOCOL: grpc
+
+services:
+  # ------------------------------------------------------------------ model
+  vllm-0:
+    <<: *vllm
+    container_name: vllm-0
+    environment:
+      <<: *vllm-env
+      PORT: "8000"
+      OTEL_SERVICE_NAME: vllm-0
+    command:
+      - bash
+      - -c
+      - exec vllm serve ${MODEL} --port 8000 ${VLLM_EXTRA_ARGS}
+        --served-model-name ${MODEL}
+        --block-size ${VLLM_BLOCK_SIZE:-64}
+        --kv-cache-memory-bytes ${KV_CACHE_BYTES:-8G}
+        --gpu-memory-utilization ${GPU_MEM_UTIL:-0.10}
+        --max-model-len ${MAX_MODEL_LEN:-16384}
+        --enable-prefix-caching
+        --disable-access-log-for-endpoints=/health,/metrics,/v1/models,/v1/completions/render,/v1/chat/completions/render
+        --otlp-traces-endpoint http://127.0.0.1:4317
+        --kv-events-config '{"enable_kv_cache_events":true,"publisher":"zmq","endpoint":"tcp://*:5556","replay_endpoint":"tcp://*:5559","topic":"kv@127.0.0.1:8000@${MODEL}"}'
+
+  vllm-1:
+    <<: *vllm
+    container_name: vllm-1
+    depends_on:
+      vllm-0:
+        condition: service_healthy   # profile vLLM memory one replica at a time
+    environment:
+      <<: *vllm-env
+      PORT: "8001"
+      OTEL_SERVICE_NAME: vllm-1
+    command:
+      - bash
+      - -c
+      - exec vllm serve ${MODEL} --port 8001 ${VLLM_EXTRA_ARGS}
+        --served-model-name ${MODEL}
+        --block-size ${VLLM_BLOCK_SIZE:-64}
+        --kv-cache-memory-bytes ${KV_CACHE_BYTES:-8G}
+        --gpu-memory-utilization ${GPU_MEM_UTIL:-0.10}
+        --max-model-len ${MAX_MODEL_LEN:-16384}
+        --enable-prefix-caching
+        --disable-access-log-for-endpoints=/health,/metrics,/v1/models,/v1/completions/render,/v1/chat/completions/render
+        --otlp-traces-endpoint http://127.0.0.1:4317
+        --kv-events-config '{"enable_kv_cache_events":true,"publisher":"zmq","endpoint":"tcp://*:5557","replay_endpoint":"tcp://*:5560","topic":"kv@127.0.0.1:8001@${MODEL}"}'
+
+  # ----------------------------------------------------------------- router
+  epp:
+    image: ${EPP_IMAGE:-ghcr.io/llm-d/llm-d-router-endpoint-picker:main}
+    container_name: epp
+    profiles: ["router"]
+    network_mode: host
+    restart: unless-stopped
+    volumes:
+      # mount the DIRECTORY, not the file, so atomic `mv` rewrites of
+      # endpoints.yaml are seen by watchFile (a file bind-mount pins the inode)
+      - ./configs/epp:/etc/epp:ro
+    environment:
+      OTEL_SERVICE_NAME: llm-d-epp
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://127.0.0.1:4317
+      OTEL_EXPORTER_OTLP_INSECURE: "true"
+      OTEL_TRACES_SAMPLER: parentbased_always_on   # default is ratio 0.1
+    command:
+      - --config-file=/etc/epp/${EPP_CONFIG:-config.yaml}
+      - --pool-name=spark-nemotron
+      - --pool-namespace=bare-metal
+      - --grpc-port=9002
+      - --grpc-health-port=9003
+      - --metrics-port=9090
+      - --secure-serving=false
+      - --health-checking=true
+      - --v=${EPP_V:-3}
+
+  envoy:
+    image: ${ENVOY_IMAGE:-envoyproxy/envoy:v1.36.2}
+    container_name: envoy
+    profiles: ["router"]
+    network_mode: host
+    restart: unless-stopped
+    volumes:
+      - ./configs/envoy/envoy.yaml:/etc/envoy/envoy.yaml:ro
+    command:
+      - --service-node
+      - envoy-proxy
+      - --service-cluster
+      - llm-d-envoy
+      - --log-level
+      - warn
+      - --concurrency
+      - "4"
+      - -c
+      - /etc/envoy/envoy.yaml
+
+  # ------------------------------------------------------------------- obs
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.139.0
+    container_name: otel-collector
+    profiles: ["obs"]
+    network_mode: host
+    restart: unless-stopped
+    volumes:
+      - ./configs/otel/collector.yaml:/etc/otelcol/config.yaml:ro
+    command: ["--config=/etc/otelcol/config.yaml"]
+
+  jaeger:
+    image: jaegertracing/jaeger:2.11.0
+    container_name: jaeger
+    profiles: ["obs"]
+    restart: unless-stopped
+    ports:
+      - "16686:16686"
+      - "127.0.0.1:14317:4317"
+
+  prometheus:
+    image: prom/prometheus:v3.7.3
+    container_name: prometheus
+    profiles: ["obs"]
+    network_mode: host
+    restart: unless-stopped
+    volumes:
+      - ./configs/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --web.listen-address=:9091
+      - --enable-feature=exemplar-storage
+      - --storage.tsdb.retention.time=7d
+
+  grafana:
+    image: grafana/grafana:12.2.1
+    container_name: grafana
+    profiles: ["obs"]
+    network_mode: host
+    restart: unless-stopped
+    environment:
+      GF_SERVER_HTTP_PORT: "3000"
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+    volumes:
+      - ./configs/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./configs/grafana/dashboards:/var/lib/grafana/dashboards:ro

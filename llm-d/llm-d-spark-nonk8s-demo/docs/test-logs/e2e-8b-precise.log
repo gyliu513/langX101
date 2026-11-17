@@ -1,0 +1,49 @@
+model=nvidia/Llama-3.1-Nemotron-Nano-8B-v1
+
+[PASS] health vllm-0: GET /health -> 200
+[PASS] health vllm-1: GET /health -> 200
+[PASS] health envoy: LIVE
+[PASS] envoy->EPP gRPC health check: ext_proc::127.0.0.1:9002::health_flags::healthy
+[PASS] EPP /metrics (no auth in file mode): 629 lines
+[PASS] chat completion via Envoy:8081: 200 in 2.78s, served by ['vllm-0'], usage={'prompt_tokens': 26, 'total_tokens': 65, 'completion_tokens': 39, 'prompt_tokens_details': None}, text='A DGX Spark is a type of GPU-accelerated computing system designed by Dgx Techno'
+[PASS] streaming (SSE) via Envoy: 38 chunks, client TTFT 134 ms
+[PASS] /v1/completions via Envoy:  Paris. The capital of Germany is Berlin
+[PASS] prefix-cache affinity, short prefix (~2224 prompt tokens): requests per replica {'vllm-0': 0, 'vllm-1': 8}, vLLM prefix-cache hit tokens {'vllm-0': 0, 'vllm-1': 15232}
+[PASS] prefix-cache affinity, long prefix (~7224 prompt tokens): requests per replica {'vllm-0': 0, 'vllm-1': 8}, vLLM prefix-cache hit tokens {'vllm-0': 0, 'vllm-1': 52352}
+[PASS] EPP receives vLLM KV events over ZMQ: llm_d_epp_kv_cache_events_active_subscribers 2; llm_d_epp_kv_cache_events_messages_received_total{pod_identifier="default/vllm-0"} 1; llm_d_epp_kv_cache_events_messages_received_total{pod_identifier="default/vllm-1"} 11; llm_d_epp_kv_cache_events_pool_capacity 8
+[PASS] load spread (distinct prompts, 8 concurrent): requests per replica {'vllm-0': 9, 'vllm-1': 7}
+[PASS] endpoints.yaml hot reload (remove vllm-1): requests per replica {'vllm-0': 6, 'vllm-1': 0}
+[PASS] endpoints.yaml hot reload (restore vllm-1): requests per replica {'vllm-0': 6, 'vllm-1': 6}
+[PASS] replica down, endpoints file unchanged: status codes [200, 200, 200, 200, 200, 200, 200, 200, 200, 200] (non-200 = EPP still picks the dead endpoint)
+  restarting vllm-1 (waits for /health)...
+[PASS] Jaeger services: ['jaeger', 'llm-d-envoy', 'llm-d-epp', 'vllm-0', 'vllm-1']
+[PASS] client traceparent -> one trace across services: trace 4bf92f3577b34da6a3ce929d0e0e9cc5: 17 spans from ['llm-d-envoy', 'llm-d-epp', 'vllm-1']
+trace 4bf92f3577b34da6a3ce929d0e0e9cc5: 17 spans, services ['llm-d-envoy', 'llm-d-epp', 'vllm-1'], roots=2
+[llm-d-envoy] ingress  (933.0 ms)
+  [llm-d-envoy] async envoy.service.ext_proc.v3.ExternalProcessor.Process egress  (932.9 ms)
+  [llm-d-envoy] router original_destination_cluster egress  (928.0 ms)
+    [vllm-1] llm_request  (925.3 ms)
+[llm-d-epp] request  (932.9 ms)
+  [llm-d-epp] request_orchestration  (3.0 ms)
+    [llm-d-epp] tokenize  (2.7 ms)
+      [llm-d-epp] tokenize_render /v1/chat/completions/render  (2.7 ms)
+    [llm-d-epp] produce_precise_prefix_cache  (0.0 ms)
+    [llm-d-epp] run_scheduler_profile  (0.1 ms)
+      [llm-d-epp] filter_endpoints  (0.0 ms)
+      [llm-d-epp] scoring  (0.0 ms)
+        [llm-d-epp] scorer.prefix-cache-scorer  (0.0 ms)
+        [llm-d-epp] scorer.queue-scorer  (0.0 ms)
+        [llm-d-epp] scorer.kv-cache-utilization-scorer  (0.0 ms)
+      [llm-d-epp] pick_endpoints  (0.0 ms)
+    [llm-d-epp] pre_request_precise_prefix_cache  (0.0 ms)
+
+[PASS] Prometheus scrape targets up: {'envoy/envoy': 'up', 'llm-d-epp/epp': 'up', 'otel-collector/otel-collector': 'up', 'spanmetrics/': 'up', 'vllm/vllm-0': 'up', 'vllm/vllm-1': 'up'}
+[PASS] PromQL sum by (pod) (vllm:request_success_total): [('vllm-0', '33'), ('vllm-1', '1')]
+[PASS] PromQL histogram_quantile(0.5, sum by (le) (rate(vllm:time_to_first: [('', '0.087814')]
+[PASS] PromQL count({job="llm-d-epp", __name__=~".+"}): [('', '1068')]
+[PASS] PromQL sum by (service_name) (traces_spanmetrics_calls_total): [('vllm-0', '174'), ('vllm-1', '145'), ('llm-d-envoy', '486'), ('llm-d-epp', '2423')]
+[PASS] Grafana llm-d dashboards provisioned: llm-d Diagnostic Drill-Down, llm-d Failure & Saturation Indicators, llm-d Performance Dashboard, llm-d Router, llm-d vLLM Overview
+
+PASS: 23
+WARN: 0
+FAIL: 0

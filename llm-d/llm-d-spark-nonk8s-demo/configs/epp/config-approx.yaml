@@ -1,0 +1,39 @@
+# Approximate prefix-cache routing (no KV events, no tokenizer) — the upstream
+# guides/no-kubernetes-deployment/router/epp/config.yaml as-is (optimized-baseline
+# plugin set + file-discovery). Fallback when the model's KV events don't work.
+apiVersion: llm-d.ai/v1
+kind: EndpointPickerConfig
+plugins:
+  - name: file-discovery
+    type: file-discovery
+    parameters:
+      path: /etc/epp/endpoints.yaml
+      watchFile: true
+  - type: queue-scorer
+  - type: kv-cache-utilization-scorer
+  - type: prefix-cache-scorer
+  - type: no-hit-lru-scorer
+  - name: metrics-source
+    type: metrics-data-source
+  - name: metrics-extractor
+    type: core-metrics-extractor
+schedulingProfiles:
+  - name: default
+    plugins:
+      - pluginRef: queue-scorer
+        weight: 2
+      - pluginRef: kv-cache-utilization-scorer
+        weight: 2
+      - pluginRef: prefix-cache-scorer
+        weight: 3
+      - pluginRef: no-hit-lru-scorer
+        weight: 2
+dataLayer:
+  injectDefaults: false
+  discovery:
+    endpoints:
+      pluginRef: file-discovery
+  sources:
+    - pluginRef: metrics-source
+      extractors:
+        - pluginRef: metrics-extractor

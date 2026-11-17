@@ -1,0 +1,52 @@
+model=nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-FP8
+
+[PASS] health vllm-0: GET /health -> 200
+[PASS] health vllm-1: GET /health -> 200
+[PASS] health envoy: LIVE
+[PASS] envoy->EPP gRPC health check: ext_proc::127.0.0.1:9002::health_flags::healthy
+[PASS] EPP /metrics (no auth in file mode): 1163 lines
+[PASS] chat completion via Envoy:8081: 200 in 4.24s, served by ['vllm-0'], usage={'prompt_tokens': 27, 'total_tokens': 227, 'completion_tokens': 200, 'prompt_tokens_details': None}, text='The user asks: "In one sentence, what is a DGX Spark?" They want a concise answe'
+[PASS] streaming (SSE) via Envoy: 49 chunks, client TTFT 99 ms
+[PASS] /v1/completions via Envoy:  Paris."
+
+We must output exactly that sentence
+[WARN] prefix-cache routing, short prefix (~2461 prompt tokens): AFFINITY WITHOUT ANY CACHE BENEFIT: requests per replica {'vllm-0': 0, 'vllm-1': 8}, vLLM prefix-cache hit tokens {'vllm-0': 0, 'vllm-1': 0}
+[PASS] prefix-cache routing, long prefix (~8461 prompt tokens): real cache-aware routing: requests per replica {'vllm-0': 0, 'vllm-1': 8}, vLLM prefix-cache hit tokens {'vllm-0': 0, 'vllm-1': 29568}
+[PASS] EPP receives vLLM KV events over ZMQ: llm_d_epp_kv_cache_events_active_subscribers 2; llm_d_epp_kv_cache_events_messages_received_total{pod_identifier="default/vllm-0"} 9; llm_d_epp_kv_cache_events_messages_received_total{pod_identifier="default/vllm-1"} 9; llm_d_epp_kv_cache_events_pool_capacity 8; llm_d_epp_kv_cache_events_stores_skipped_total{cache_kind="mamba",reason="unsupported_cache_kind"} 180
+[PASS] load spread (distinct prompts, 8 concurrent): requests per replica {'vllm-0': 8, 'vllm-1': 8}
+[PASS] endpoints.yaml hot reload (remove vllm-1): requests per replica {'vllm-0': 6, 'vllm-1': 0}
+[PASS] endpoints.yaml hot reload (restore vllm-1): requests per replica {'vllm-0': 6, 'vllm-1': 6}
+[PASS] replica down, endpoints file unchanged: status codes [200, 200, 200, 200, 200, 200, 200, 200, 200, 200] (non-200 = EPP still picks the dead endpoint)
+  restarting vllm-1 (waits for /health)...
+[PASS] Jaeger services: ['jaeger', 'llm-d-envoy', 'llm-d-epp', 'vllm-0', 'vllm-1']
+[PASS] Envoy -> EPP -> vLLM in ONE trace (no client traceparent): trace 88b057f6dcdc67d94eda1418582eeb73: 17 spans, services ['llm-d-envoy', 'llm-d-epp', 'vllm-1'], roots ['llm-d-envoy:ingress']
+trace 88b057f6dcdc67d94eda1418582eeb73: 17 spans, services ['llm-d-envoy', 'llm-d-epp', 'vllm-1'], roots=1
+[llm-d-envoy] ingress  (371.7 ms)
+  [llm-d-envoy] async envoy.service.ext_proc.v3.ExternalProcessor.Process egress  (358.8 ms)
+    [llm-d-epp] request  (340.7 ms)
+      [llm-d-epp] request_orchestration  (40.2 ms)
+        [llm-d-epp] tokenize  (34.6 ms)
+          [llm-d-epp] tokenize_render /v1/chat/completions/render  (32.2 ms)
+        [llm-d-epp] produce_precise_prefix_cache  (0.5 ms)
+        [llm-d-epp] run_scheduler_profile  (0.7 ms)
+          [llm-d-epp] filter_endpoints  (0.3 ms)
+          [llm-d-epp] scoring  (0.0 ms)
+            [llm-d-epp] scorer.prefix-cache-scorer  (0.0 ms)
+            [llm-d-epp] scorer.queue-scorer  (0.0 ms)
+            [llm-d-epp] scorer.kv-cache-utilization-scorer  (0.0 ms)
+          [llm-d-epp] pick_endpoints  (0.2 ms)
+        [llm-d-epp] pre_request_precise_prefix_cache  (0.0 ms)
+  [llm-d-envoy] router original_destination_cluster egress  (290.7 ms)
+    [vllm-1] llm_request  (287.0 ms)
+
+[WARN] client traceparent: Envoy + EPP + vLLM under the client's trace id, single root: 17 spans, services ['llm-d-envoy', 'llm-d-epp', 'vllm-0'], roots ['llm-d-envoy:ingress', 'llm-d-epp:request'] (2 roots = EPP prefers the client header over Envoy's ext_proc span context)
+[PASS] Prometheus scrape targets up: {'envoy/envoy': 'up', 'llm-d-epp/epp': 'up', 'otel-collector/otel-collector': 'up', 'spanmetrics/': 'up', 'vllm/vllm-0': 'up', 'vllm/vllm-1': 'up'}
+[PASS] PromQL sum by (pod) (vllm:request_success_total): [('vllm-0', '120'), ('vllm-1', '1')]
+[PASS] PromQL histogram_quantile(0.5, sum by (le) (rate(vllm:time_to_first: [('', '0.093417')]
+[PASS] PromQL count({job="llm-d-epp", __name__=~".+"}): [('', '1069')]
+[PASS] PromQL sum by (service_name) (traces_spanmetrics_calls_total): [('vllm-0', '329'), ('vllm-1', '311'), ('llm-d-envoy', '1239'), ('llm-d-epp', '6798')]
+[PASS] Grafana llm-d dashboards provisioned: llm-d Diagnostic Drill-Down, llm-d Failure & Saturation Indicators, llm-d Performance Dashboard, llm-d Router, llm-d vLLM Overview
+
+PASS: 22
+WARN: 2
+FAIL: 0

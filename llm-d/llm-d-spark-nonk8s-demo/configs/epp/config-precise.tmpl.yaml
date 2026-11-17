@@ -1,0 +1,77 @@
+# TEMPLATE: scripts/up.sh renders this to config-precise.yaml (envsubst MODEL).
+# Precise (KV-event driven) prefix-cache routing, no Kubernetes.
+# = upstream guides/no-kubernetes-deployment/router/epp/config.yaml
+# + guides/precise-prefix-cache-routing plugin set, adapted to file-discovery.
+apiVersion: llm-d.ai/v1
+kind: EndpointPickerConfig
+plugins:
+  - name: file-discovery
+    type: file-discovery
+    parameters:
+      path: /etc/epp/endpoints.yaml
+      watchFile: true
+
+  - name: metrics-source
+    type: metrics-data-source
+  - name: metrics-extractor
+    type: core-metrics-extractor
+
+  # Tokenize on the vLLM replicas themselves (/v1/*/render), round-robin over
+  # the file-discovered endpoints.
+  - type: token-producer
+    parameters:
+      modelName: ${MODEL}
+      vllm:
+        endpointDiscovery:
+          attemptTimeout: 2s
+
+  - type: endpoint-notification-source
+  - type: precise-prefix-cache-producer
+    parameters:
+      tokenProcessorConfig:
+        blockSizeTokens: 64
+        hashAlgorithm: xxh64
+      speculativeIndexing: true
+      indexerConfig:
+        kvBlockIndexConfig:
+          enableMetrics: true
+      kvEventsConfig:
+        engineType: vllm
+        topicFilter: "kv@"
+        concurrency: 8
+        discoverPods: true
+        tracing: true
+        podDiscoveryConfig:
+          socketPort: 5556
+          replaySocketPort: 5559
+
+  - type: prefix-cache-scorer
+    parameters:
+      prefixMatchInfoProducerName: precise-prefix-cache-producer
+  - type: queue-scorer
+  - type: kv-cache-utilization-scorer
+  - type: max-score-picker
+
+schedulingProfiles:
+  - name: default
+    plugins:
+      - pluginRef: prefix-cache-scorer
+        weight: 3
+      - pluginRef: queue-scorer
+        weight: 2
+      - pluginRef: kv-cache-utilization-scorer
+        weight: 2
+      - pluginRef: max-score-picker
+
+dataLayer:
+  injectDefaults: false
+  discovery:
+    endpoints:
+      pluginRef: file-discovery
+  sources:
+    - pluginRef: metrics-source
+      extractors:
+        - pluginRef: metrics-extractor
+    - pluginRef: endpoint-notification-source
+      extractors:
+        - pluginRef: precise-prefix-cache-producer
