@@ -54,7 +54,7 @@ English version: [`README.md`](README.md)
 | EPP 在**没有 kubeconfig、没有 CRD** 的情况下运行（`file-discovery`） | ✅ `EPP starting (file discovery mode)` |
 | OpenAI chat、completions 和流式请求经过 Envoy → EPP → vLLM | ✅ |
 | Nemotron 的推理内容被拆分为 `reasoning` / `content`（`nemotron_v3` parser） | ✅ |
-| 基于通过 ZMQ 传来的**真实 vLLM KV 事件**做精确 prefix cache 路由 | ✅ 适用于 ≥ 1 个引擎 block 的 prompt；⚠️ 见 [§10.1](#101-对-hybrid-mamba-模型precise-路由带来亲和性却没有任何缓存收益) |
+| 基于通过 ZMQ 传来的**真实 vLLM KV 事件**做精确 prefix cache 路由 | ✅ 适用于 ≥ 1 个引擎 block 的 prompt；⚠️ 见 [§10.1](#101-通用问题speculative-索引忽略引擎-block-大小precise-路由只有亲和没有缓存收益) |
 | 不同 prompt 在 2 个 replica 间的负载分摊 | ✅ 8 / 8 |
 | 编辑 `endpoints.yaml` 即可热加载 endpoint 池 | ✅ 无需重启 |
 | 已停止的 replica 即使仍在文件中，也会被避开 | ✅ 10 / 10 个请求返回 200 |
@@ -313,7 +313,7 @@ gyliu@spark-3bee:~/llm-d-nonk8s$ du -sh ~/llm-d-cache/huggingface/hub/models--nv
 | 模型 | 架构 | 为什么用它 |
 | --- | --- | --- |
 | `NVIDIA-Nemotron-3-Nano-30B-A3B-FP8`（**默认**） | Hybrid Mamba-2 + MoE（混合专家）+ attention，3B 激活参数，FP8 | 当前的 Nemotron，也是 NVIDIA 为 DGX Spark 推荐的模型。在 GB10 上单流 48 tok/s |
-| `Llama-3.1-Nemotron-Nano-8B-v1` | 纯 transformer，BF16 | 对比参照：展示引擎 block 大小为 64 时精确 prefix 路由的效果（[§10.1](#101-对-hybrid-mamba-模型precise-路由带来亲和性却没有任何缓存收益)） |
+| `Llama-3.1-Nemotron-Nano-8B-v1` | 纯 transformer，BF16 | 对比参照：展示引擎 block 大小为 64 时精确 prefix 路由的效果（[§10.1](#101-通用问题speculative-索引忽略引擎-block-大小precise-路由只有亲和没有缓存收益)） |
 
 vLLM 以 `HF_HUB_OFFLINE=1`（在 `compose.yaml` 中设置）使用 HF 缓存，所以 replica 启动时
 从不访问 Hub。
@@ -507,7 +507,7 @@ vLLM 的命令行参数，来自 [`compose.yaml`](compose.yaml)：
 
 | Flag | 原因 |
 | --- | --- |
-| `--block-size 64` | 希望路由器和引擎的 block 对齐。**对这个 hybrid 模型会被覆盖为 4224**，见下面的日志和 [§10.1](#101-对-hybrid-mamba-模型precise-路由带来亲和性却没有任何缓存收益) |
+| `--block-size 64` | 希望路由器和引擎的 block 对齐。**对这个 hybrid 模型会被覆盖为 4224**，见下面的日志和 [§10.1](#101-通用问题speculative-索引忽略引擎-block-大小precise-路由只有亲和没有缓存收益) |
 | `--kv-cache-memory-bytes 8G` + `--gpu-memory-utilization 0.10` | 统一内存的容量配置（GB10 上两个都需要） |
 | `--enable-prefix-caching` | 对这个模型，vLLM 会把 Mamba cache 模式切换为 `all`（实验性） |
 | `--kv-events-config '{"enable_kv_cache_events":true,"publisher":"zmq","endpoint":"tcp://*:5556","replay_endpoint":"tcp://*:5559","topic":"kv@127.0.0.1:8000@<model>"}'` | 供 EPP 使用的 KV 事件。topic **必须**与 endpoint 条目的 `address:port` 一致 |
@@ -786,7 +786,7 @@ FAIL: 0
 
 如何解读这些结果：
 
-- **两个 WARN 都是真实存在的差距**，分析见 [§10.1](#101-对-hybrid-mamba-模型precise-路由带来亲和性却没有任何缓存收益)
+- **两个 WARN 都是真实存在的差距**，分析见 [§10.1](#101-通用问题speculative-索引忽略引擎-block-大小precise-路由只有亲和没有缓存收益)
   和 [§10.2](#102-客户端-traceparent-会把-trace-拆成两个-root)。
 - 长 prefix 得到了真正的缓存感知路由：8 个请求中有 7 个各自复用了 4224 个已缓存 token
   （7 × 4224 = 29,568）。
@@ -1048,7 +1048,7 @@ gyliu@spark-3bee:~/llm-d-nonk8s$ docker compose --profile model --profile router
 
 | # | 差距 | 严重程度 | 修复位置 | 草稿 |
 | --- | --- | --- | --- | --- |
-| 10.1 | 对 hybrid Mamba 模型，precise 路由带来亲和性却没有任何缓存收益（speculative 索引忽略了 4224 token 的引擎 block） | **高** | llm-d-router | 01（本地草稿） |
+| 10.1 | **通用问题**：speculative 索引忽略引擎 block 大小，只要实际引擎 block > `blockSizeTokens` 就会出现只有亲和、没有缓存收益（hybrid Mamba 模型的 4224 token block 最严重） | **高** | llm-d-router | 01（本地草稿） |
 | 10.2 | 客户端 `traceparent` 会把 trace 拆成两个 root | 中 | llm-d-router | 02（本地草稿） |
 | 10.3 | no-k8s 指南没有可观测性、没有 precise-prefix 路径，也没有 compose 文件 | 中 | llm-d（guides） | 03（本地草稿） |
 | 10.4 | Grafana 的 "Scheduler Health" 硬编码了 Helm job 名称 | 低 | llm-d（dashboards） | 04（本地草稿） |
@@ -1057,14 +1057,39 @@ gyliu@spark-3bee:~/llm-d-nonk8s$ docker compose --profile model --profile router
 | 10.7 | 没有 file-discovery / 非 k8s 对应实现的功能 | 中 | llm-d-router、llm-d | 已有 issue |
 | 10.8 | 单机限制（DGX Spark） | 信息 | — | — |
 
-### 10.1 对 hybrid Mamba 模型，precise 路由带来亲和性却没有任何缓存收益
+### 10.1 通用问题：speculative 索引忽略引擎 block 大小，precise 路由只有亲和没有缓存收益
 
-**问题是什么。** 对于 `NemotronHForCausalLM`，vLLM 会把 attention block 大小强制设为 **4224 token**
-（§4.6），因此引擎只能以 4224 token 为单位复用 prefix。而 precise producer 的
-**speculative indexing**（`speculativeIndexing: true`，上游指南中的取值）会立刻把被路由 prompt 的每个
-**64 token** 路由器 block 都记录为已缓存在该 endpoint 上，并不等待 KV 事件。于是对一个 2,460 token
-的 prompt，EPP 会报告 38 / 38 的 block 匹配（§7.4），并把所有共享这个 prefix 的请求都固定到同一个
-replica 上，而 vLLM 每次都在重新计算整个 prompt。
+> **一句话：** 这不是 Nemotron 特有的问题，而是 llm-d-router precise producer 的一个通用缺陷。只要某个
+> endpoint **实际生效**的引擎 block 大小 `E` 大于路由器的 `blockSizeTokens`（`R`），同时开启
+> `speculativeIndexing: true`（上游指南的默认取值），路由器就会把引擎根本无法复用的 token 记成"已缓存"。
+> hybrid Mamba 模型把 `E` 放大到 4224，是这个缺陷最严重、最容易触发的场景，但不是唯一的场景。
+
+**问题是什么。** precise 路由靠路由器自己维护的一本"账"（KV block 索引）来判断哪个 replica 缓存了哪些
+prefix。这本账有两个来源：
+
+| 来源 | 什么时候写入 | 粒度 | 是否考虑引擎 block 大小 |
+| --- | --- | --- | --- |
+| 真实 KV 事件（`BlockStored`） | vLLM 真正存下一个完整的引擎 block 之后 | 引擎 block（这里是 4224），再展开成 4224 / 64 = 66 个路由器 key（§7.3） | **是**，正确 |
+| speculative 条目 | EPP 刚做完路由决定、请求还没到 vLLM 时 | 路由器 block（64），prompt 有多少个 64 token 块就记多少个 | **否**，这就是 bug |
+
+speculative 条目的本意是填补"请求刚发出、KV 事件还没回来"这段空窗，前提假设是：**路由过去的内容，
+引擎很快就会以同样的粒度缓存下来**。当 `E = R` 时这个假设成立（见下面 8B 那一行）；当 `E > R` 时，
+引擎只能以 `E` 为单位复用 prefix，假设就不成立了。
+
+对于 `NemotronHForCausalLM`，vLLM 为了让一个 attention page 能装下 Mamba 状态，会**静默地**把
+`--block-size 64` 覆盖为 **4224 token**（§4.6，只打一行 INFO 日志）。于是对一个 2,460 token 的 prompt：
+
+- 引擎侧：2,460 < 4,224，凑不满一个 block，**永远不可能命中缓存**，也不会发出任何 `BlockStored` 事件。
+- 路由器侧：speculative 立刻记下 ⌊2460 / 64⌋ = 38 个 block，下一个同 prefix 请求查到 **38 / 38 全部命中**
+  （§7.4），prefix 打分器给出满分。
+- 结果：所有共享这个 prefix 的请求被钉到同一个 replica，vLLM 每次都在完整地重新计算整个 prompt。
+
+**代码层面的原因（与模型无关）。** `pkg/epp/framework/plugins/requesthandling/dataproducer/preciseprefixcache/prerequest.go`
+中的 `PreRequest`（在 llm-d-router `main` 的 `647ca7ca` 上核对过）对选中的 endpoint 执行
+`index.Add(ctx, nil, promptKeys, []kvblock.PodEntry{{..., Speculative: true}})`。`promptKeys` 是按
+`blockSizeTokens` 切出来的**全部**路由器 key。这条路径既不查询该 endpoint 的引擎 block 大小，也不做取整。
+路由器其实已经知道 `E`：`groupCatalog` 从事件里学到了 `BlockSize`，`vllm:cache_config_info{block_size}`
+也被抓取了，只是 speculative 路径没有用到。所以这个缺陷的触发条件只有一个：**`E > R`**，跟模型是谁无关。
 
 **证据：一次只改变 `speculativeIndexing` 的 A/B 测试，每次运行都使用新的随机 prefix，确保没有残留缓存：**
 
@@ -1104,20 +1129,80 @@ FAIL: 0
 | 30B hybrid，`speculativeIndexing: false` | 5 / 3，命中 0 个 token（正确：没有可缓存的内容） | 8 / 0，命中 29,568 个 token（来自真实 KV 事件） |
 | 8B 纯 transformer（引擎 block 为 64），`true` | 8 / 0，命中 **15,232** 个 token | 8 / 0，命中 52,352 个 token |
 
-8B 这一行说明：当引擎 block 等于路由器 block 时，同样的配置能按设计正常工作。所以问题具体在于
-**speculative 条目忽略了引擎 block 大小**。真实的 KV 事件处理是正确的：关闭 speculation 后，长
-prefix 仍然能依靠它们获得亲和性。
+8B 这一行说明：当引擎 block 等于路由器 block 时，同样的配置能按设计正常工作。关闭 speculation 后，长
+prefix 仍然能靠真实 KV 事件获得亲和性和真实命中。所以出问题的**只有 speculative 路径**。
 
-**影响。** 大多数 chat 和 RAG（检索增强生成）的 prompt 都短于 4,224 token，因此对 hybrid 模型
-（Nemotron-3/NemotronH，以及很可能其他 Mamba hybrid 模型）来说，precise 路由多数时候只会造成
-**负载倾斜，却没有缓存收益**。
+**为什么说这是通用问题。**
 
-**本 demo 的变通办法。** 对 hybrid 模型使用 `config-precise-nospec.yaml`。
+1. **过度登记可以量化，而且只取决于 `E`、`R`、`N`。** 设 prompt 长度为 `N`，路由器 speculative 登记
+   ⌊N/R⌋·R 个 token，引擎实际能复用的只有 ⌊N/E⌋·E 个 token。差值最多接近 `E − R`：
 
-**修复（建议）。** 把 speculative 插入限制在 endpoint 的引擎 block 粒度上。路由器其实已经掌握了这一信息
-（来自事件的 `groupCatalog`；`vllm:cache_config_info{block_size}`）。对短于一个引擎 block 的 prompt
-不做推测，或者给 speculative 条目加上 PR #2899 为事件条目引入的同样的 `RetrievalSpan`。相关：
-llm-d-router#1702 和 #2899/#2889，但都没有覆盖这种情况。
+   | prompt 长度 `N` | 路由器认为已缓存 | 引擎实际能复用（`E` = 4224） | 虚报比例 |
+   | --- | --- | --- | --- |
+   | 2,460（本次实测） | 2,432（38 块） | 0 | **100%** |
+   | 4,000 | 3,968 | 0 | **100%** |
+   | 6,000 | 5,952 | 4,224 | 29% |
+   | 8,461（本次实测） | 8,448 | 8,448 | ≈ 0% |
+
+   所有 `N < E` 的 prompt 都是 100% 虚报；更长的 prompt，尾部不足一个 `E` 的部分也会被虚报，prefix 分数
+   虚高，各 replica 之间的排序可能因此出错。只有 `N` 恰好接近 `E` 的整数倍时才不受影响。
+
+2. **`E > R` 在实际部署中很常见，而且往往不是运维人员主动选的。**
+   - **hybrid / SSM / 线性注意力模型。** vLLM 会根据 Mamba（或线性注意力）状态的大小自动放大 attention
+     block，用户传的 `--block-size` 会被覆盖。这一类包括 NemotronH / Nemotron-3、Granite-4.0-H、Jamba、
+     Bamba、Falcon-H1、Zamba2、Qwen3-Next 等，放大后的具体数值随模型、dtype 和并行方式而变。本次只实测了
+     Nemotron-3-Nano-30B-A3B。hybrid 架构正是新模型的主流方向之一，所以受影响的范围会越来越大。
+   - **硬件或 kernel 约束。** 上游指南自己就有例子：TPU v6e 用 `--block-size=64` 会编译失败，只能用 256
+     （`router/tpu-v6e.values.yaml`），因此指南要求手动把 `blockSizeTokens` 也改成 256。这说明 `E = R`
+     完全靠运维人员手工保持一致，任何一处漏改都会落入 `E > R`。
+   - **异构 endpoint 池。** 一个 EPP 只有一个 `blockSizeTokens`，但池子里的 endpoint 可能跑在不同的硬件上、
+     用不同的 vLLM 版本，或者在 P/D 分离中 prefill 和 decode 的配置不同。只要有一个 endpoint 的 `E` 和
+     `R` 不同，靠配置对齐就做不到，只能由路由器按 endpoint 分别处理。
+3. **与部署方式无关。** 本次运行没有用 Kubernetes（file-discovery），但 precise producer 的插件代码和配置
+   在 Kubernetes（InferencePool）下完全一样，上游 `guides/precise-prefix-cache-routing` 的 vLLM、SGLang、
+   TPU 三套 values 都是 `speculativeIndexing: true`。
+4. **很难被发现。** vLLM 只打一行 INFO 日志；EPP 的 trace 和指标显示的是"匹配度很高"，看上去一切正常。
+   唯一能暴露问题的信号是 vLLM 侧的 `vllm:prefix_cache_hits_total` 一直不涨，而一般人不会把它和路由器的
+   匹配数放在一起对比。
+5. **流量越密，钉得越牢。** 每次路由都会重新登记 speculative 条目（默认 TTL 2 秒，`defaultSpeculativeTTL`）。
+   只要同 prefix 请求之间的间隔小于 TTL，亲和性就会一直延续下去，不会自然衰减。
+
+**影响。** 大多数 chat、agent 和 RAG（检索增强生成）的 prompt 都短于 4,224 token，所以在 hybrid 模型上，
+precise 路由多数时候只会造成**负载倾斜，却没有缓存收益**（本次实测 8 / 0），比单纯按负载分配还差：
+prefix 满分把请求钉在一台机器上，抵消了 queue 和 kv-utilization 打分器的负载均衡作用。负载倾斜对 TTFT 和
+排队时间的具体影响本次没有单独测量。
+
+**如何判断自己的部署是否受影响。**
+
+```console
+# 每个 vLLM endpoint 实际生效的 block 大小（不要只看启动参数 --block-size）
+curl -s <endpoint>/metrics | grep -E '^vllm:cache_config_info' | grep -oE 'block_size="[0-9]+"'
+docker logs <vllm> 2>&1 | grep "Setting attention block size"
+# 对比 EPP 配置里的 tokenProcessorConfig.blockSizeTokens 和 speculativeIndexing
+```
+
+只要某个 endpoint 的 `block_size` 大于 `blockSizeTokens`，并且开启了 `speculativeIndexing`，就受影响。
+`vllm:cache_config_info` 可能有多行（本例为 4224 和 64），以 attention group 的值为准，也就是
+`Setting attention block size` 日志里的那个数。
+
+**本 demo 的变通办法。** 对 hybrid 模型使用 `config-precise-nospec.yaml`（`speculativeIndexing: false`）：
+短 prefix 恢复负载均衡，长 prefix 仍然靠真实 KV 事件得到亲和和命中。代价是失去 speculative 带来的
+"事件回来之前的亲和"，对 `E = R` 的模型没有必要关闭。
+
+**修复（建议，按优先级）。**
+
+1. **按 endpoint 的引擎 block 大小向下取整。** speculative 登记时只登记 ⌊N/E⌋·E 个 token 对应的路由器
+   key；不足一个引擎 block 的 prompt 不登记。`E` 从 `groupCatalog` 或 `vllm:cache_config_info` 获取。
+2. 或者让 speculative 条目也带上 `RetrievalSpan = E / R`，与 PR #2899 给事件条目加的字段保持一致，由
+   匹配逻辑统一处理。
+3. **可观测性兜底。** 当学到的引擎 block 大小与 `blockSizeTokens` 不一致时，EPP 打一条 warning 并暴露一个
+   指标，让 `E ≠ R` 不再是静默的。
+4. 修复之前，在上游指南里写明：**只有当每个 endpoint 实际生效的 block 大小都等于 `blockSizeTokens` 时，
+   `speculativeIndexing: true` 才是安全的**，并给出上面的检查命令；hybrid 模型应设为 `false`。
+
+相关：llm-d-router#1702（speculative 条目对 HMA group 不感知，问题在 group id，不是 block 大小）、
+#2899 / #2889（只给事件条目加了 `RetrievalSpan`）、#3788。它们都没有覆盖"speculative 条目登记了引擎
+无法缓存的 block"这种情况。草稿：[`docs/issues/01-…`](docs/issues/01-router-speculative-index-ignores-engine-block-size.md)。
 
 ### 10.2 客户端 `traceparent` 会把 trace 拆成两个 root
 
