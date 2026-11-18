@@ -55,7 +55,7 @@ output**, captured while running the steps. Long output is trimmed with `...`.
 | EPP runs with **no kubeconfig, no CRDs** (`file-discovery`) | ✅ `EPP starting (file discovery mode)` |
 | OpenAI chat, completions and streaming through Envoy → EPP → vLLM | ✅ |
 | Nemotron reasoning split into `reasoning` / `content` (`nemotron_v3` parser) | ✅ |
-| Precise prefix-cache routing from **real vLLM KV events** over ZMQ | ✅ for prompts ≥ 1 engine block; ⚠️ see [§10.1](#101-precise-routing-gives-affinity-with-zero-cache-benefit-for-hybrid-mamba-models) |
+| Precise prefix-cache routing from **real vLLM KV events** over ZMQ | ✅ for prompts ≥ 1 engine block; ⚠️ see [§10.1](#101-general-speculative-indexing-ignores-the-engine-block-size-so-precise-routing-gives-affinity-with-no-cache-benefit) |
 | Load spreading of distinct prompts across 2 replicas | ✅ 8 / 8 |
 | Endpoint pool hot reload by editing `endpoints.yaml` | ✅ no restart |
 | A stopped replica is avoided even though it is still listed in the file | ✅ 10 / 10 requests return 200 |
@@ -318,7 +318,7 @@ Setting `HF_TOKEN` would speed the downloads up but is not required.)
 | Model | Architecture | Why it is here |
 | --- | --- | --- |
 | `NVIDIA-Nemotron-3-Nano-30B-A3B-FP8` (**default**) | Hybrid Mamba-2 + MoE + attention, 3B active, FP8 | The current Nemotron, and what NVIDIA recommends for DGX Spark. 48 tok/s single-stream on GB10 |
-| `Llama-3.1-Nemotron-Nano-8B-v1` | Pure transformer, BF16 | Comparison point: shows what precise prefix routing does when the engine block size is 64 ([§10.1](#101-precise-routing-gives-affinity-with-zero-cache-benefit-for-hybrid-mamba-models)) |
+| `Llama-3.1-Nemotron-Nano-8B-v1` | Pure transformer, BF16 | Comparison point: shows what precise prefix routing does when the engine block size is 64 ([§10.1](#101-general-speculative-indexing-ignores-the-engine-block-size-so-precise-routing-gives-affinity-with-no-cache-benefit)) |
 
 vLLM stores the HF cache with `HF_HUB_OFFLINE=1` (set in `compose.yaml`), so the replicas
 never call the Hub at start-up.
@@ -514,7 +514,7 @@ The vLLM command line, from [`compose.yaml`](compose.yaml):
 
 | Flag | Why |
 | --- | --- |
-| `--block-size 64` | Wanted router/engine block alignment. **Overridden to 4224 for this hybrid model**, see the log below and [§10.1](#101-precise-routing-gives-affinity-with-zero-cache-benefit-for-hybrid-mamba-models) |
+| `--block-size 64` | Wanted router/engine block alignment. **Overridden to 4224 for this hybrid model**, see the log below and [§10.1](#101-general-speculative-indexing-ignores-the-engine-block-size-so-precise-routing-gives-affinity-with-no-cache-benefit) |
 | `--kv-cache-memory-bytes 8G` + `--gpu-memory-utilization 0.10` | Unified-memory sizing (both needed on GB10) |
 | `--enable-prefix-caching` | For this model, vLLM switches the Mamba cache mode to `all` (experimental) |
 | `--kv-events-config '{"enable_kv_cache_events":true,"publisher":"zmq","endpoint":"tcp://*:5556","replay_endpoint":"tcp://*:5559","topic":"kv@127.0.0.1:8000@<model>"}'` | KV events for the EPP. The topic **must** match the `address:port` of the endpoint entry |
@@ -795,7 +795,7 @@ FAIL: 0
 
 How to read the results:
 
-- **Both WARNs are real gaps**, analysed in [§10.1](#101-precise-routing-gives-affinity-with-zero-cache-benefit-for-hybrid-mamba-models)
+- **Both WARNs are real gaps**, analysed in [§10.1](#101-general-speculative-indexing-ignores-the-engine-block-size-so-precise-routing-gives-affinity-with-no-cache-benefit)
   and [§10.2](#102-a-client-traceparent-splits-the-trace-into-two-roots).
 - The long prefix gets real cache-aware routing: 7 of the 8 requests each reused 4224 cached
   tokens (7 × 4224 = 29,568).
@@ -1065,7 +1065,7 @@ workaround is needed; **Low** = cosmetic or documentation.
 
 | # | Gap | Severity | Where to fix | Draft |
 | --- | --- | --- | --- | --- |
-| 10.1 | Precise routing gives affinity with zero cache benefit for hybrid Mamba models (speculative index ignores the 4224-token engine block) | **High** | llm-d-router | 01 (local draft) |
+| 10.1 | **General**: speculative indexing ignores the engine block size, so any endpoint whose effective block > `blockSizeTokens` gets affinity with no cache benefit (worst on hybrid Mamba models, 4224-token blocks) | **High** | llm-d-router | 01 (local draft) |
 | 10.2 | A client `traceparent` splits the trace into two roots | Medium | llm-d-router | 02 (local draft) |
 | 10.3 | The no-k8s guide has no observability, no precise-prefix path and no compose file | Medium | llm-d (guides) | 03 (local draft) |
 | 10.4 | Grafana "Scheduler Health" hard-codes a Helm job name | Low | llm-d (dashboards) | 04 (local draft) |
@@ -1074,15 +1074,45 @@ workaround is needed; **Low** = cosmetic or documentation.
 | 10.7 | Features with no file-discovery / non-k8s equivalent | Medium | llm-d-router, llm-d | existing issues |
 | 10.8 | Single-box constraints (DGX Spark) | Info | — | — |
 
-### 10.1 Precise routing gives affinity with zero cache benefit for hybrid Mamba models
+### 10.1 General: speculative indexing ignores the engine block size, so precise routing gives affinity with no cache benefit
 
-**What.** For `NemotronHForCausalLM`, vLLM forces the attention block size to **4224 tokens**
-(§4.6), so the engine reuses prefixes only in 4224-token units. The precise producer's
-**speculative indexing** (`speculativeIndexing: true`, the upstream guide's value) records every
-**64-token** router block of a routed prompt as cached on that endpoint, right away, without
-waiting for KV events. For a 2,460-token prompt the EPP then reports a 38 / 38 block match
-(§7.4) and pins every request sharing that prefix to one replica, while vLLM recomputes the
-whole prompt each time.
+> **In one line:** this is not a Nemotron-specific quirk. It is a general defect in the llm-d-router
+> precise producer. Whenever an endpoint's **effective** engine block size `E` is larger than the
+> router's `blockSizeTokens` (`R`), and `speculativeIndexing: true` is set (the upstream guide's
+> value), the router records as "cached" tokens that the engine can never reuse. Hybrid Mamba
+> models, which push `E` to 4224, are the most severe and easiest way to hit it, but not the only one.
+
+**What.** Precise routing decides which replica holds which prefix from the router's own ledger
+(the KV block index). The ledger has two writers:
+
+| Writer | When it writes | Granularity | Respects engine block size? |
+| --- | --- | --- | --- |
+| Real KV events (`BlockStored`) | After vLLM has stored a full engine block | Engine block (4224 here), expanded to 4224 / 64 = 66 router keys (§7.3) | **Yes**, correct |
+| Speculative entries | Right after the EPP routes, before the request reaches vLLM | Router block (64): one entry per 64-token chunk of the prompt | **No**, this is the bug |
+
+Speculative entries exist to cover the gap before KV events arrive. They assume that **what was
+routed will soon be cached by the engine at the same granularity**. That holds when `E = R` (the
+8B row below). It breaks when `E > R`, because the engine only reuses prefixes in whole `E` units.
+
+For `NemotronHForCausalLM`, vLLM **silently** overrides `--block-size 64` to **4224 tokens** so that
+one attention page can hold the Mamba state (§4.6; the only trace is one INFO log line). So for a
+2,460-token prompt:
+
+- Engine: 2,460 < 4,224, so not even one block fills. It **can never hit the cache** and never emits
+  a `BlockStored` event.
+- Router: speculative indexing immediately records ⌊2460 / 64⌋ = 38 blocks. The next request with
+  the same prefix sees a **38 / 38 match** (§7.4) and the prefix scorer gives full marks.
+- Result: every request that shares the prefix is pinned to one replica, and vLLM recomputes the
+  whole prompt every time.
+
+**Root cause in code (model-independent).** `PreRequest` in
+`pkg/epp/framework/plugins/requesthandling/dataproducer/preciseprefixcache/prerequest.go` (checked on
+llm-d-router `main` at `647ca7ca`) calls
+`index.Add(ctx, nil, promptKeys, []kvblock.PodEntry{{..., Speculative: true}})` for the chosen
+endpoint. `promptKeys` is **every** router key cut at `blockSizeTokens`. This path never looks up
+the endpoint's engine block size and never rounds down. The router already knows `E`: `groupCatalog`
+learns `BlockSize` from events, and `vllm:cache_config_info{block_size}` is scraped. The speculative
+path just doesn't use it. So the only trigger is **`E > R`**, whatever the model.
 
 **Evidence: an A/B test with only `speculativeIndexing` changed, and a fresh random prefix per
 run so no cache is left over:**
@@ -1124,21 +1154,90 @@ FAIL: 0
 | 8B pure transformer (engine block 64), `true` | 8 / 0, **15,232** hit tokens | 8 / 0, 52,352 hit tokens |
 
 The 8B row shows the same config working as designed when the engine block equals the router
-block. So the problem is specifically **speculative entries ignoring the engine block size**.
-Real KV events are handled correctly: with speculation off, the long prefix still gets affinity
-from them.
+block. With speculation off, the long prefix still gets affinity and real hits from KV events. So
+**only the speculative path** is wrong.
 
-**Impact.** Most chat and RAG prompts are shorter than 4,224 tokens, so for hybrid models
-(Nemotron-3/NemotronH, and likely other Mamba hybrids) precise routing mostly produces
-**load skew with no cache benefit**.
+**Why this is a general problem.**
 
-**Workaround here.** Use `config-precise-nospec.yaml` for hybrid models.
+1. **The over-claim is quantifiable and depends only on `E`, `R` and `N`.** For a prompt of `N`
+   tokens, speculation records ⌊N/R⌋·R tokens, while the engine can reuse only ⌊N/E⌋·E. The gap is
+   up to nearly `E − R` tokens per prompt:
 
-**Fix (proposed).** Clamp speculative inserts to the endpoint's engine block geometry. The router
-already learns it (`groupCatalog` from events; `vllm:cache_config_info{block_size}`). Do not
-speculate on prompts shorter than one engine block, or give speculative entries the same
-`RetrievalSpan` that PR #2899 adds for event entries. Related: llm-d-router#1702 and #2899/#2889,
-neither of which covers this case.
+   | Prompt length `N` | Router thinks cached | Engine can reuse (`E` = 4224) | Over-claim |
+   | --- | --- | --- | --- |
+   | 2,460 (measured) | 2,432 (38 blocks) | 0 | **100%** |
+   | 4,000 | 3,968 | 0 | **100%** |
+   | 6,000 | 5,952 | 4,224 | 29% |
+   | 8,461 (measured) | 8,448 | 8,448 | ≈ 0% |
+
+   Every prompt with `N < E` is 100% over-claimed. Longer prompts are over-claimed on the tail
+   that does not fill an `E` block, which inflates the prefix score and can mis-rank replicas. Only
+   prompts close to a multiple of `E` are unaffected.
+
+2. **`E > R` is common in practice, and often not chosen by the operator.**
+   - **Hybrid / SSM / linear-attention models.** vLLM enlarges the attention block automatically from
+     the size of the Mamba (or linear-attention) state and overrides the user's `--block-size`. This
+     covers NemotronH / Nemotron-3, Granite-4.0-H, Jamba, Bamba, Falcon-H1, Zamba2, Qwen3-Next and
+     others. The resulting value varies with the model, dtype and parallelism. Only
+     Nemotron-3-Nano-30B-A3B was measured here. Hybrid architectures are a main direction for new
+     models, so the affected set keeps growing.
+   - **Hardware or kernel constraints.** The upstream guide has its own example: TPU v6e fails to
+     compile with `--block-size=64` and needs 256 (`router/tpu-v6e.values.yaml`), so the guide asks
+     you to set `blockSizeTokens: 256` by hand as well. `E = R` is kept only by manual discipline, and
+     one missed edit lands in `E > R`.
+   - **Heterogeneous endpoint pools.** One EPP has one `blockSizeTokens`, but its endpoints may run on
+     different hardware or vLLM versions, or differ between prefill and decode in P/D. If any endpoint
+     has `E ≠ R`, config alignment cannot fix it; the router has to handle it per endpoint.
+3. **Deployment-independent.** This run used no Kubernetes (file-discovery), but the precise producer
+   code and config are identical under Kubernetes (InferencePool). The vLLM, SGLang and TPU values
+   in upstream `guides/precise-prefix-cache-routing` all set `speculativeIndexing: true`.
+4. **Hard to notice.** vLLM logs one INFO line; EPP traces and metrics show a high match, so
+   everything looks healthy. The only telling signal is `vllm:prefix_cache_hits_total` staying flat
+   on the engine side, which few people compare with the router's match counts.
+5. **Denser traffic pins harder.** Every routing decision re-seeds speculative entries (default TTL
+   2 s, `defaultSpeculativeTTL`). As long as same-prefix requests arrive faster than the TTL, the
+   affinity renews itself and never decays.
+
+**Impact.** Most chat, agent and RAG prompts are shorter than 4,224 tokens, so on hybrid models
+precise routing mostly produces **load skew with no cache benefit** (8 / 0 here). That is worse than
+plain load balancing: a full prefix score pins traffic to one machine and overrides the queue and
+kv-utilization scorers. The effect of the skew on TTFT and queueing was not measured separately.
+
+**How to tell whether your deployment is affected.**
+
+```console
+# effective block size per vLLM endpoint (not just the --block-size you passed)
+curl -s <endpoint>/metrics | grep -E '^vllm:cache_config_info' | grep -oE 'block_size="[0-9]+"'
+docker logs <vllm> 2>&1 | grep "Setting attention block size"
+# compare with tokenProcessorConfig.blockSizeTokens and speculativeIndexing in the EPP config
+```
+
+You are affected if any endpoint's `block_size` is larger than `blockSizeTokens` and
+`speculativeIndexing` is on. `vllm:cache_config_info` may have several rows (4224 and 64 here); use
+the attention group's value, the one in the `Setting attention block size` log line.
+
+**Workaround here.** Use `config-precise-nospec.yaml` (`speculativeIndexing: false`) for hybrid
+models. Short prefixes go back to load balancing, and long prefixes still get affinity and hits from
+real KV events. The cost is losing the "affinity before events arrive"; there is no reason to turn it
+off for models where `E = R`.
+
+**Fix (proposed, in priority order).**
+
+1. **Round down to the endpoint's engine block size.** Seed only the router keys covering ⌊N/E⌋·E
+   tokens, and seed nothing for prompts shorter than one engine block. Take `E` from `groupCatalog`
+   or `vllm:cache_config_info`.
+2. Or give speculative entries a `RetrievalSpan = E / R`, the same field PR #2899 adds to event
+   entries, and let the matcher handle both uniformly.
+3. **Observability guard.** When the learned engine block size differs from `blockSizeTokens`, log a
+   warning and expose a metric, so that `E ≠ R` is no longer silent.
+4. Until it is fixed, state in the upstream guides that **`speculativeIndexing: true` is safe only
+   when every endpoint's effective block size equals `blockSizeTokens`**, include the check above,
+   and recommend `false` for hybrid models.
+
+Related: llm-d-router#1702 (speculative entries not group-aware for HMA; about group ids, not block
+size), #2899 / #2889 (`RetrievalSpan` for event entries only), #3788. None covers speculative
+entries claiming blocks the engine cannot cache. Draft:
+[`docs/issues/01-…`](docs/issues/01-router-speculative-index-ignores-engine-block-size.md).
 
 ### 10.2 A client `traceparent` splits the trace into two roots
 
