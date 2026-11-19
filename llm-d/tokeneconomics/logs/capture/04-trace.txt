@@ -1,0 +1,49 @@
+gyliu@spark-3bee:~/tokeneconomics$ python3 scripts/trace-tree.py $(python3 - <<'PY'
+import json
+rows=[json.loads(l) for l in open('data/requests.jsonl')]
+r=[x for x in rows if x['phase']=='baseline' and x['step']=='compute' and x['trace_id']][-1]
+print(r['trace_id'])
+PY
+)
+trace 093e84546ebfd692dd01cade4a687a5f: 21 spans, services ['agent-driver', 'llm-d-envoy', 'llm-d-epp', 'vllm-0'], roots=1
+[agent-driver] agent.compute  (991.2 ms)
+    demo.step = compute
+    focus.outcome.id = ticket-baseline-84001039
+    focus.task.id = task-ticket-baseline-84001039
+    focus.workload.id = support_bot
+    gen_ai.usage.cache_read.input_tokens = 3904
+    gen_ai.usage.input_tokens = 3967
+    gen_ai.usage.output_tokens = 48
+  [llm-d-envoy] ingress  (989.9 ms)
+    [llm-d-envoy] async envoy.service.ext_proc.v3.ExternalProcessor.Process egress  (990.0 ms)
+    [llm-d-envoy] router original_destination_cluster egress  (979.4 ms)
+      [vllm-0] llm_request  (977.1 ms)
+          gen_ai.latency.time_in_model_decode = 0.8500
+          gen_ai.latency.time_in_model_inference = 0.9555
+          gen_ai.latency.time_in_model_prefill = 0.1055
+          gen_ai.usage.completion_tokens = 48
+          gen_ai.usage.prompt_tokens = 3967
+  [llm-d-epp] request  (990.0 ms)
+    [llm-d-epp] request_orchestration  (8.7 ms)
+      [llm-d-epp] tokenize  (7.9 ms)
+        [llm-d-epp] tokenize_render /v1/chat/completions/render  (7.6 ms)
+      [llm-d-epp] produce_precise_prefix_cache  (0.1 ms)
+        [llm-d-epp] match_block_keys  (0.1 ms)
+            llm_d.kv_cache.prefix_match.key_count = 61
+            llm_d.kv_cache.prefix_match.longest_chain = 61
+            llm_d.kv_cache.prefix_match.pod_filter_count = 2
+            llm_d.kv_cache.prefix_match.pods_matched = 2
+            llm_d.kv_cache.prefix_match.walked = True
+          [llm-d-epp] index_walk  (0.0 ms)
+      [llm-d-epp] run_scheduler_profile  (0.2 ms)
+        [llm-d-epp] filter_endpoints  (0.0 ms)
+        [llm-d-epp] scoring  (0.1 ms)
+          [llm-d-epp] scorer.prefix-cache-scorer  (0.0 ms)
+          [llm-d-epp] scorer.queue-scorer  (0.0 ms)
+          [llm-d-epp] scorer.kv-cache-utilization-scorer  (0.0 ms)
+        [llm-d-epp] pick_endpoints  (0.0 ms)
+            llm_d.epp.picker.candidate_endpoints = 2
+            llm_d.epp.picker.top_endpoints = ["default/vllm-0","default/vllm-1"]
+            llm_d.epp.picker.top_scores = [6.893986890852094,3.9767950329130244]
+      [llm-d-epp] pre_request_precise_prefix_cache  (0.1 ms)
+        [llm-d-epp] index_add  (0.0 ms)

@@ -1,0 +1,11 @@
+gyliu@spark-3bee:~/tokeneconomics$ docker ps --format '{{.Names}}\t{{.Image}}\t{{.Status}}' | grep -E 'vllm|epp|envoy|otel|jaeger|prometheus|grafana' | sort
+envoy	envoyproxy/envoy:v1.36.2	Up 18 minutes
+epp	ghcr.io/llm-d/llm-d-router-endpoint-picker:main	Up About a minute
+grafana	grafana/grafana:12.2.1	Up 2 days
+jaeger	jaegertracing/jaeger:2.11.0	Up 2 days
+otel-collector	otel/opentelemetry-collector-contrib:0.139.0	Up 2 days
+prometheus	prom/prometheus:v3.7.3	Up 2 days
+vllm-0	nvcr.io/nvidia/vllm:26.08-py3	Up 22 minutes (healthy)
+vllm-1	nvcr.io/nvidia/vllm:26.08-py3	Up 20 minutes (healthy)
+gyliu@spark-3bee:~/tokeneconomics$ curl -s localhost:8081/v1/models | python3 -c 'import json,sys; print([m["id"] for m in json.load(sys.stdin)["data"]])'
+['Qwen/Qwen2.5-1.5B-Instruct']

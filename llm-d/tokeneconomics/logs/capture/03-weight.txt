@@ -1,0 +1,6 @@
+gyliu@spark-3bee:~/tokeneconomics$ NONK8S_DIR=/home/gyliu/llm-d-nonk8s scripts/set-prefix-weight.sh 0 2>&1 | grep -v -E '^ *Container'
+        weight: 0
+EPP running with config-precise-w0.yaml
+gyliu@spark-3bee:~/tokeneconomics$ NONK8S_DIR=/home/gyliu/llm-d-nonk8s scripts/set-prefix-weight.sh 3 2>&1 | grep -v -E '^ *Container'
+        weight: 3
+EPP running with config-precise-w3.yaml

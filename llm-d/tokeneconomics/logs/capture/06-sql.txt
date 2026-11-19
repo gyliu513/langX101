@@ -1,0 +1,24 @@
+gyliu@spark-3bee:~/tokeneconomics$ sqlite3 -header -column data/tokeneconomics.db "SELECT phase, WorkloadId, requests, kv_cache_hit_ratio, prefill_gpu_s, decode_gpu_s, printf('%.4f', cost_usd) cost FROM kpi_infra"
+phase           WorkloadId   requests  kv_cache_hit_ratio  prefill_gpu_s  decode_gpu_s  cost  
+--------------  -----------  --------  ------------------  -------------  ------------  ------
+baseline        UNLINKED     128       0.0                 19.17          448.03        0.0463
+baseline        support_bot  1122      0.502               361.28         2234.46       0.2964
+baseline        triage_bot   479       0.267               79.81          318.31        0.0448
+between-phases  UNLINKED     9         0.0                 1.42           26.02         0.0164
+incident        UNLINKED     110       0.0                 18.56          425.33        0.0444
+incident        support_bot  944       0.255               440.19         2162.18       0.2972
+incident        triage_bot   408       0.268               78.18          321.75        0.0544
+gyliu@spark-3bee:~/tokeneconomics$ sqlite3 -header -column data/tokeneconomics.db "SELECT phase, WorkloadId, tasks, task_yield, sla_survival, printf('%.5f', cpqo) cpqo, printf('%.3f', gpu_s_per_qo) gpu_s_per_qo, printf('%.2f', estimated) value FROM kpi_workload"
+phase     WorkloadId   tasks  task_yield  sla_survival  cpqo     gpu_s_per_qo  value   
+--------  -----------  -----  ----------  ------------  -------  ------------  --------
+baseline  support_bot  561    1.0         0.364         0.00145  12.724        -6375.00
+baseline  triage_bot   479    0.985       0.537         0.00017  1.549         1878.00 
+incident  support_bot  472    1.0         0.356         0.00177  15.490        -5460.00
+incident  triage_bot   408    0.988       0.583         0.00023  1.680         2022.75 
+gyliu@spark-3bee:~/tokeneconomics$ sqlite3 -header -column data/tokeneconomics.db "SELECT OutcomeEntryNotes, COUNT(*) n FROM outcome GROUP BY 1 ORDER BY 2 DESC"
+OutcomeEntryNotes                 n  
+--------------------------------  ---
+                                  867
+refund wrong: ticket reopened     661
+wrong label: re-escalated         380
+agent gave up: handed to a human  12 
