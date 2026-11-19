@@ -19,7 +19,7 @@ IMG_DIR = "examples/interior_design_assistant/resources/images/fireplaces"
 
 
 def initialize():
-    global API, HOST, PORT, PATH, IMG_DIR
+    global API
     API = InterioAgent(PATH, IMG_DIR)
     asyncio.run(API.initialize(HOST, PORT))
 
@@ -29,7 +29,6 @@ def update_item_list(options):
 
 
 def image_upload_handle(file_path):
-    global API
     result = asyncio.run(API.list_items(file_path))
     return (
         result["description"],

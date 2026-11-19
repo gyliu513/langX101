@@ -32,7 +32,6 @@ def initialize(host: str, port: int, bank_id_str: str):
 
 
 def respond(message, attachments, chat_history):
-    global SELECTED_AGENT, CONTEXT, CHAT_HISTORY
     response, inserted_context = asyncio.run(
         CHATBOT.chat(SELECTED_AGENT, message, attachments)
     )
@@ -43,7 +42,7 @@ def respond(message, attachments, chat_history):
 
 
 def agent_selection(agent_choice):
-    global SELECTED_AGENT, CONTEXT, CHAT_HISTORY
+    global SELECTED_AGENT
     SELECTED_AGENT = AgentChoice[agent_choice]
     # print(f"Selected Agent: {SELECTED_AGENT}")
     return (
@@ -55,7 +54,6 @@ def agent_selection(agent_choice):
 
 
 def clear_chat_button_handler():
-    global CHAT_HISTORY, CONTEXT, SELECTED_AGENT
     CHAT_HISTORY[SELECTED_AGENT] = []
     CONTEXT[SELECTED_AGENT] = ""
     # create new sessions for agents
