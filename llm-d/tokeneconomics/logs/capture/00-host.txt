@@ -1,0 +1,10 @@
+gyliu@spark-3bee:~/tokeneconomics$ hostname; uname -m; grep PRETTY /etc/os-release
+spark-3bee
+aarch64
+PRETTY_NAME="Ubuntu 24.04.5 LTS"
+gyliu@spark-3bee:~/tokeneconomics$ nvidia-smi --query-gpu=name,driver_version --format=csv
+name, driver_version
+NVIDIA GB10, 580.173.02
+gyliu@spark-3bee:~/tokeneconomics$ docker compose version; python3 --version
+Docker Compose version v5.0.2
+Python 3.12.3

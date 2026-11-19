@@ -1,0 +1,43 @@
+gyliu@spark-3bee:~/tokeneconomics$ python3 scripts/trace-tree.py 2d635ab91262686ad2f35f8ab56e491c   # an incident-phase compute step
+trace 2d635ab91262686ad2f35f8ab56e491c: 21 spans, services ['agent-driver', 'llm-d-envoy', 'llm-d-epp', 'vllm-1'], roots=1
+[agent-driver] agent.compute  (1638.7 ms)
+    demo.step = compute
+    focus.outcome.id = ticket-incident-44800877
+    focus.task.id = task-ticket-incident-44800877
+    focus.workload.id = support_bot
+    gen_ai.usage.cache_read.input_tokens = 64
+    gen_ai.usage.input_tokens = 3941
+    gen_ai.usage.output_tokens = 46
+  [llm-d-envoy] ingress  (1637.9 ms)
+    [llm-d-envoy] async envoy.service.ext_proc.v3.ExternalProcessor.Process egress  (1637.9 ms)
+    [llm-d-envoy] router original_destination_cluster egress  (1626.2 ms)
+      [vllm-1] llm_request  (1623.5 ms)
+          gen_ai.latency.time_in_model_decode = 0.7872
+          gen_ai.latency.time_in_model_inference = 1.3361
+          gen_ai.latency.time_in_model_prefill = 0.5488
+          gen_ai.usage.completion_tokens = 46
+          gen_ai.usage.prompt_tokens = 3941
+  [llm-d-epp] request  (1637.6 ms)
+    [llm-d-epp] request_orchestration  (10.2 ms)
+      [llm-d-epp] tokenize  (9.5 ms)
+        [llm-d-epp] tokenize_render /v1/chat/completions/render  (9.3 ms)
+      [llm-d-epp] produce_precise_prefix_cache  (0.1 ms)
+        [llm-d-epp] match_block_keys  (0.0 ms)
+            llm_d.kv_cache.prefix_match.key_count = 61
+            llm_d.kv_cache.prefix_match.longest_chain = 60
+            llm_d.kv_cache.prefix_match.pod_filter_count = 2
+            llm_d.kv_cache.prefix_match.pods_matched = 2
+            llm_d.kv_cache.prefix_match.walked = True
+          [llm-d-epp] index_walk  (0.0 ms)
+      [llm-d-epp] run_scheduler_profile  (0.1 ms)
+        [llm-d-epp] filter_endpoints  (0.0 ms)
+        [llm-d-epp] scoring  (0.1 ms)
+          [llm-d-epp] scorer.prefix-cache-scorer  (0.0 ms)
+          [llm-d-epp] scorer.queue-scorer  (0.0 ms)
+          [llm-d-epp] scorer.kv-cache-utilization-scorer  (0.0 ms)
+        [llm-d-epp] pick_endpoints  (0.0 ms)
+            llm_d.epp.picker.candidate_endpoints = 2
+            llm_d.epp.picker.top_endpoints = ["default/vllm-1","default/vllm-0"]
+            llm_d.epp.picker.top_scores = [3.945853519521231,3.9293245939013963]
+      [llm-d-epp] pre_request_precise_prefix_cache  (0.1 ms)
+        [llm-d-epp] index_add  (0.0 ms)
