@@ -559,6 +559,8 @@ playground 调用只占请求数的 7%，却占了 **12% 的 GPU 成本**：prom
 
 ## 8. 发现与问题
 
+所有发现的中英文对照汇总见 [`docs/findings.md`](docs/findings.md)。
+
 ### F1. vLLM 确实会延续调用方的 trace（与论文结论相反）
 
 论文（第 2.2.2 节）称，在其作者的测试中 vLLM “没有”延续调用方的 trace。

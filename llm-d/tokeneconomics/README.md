@@ -560,6 +560,8 @@ why the paper reports UNLINKED as its own line ("missing links are not failed wo
 
 ## 8. Findings and issues
 
+All findings in one English / Chinese side-by-side document: [`docs/findings.md`](docs/findings.md).
+
 ### F1. vLLM does continue the caller's trace (contradicts the paper)
 
 The paper (section 2.2.2) says vLLM "did not" continue the caller's trace in its authors'
