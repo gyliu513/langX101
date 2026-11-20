@@ -1,0 +1,8 @@
+gyliu@spark-3bee:~/tokeneconomics$ kubectl -n llm-d run probe --rm -i --restart=Never --image=curlimages/curl:8.11.1 --quiet --   curl -s http://llm-d-inference-gateway.llm-d.svc.cluster.local/v1/chat/completions -H 'Content-Type: application/json'   -H 'traceparent: 00-1af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01'   -H 'baggage: focus.workload.id=support_bot,focus.task.id=task-probe-1,focus.outcome.id=ticket-probe-1'   -d '{"model":"Qwen/Qwen2.5-1.5B-Instruct","messages":[{"role":"user","content":"Say hi"}],"max_tokens":8}' | cut -c1-160
+{"id":"chatcmpl-dbc84c7b-1734-452c-b11b-e3e1ef788206","object":"chat.completion","created":1795135964,"model":"Qwen/Qwen2.5-1.5B-Instruct","choices":[{"index":0
+gyliu@spark-3bee:~/tokeneconomics$ curl -s http://127.0.0.1:16686/api/traces/1af7651916cd43dd8448eb211c80319c | python3 -c 'import json,sys
+d=json.load(sys.stdin)["data"][0]; p={k:v["serviceName"] for k,v in d["processes"].items()}
+print(len(d["spans"]), "spans:", sorted(set(p.values())))
+print("spans with focus.*/baggage attributes:", [(p[s["processID"]],s["operationName"],t["key"]) for s in d["spans"] for t in s["tags"] if "focus" in t["key"] or "baggage" in t["key"]])'
+16 spans: ['inference.llm-d.ai/inference-payload-processor', 'llm-d-inference-gateway', 'llm-d-router/epp', 'vllm-precise-prefix']
+spans with focus.*/baggage attributes: []

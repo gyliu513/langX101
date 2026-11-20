@@ -1,0 +1,40 @@
+gyliu@spark-3bee:~/tokeneconomics$ sqlite3 -header -column k8s/data/tokeneconomics.db "SELECT CASE WHEN ResourceId LIKE 'precise-prefix-vllm-%' THEN 'vLLM pods' WHEN ResourceId='__idle__' THEN '__idle__' ELSE 'other llm-d pods' END AS scope, COUNT(*) rows_, printf('%.4f',SUM(EffectiveCost)) cost, printf('%.4f',SUM(x_GpuCost)) gpu, printf('%.4f',SUM(x_CpuCost)) cpu, printf('%.4f',SUM(x_RamCost)) ram FROM cost_and_usage GROUP BY 1"
+scope             rows_  cost    gpu     cpu     ram   
+----------------  -----  ------  ------  ------  ------
+__idle__          12     0.5552  0.4000  0.0747  0.0805
+other llm-d pods  99     0.0085  0.0000  0.0064  0.0021
+vLLM pods         24     0.4337  0.4001  0.0240  0.0096
+gyliu@spark-3bee:~/tokeneconomics$ sqlite3 -header -column k8s/data/tokeneconomics.db "SELECT phase, WorkloadId, requests, kv_cache_hit_ratio, prefill_gpu_s, decode_gpu_s, printf('%.4f', cost_usd) cost FROM kpi_infra"
+phase           WorkloadId   requests  kv_cache_hit_ratio  prefill_gpu_s  decode_gpu_s  cost  
+--------------  -----------  --------  ------------------  -------------  ------------  ------
+baseline        IDLE         0                             0.0            0.0           0.2317
+baseline        OVERHEAD     0                             0.0            0.0           0.0034
+baseline        UNLINKED     124       0.0                 21.7           417.92        0.0235
+baseline        support_bot  1099      0.495               358.02         2272.69       0.1640
+baseline        triage_bot   469       0.266               82.99          290.5         0.0231
+between-phases  IDLE         0                             0.0            0.0           0.0926
+between-phases  OVERHEAD     0                             0.0            0.0           0.0015
+between-phases  UNLINKED     14        0.0                 2.65           55.34         0.0135
+incident        IDLE         0                             0.0            0.0           0.2309
+incident        OVERHEAD     0                             0.0            0.0           0.0037
+incident        UNLINKED     107       0.0                 19.72          396.75        0.0225
+incident        support_bot  944       0.284               411.64         2217.23       0.1634
+incident        triage_bot   411       0.264               78.82          304.53        0.0237
+gyliu@spark-3bee:~/tokeneconomics$ sqlite3 -header -column k8s/data/tokeneconomics.db "SELECT phase, WorkloadId, tasks, task_yield, sla_survival, printf('%.5f', cpqo) cpqo, printf('%.3f', gpu_s_per_qo) gpu_s_per_qo, printf('%.2f', estimated) value FROM kpi_workload"
+phase     WorkloadId   tasks  task_yield  sla_survival  cpqo     gpu_s_per_qo  value   
+--------  -----------  -----  ----------  ------------  -------  ------------  --------
+baseline  support_bot  550    1.0         0.325         0.00092  14.697        -6806.50
+baseline  triage_bot   469    0.97        0.557         0.00009  1.431         2097.75 
+incident  support_bot  472    1.0         0.343         0.00101  16.228        -5619.00
+incident  triage_bot   411    0.966       0.562         0.00010  1.660         1901.25 
+gyliu@spark-3bee:~/tokeneconomics$ sqlite3 -header -column k8s/data/tokeneconomics.db "SELECT phase, printf('%.4f',total_cost) total, printf('%.4f',idle_cost) idle, printf('%.4f',overhead_cost) overhead, printf('%.4f',unlinked_cost) unlinked, scrap_rate FROM kpi_phase"
+phase           total   idle    overhead  unlinked  scrap_rate
+--------------  ------  ------  --------  --------  ----------
+baseline        0.4457  0.2317  0.0034    0.0235    0.114     
+between-phases  0.1076  0.0926  0.0015    0.0135              
+incident        0.4441  0.2309  0.0037    0.0225    0.111     
+gyliu@spark-3bee:~/tokeneconomics$ sqlite3 -header -column k8s/data/tokeneconomics.db "WITH x AS (SELECT x_Phase, TaskId, COUNT(DISTINCT x_ServingReplica) n FROM telemetry WHERE WorkloadId='support_bot' GROUP BY 1,2) SELECT x_Phase phase, COUNT(*) tasks, SUM(n>1) split_across_pods, ROUND(100.0*SUM(n>1)/COUNT(*),1) pct FROM x GROUP BY 1"
+phase     tasks  split_across_pods  pct 
+--------  -----  -----------------  ----
+baseline  550    7                  1.3 
+incident  472    212                44.9

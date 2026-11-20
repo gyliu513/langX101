@@ -41,6 +41,9 @@ class Driver:
         self.f_req = open(os.path.join(args.out, "requests.jsonl"), "a")
         self.f_task = open(os.path.join(args.out, "tasks.jsonl"), "a")
         self.counter = 0
+        # Unique per driver process: in a container the PID is always 1, so a
+        # PID-based id would collide across runs and pods.
+        self.run_id = os.urandom(3).hex()
         self.stats = {"tasks": 0, "requests": 0, "errors": 0}
 
     # ------------------------------------------------------------------ io
@@ -52,7 +55,7 @@ class Driver:
     def _next_id(self, prefix: str) -> str:
         with self.lock:
             self.counter += 1
-            return f"{prefix}-{self.args.phase}-{os.getpid() % 1000:03d}{self.counter:05d}"
+            return f"{prefix}-{self.args.phase}-{self.run_id}-{self.counter:05d}"
 
     def call(self, messages: list[dict], max_tokens: int, lineage: dict | None, step: str) -> tuple[str, dict]:
         """One chat completion. ``lineage`` None -> UNLINKED (no keys, no traceparent)."""

@@ -1,0 +1,39 @@
+# OpenCost on the llm-d Kind cluster (DGX Spark). Supplies the FOCUS-style
+# Cost and Usage data of the token-economics demo (per pod, per minute).
+#   helm upgrade --install opencost opencost/opencost -n opencost --create-namespace \
+#     -f k8s/helm-values/opencost.values.yaml
+opencost:
+  exporter:
+    defaultClusterId: spark-3bee-llm-d
+    resources:
+      requests: {cpu: 50m, memory: 128Mi}
+      limits: {memory: 1Gi}
+  prometheus:
+    internal:
+      enabled: true
+      serviceName: llmd-kube-prometheus-stack-prometheus
+      namespaceName: llm-d-monitoring
+      port: 9090
+  metrics:
+    serviceMonitor:
+      enabled: true            # Prometheus (selector {}) scrapes OpenCost's own price metrics
+      scrapeInterval: 15s
+  customPricing:
+    enabled: true
+    provider: custom
+    costModel:
+      description: "DGX Spark, illustrative on-prem pricing"
+      # The GB10 is time-sliced x4 by the NVIDIA device plugin, so one
+      # nvidia.com/gpu unit is a quarter of the GPU: $1.00/h per unit = $4.00/h
+      # per physical GPU, the same price as the no-Kubernetes demo.
+      GPU: 1.00
+      CPU: 0.03                # per vCPU-hour
+      RAM: 0.004               # per GiB-hour
+      storage: 0.0001
+      spotCPU: 0.03
+      spotRAM: 0.004
+      zoneNetworkEgress: 0
+      regionNetworkEgress: 0
+      internetNetworkEgress: 0
+  ui:
+    enabled: false

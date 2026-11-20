@@ -3,12 +3,14 @@
 Source run: `llm-d/tokeneconomics`, DGX Spark (GB10), 2026-11-19, vLLM 0.27.1, EPP `main`
 (2026-11-16), Qwen2.5-1.5B-Instruct × 2, baseline (`prefix-cache-scorer` weight 3) vs
 incident (weight 0), 310 s each, 12 concurrent agents. Full evidence:
-[`../README.md`](../README.md) / [`../README-zh.md`](../README-zh.md).
+[`../README.md`](../README.md) / [`../README-zh.md`](../README-zh.md); Kubernetes findings K1-K6:
+[`../k8s/README.md`](../k8s/README.md) / [`../k8s/README-zh.md`](../k8s/README-zh.md).
 
 数据来源：`llm-d/tokeneconomics`，DGX Spark（GB10），2026-11-19，vLLM 0.27.1，EPP `main`
 （2026-11-16），Qwen2.5-1.5B-Instruct × 2，基线（`prefix-cache-scorer` 权重 3）对比
 故障（权重 0），每个阶段 310 秒，12 个并发 agent。完整证据见
-[`../README.md`](../README.md) / [`../README-zh.md`](../README-zh.md)。
+[`../README.md`](../README.md) / [`../README-zh.md`](../README-zh.md)；Kubernetes 相关发现 K1-K6 见
+[`../k8s/README.md`](../k8s/README.md) / [`../k8s/README-zh.md`](../k8s/README-zh.md)。
 
 ---
 
@@ -28,6 +30,12 @@ incident (weight 0), 310 s each, 12 concurrent agents. Full evidence:
 | F7 | EPP span is a sibling of Envoy's span when the client sends `traceparent` | 客户端带 `traceparent` 时，EPP 的 span 与 Envoy 的 span 成为兄弟节点 | llm-d-router (known) | known issue / 已知问题 |
 | F8 | Changing a scorer weight requires an EPP restart | 修改 scorer 权重需要重启 EPP | llm-d-router | limitation / 限制 |
 | F9 | Jaeger / Grafana UIs load very slowly over a remote link | 通过远程链路访问时 Jaeger / Grafana 界面加载很慢 | tooling / 工具 | ops note / 运维提示 |
+| K1 | On Kubernetes, OpenCost shows idle GPU is ~half the bill | Kubernetes 上 OpenCost 显示空闲 GPU 约占账单一半 | FinOps / paper | economics / 经济性 |
+| K2 | EPP KV-event tracing floods Jaeger (~87k traces/min) and evicts request traces | EPP 的 KV 事件追踪淹没 Jaeger（约 8.7 万条/分钟），挤掉请求 trace | llm-d-router | gap / 缺口 |
+| K3 | Time-sliced GPUs need a per-slice OpenCost price | 时间分片 GPU 需要按分片设置 OpenCost 价格 | operators / 运维 | ops note / 运维提示 |
+| K4 | vLLM replicas share one OTel service name; pod name must be added | vLLM 副本共用一个 OTel 服务名，需要补 pod 名 | llm-d guides / charts | gap / 缺口 |
+| K5 | Trace topology differs between Kubernetes and no-Kubernetes | Kubernetes 与非 Kubernetes 的 trace 结构不同 | consumers / 使用方 | insight / 洞察 |
+| K6 | Task IDs must be globally unique (PID 1 in containers) | 任务 ID 必须全局唯一（容器里 PID 恒为 1） | agent design / agent 设计 | lesson / 教训 |
 
 ---
 
@@ -275,6 +283,98 @@ shows the *last* value, which is 0 once the run is over. This is not a bug.
 
 ---
 
+## K1. Idle GPU is about half the bill on Kubernetes / Kubernetes 上空闲 GPU 约占账单一半
+
+**EN.** With OpenCost as the Cost and Usage source (per pod, per minute), 52% of each phase's bill
+(56% over the run) is `__idle__`: the node has 4 time-sliced GPU units and the two vLLM pods
+request 2. The idle line ($0.23 per 5-minute phase) is larger than support_bot's whole bill
+($0.16). The paper (2.3.2) leaves open whether to spread unused capacity or hold it
+separately. **Recommendation:** hold it separately, as OpenCost does, and report it next to CPQO.
+Spreading it would double every CPQO and hide the routing incident in the noise.
+
+**中文。** 以 OpenCost 作为成本与用量来源（按 pod、按分钟）时，每个阶段账单的 52%（整个运行为 56%）是
+`__idle__`：节点有 4 个时间分片 GPU 单元，两个 vLLM pod 只申请了 2 个。空闲这一行（每个 5 分钟
+阶段 $0.23）比 support_bot 的全部账单（$0.16）还大。论文（2.3.2）没有规定未用容量应该分摊还是单列。
+**建议：** 像 OpenCost 一样单列，并在 CPQO 旁边报告。如果分摊，所有 CPQO 都会翻倍，路由故障也会被
+淹没在噪声里。
+
+---
+
+## K2. The EPP's KV-event tracing floods Jaeger / EPP 的 KV 事件追踪淹没 Jaeger
+
+**EN.**
+- **What:** with `kvEventsConfig.tracing: true`, the EPP starts a new root trace for every KV-cache
+  index event: about 87,000 single-span traces per minute on two small replicas (93% `index_evict`),
+  about 60× the request traces.
+- **Impact:** Jaeger's in-memory store evicted request traces within a minute or two. An end-of-run
+  query lost 76% of the baseline traces, and a 60 s harvester still missed half the incident traces.
+- **Workaround used:** drop `index_evict` and `index_add` spans in the OTel Collector's filter
+  processor (98% of spans filtered). `IsRootSpan()` did not match the standalone `index_add`
+  traces.
+- **Proposal (llm-d-router):** sample KV-event tracing separately from request tracing, or record
+  index events as span events, and keep it off in default profiles.
+
+**中文。**
+- **现象：** 开启 `kvEventsConfig.tracing: true` 后，EPP 会为每个 KV cache 索引事件新开一条根 trace：两个
+  小副本上每分钟约 8.7 万条单 span trace（93% 是 `index_evict`），约为请求 trace 的 60 倍。
+- **影响：** Jaeger 的内存存储在一两分钟内就把请求 trace 挤掉了。运行结束后查询，基线阶段 76% 的 trace
+  已丢失；即使每 60 秒采集一次，故障阶段也漏掉了一半。
+- **本次的处理：** 在 OTel Collector 的 filter processor 中丢弃 `index_evict` 和 `index_add` span（98% 的 span
+  被过滤）。`IsRootSpan()` 匹配不到独立的 `index_add` trace。
+- **提议（llm-d-router）：** 让 KV 事件追踪与请求追踪分开采样，或改为 span event，并在默认配置中关闭。
+
+---
+
+## K3. Time-sliced GPUs need a per-slice price / 时间分片 GPU 需要按分片定价
+
+**EN.** OpenCost prices each `nvidia.com/gpu` unit at the configured GPU rate. With time-slicing ×4,
+the default rate would bill one GB10 as four GPUs. Set the price to the physical GPU's rate
+divided by the slice count ($1.00 = $4.00 / 4 here). A slice's cost says nothing about how much of
+the GPU it actually used; that is what the usage-basis KPI is for.
+
+**中文。** OpenCost 按配置的 GPU 单价为每个 `nvidia.com/gpu` 单元计价。时间分片 ×4 时，默认单价会把
+一块 GB10 当成四块 GPU 计费。应把单价设为物理 GPU 单价除以分片数（本例 $1.00 = $4.00 / 4）。
+一个分片的成本并不反映它实际用了多少 GPU，这正是用量口径 KPI 要补的部分。
+
+---
+
+## K4. Replicas share one OTel service name / 副本共用一个 OTel 服务名
+
+**EN.** Both vLLM pods export as `vllm-precise-prefix`, so a span alone cannot be matched to its
+OpenCost row. The demo adds `k8s.pod.name` through the downward API. **Proposal (llm-d guides /
+charts):** set `OTEL_RESOURCE_ATTRIBUTES=k8s.pod.name=$(POD_NAME),…` on model servers by default, as
+the EPP chart already does for itself.
+
+**中文。** 两个 vLLM pod 都以 `vllm-precise-prefix` 导出，仅凭 span 无法对应到 OpenCost 的某一行。本演示
+通过 downward API 加上了 `k8s.pod.name`。**提议（llm-d 指南 / chart）：** 默认给模型服务器设置
+`OTEL_RESOURCE_ATTRIBUTES=k8s.pod.name=$(POD_NAME),…`，EPP 的 chart 已经这样为自己设置了。
+
+---
+
+## K5. Trace topology differs / trace 结构不同
+
+**EN.** On Kubernetes, vLLM's `llm_request` is a child of the EPP's `request` span; without
+Kubernetes it hangs under Envoy's router span. Joining on `trace_id` works for both. Tooling
+that assumes a fixed parent breaks across deployments.
+
+**中文。** 在 Kubernetes 上，vLLM 的 `llm_request` 是 EPP `request` span 的子 span；非 Kubernetes 部署中
+它挂在 Envoy 的 router span 下。按 `trace_id` 关联对两者都适用；假设固定父 span 的工具会在两种部署间失效。
+
+---
+
+## K6. Task IDs must be globally unique / 任务 ID 必须全局唯一
+
+**EN.** The first Kubernetes run derived task IDs from the process ID, which is always 1 in a
+container. A leftover Job then produced colliding IDs, and its traffic was attributed to the new
+run's tasks. The driver now adds a random run ID, and build keeps only spans inside the phase
+windows. The paper's "opaque internal keys" also have to be globally unique.
+
+**中文。** 第一次 Kubernetes 运行用进程 ID 生成任务 ID，而容器里 PID 恒为 1。一个残留的 Job 因此产生了
+重复 ID，它的流量被算到了新一轮运行的任务上。现在 driver 会加一个随机运行 ID，build 也只保留阶段时间窗
+内的 span。论文要求的“不透明内部键”同样必须全局唯一。
+
+---
+
 ## Upstream actions / 上游行动项
 
 | # | Action (EN) | 行动（中文） | Target / 目标 |
@@ -285,3 +385,5 @@ shows the *last* value, which is 0 once the run is over. This is not a bug.
 | 4 | Report F1 evidence; propose a usage-basis KPI and a self-hosted ActivityWeight (F1, F4, F5) | 提交 F1 证据；提议用量口径 KPI 和自建推理的 ActivityWeight（F1、F4、F5） | Tokenomics Foundation / FOCUS SemConv WG |
 | 5 | Submit `results/` as sample data and this demo as a reference implementation | 把 `results/` 作为样例数据、本演示作为参考实现提交 | Tokenomics Foundation (FOCUS 1.6 cycle, June 2027 demo) |
 | 6 | Prefer the gRPC-metadata span when trace ids match (F7) | trace id 相同时优先使用 gRPC metadata 中的 span（F7） | llm-d-router |
+| 7 | Sample KV-event tracing separately, or emit span events (K2) | KV 事件追踪单独采样，或改为 span event（K2） | llm-d-router |
+| 8 | `k8s.pod.name` on model-server spans by default (K4) | 模型服务器 span 默认带 `k8s.pod.name`（K4） | llm-d guides / charts |

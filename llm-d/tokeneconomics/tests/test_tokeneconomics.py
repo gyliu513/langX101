@@ -152,3 +152,39 @@ def test_kpi_views_run(cfg, tmp_path):
     assert w["tasks"] == 2 and w["q_outcomes"] == 1
     assert w["cpqo"] == pytest.approx(cfg["cost"]["gpu_hourly_usd"] * g / 3600)
     assert (tmp_path / "telemetry.csv").exists()
+
+
+# --------------------------------------------------------------- opencost
+K8S_CONFIG = os.path.join(HERE, "..", "k8s", "demo-k8s.toml")
+
+
+def test_opencost_rows_and_per_pod_allocation():
+    from tokeneconomics import opencost
+    with open(K8S_CONFIG, "rb") as f:
+        kcfg = tomllib.load(f)
+    t0 = 1_800_000_000 - 1_800_000_000 % 60
+
+    def alloc(key, ns, pod, cost, gpu_h=0.0, start=t0):
+        return {"key": key, "namespace": ns, "pod": pod, "start": start, "end": start + 60, "gpuHours": gpu_h,
+                "gpuCost": cost, "cpuCost": 0.0, "ramCost": 0.0, "totalCost": cost}
+
+    allocs = [alloc("llm-d/precise-prefix-vllm-a", "llm-d", "precise-prefix-vllm-a", 0.02, 1 / 60),
+              alloc("llm-d/precise-prefix-vllm-b", "llm-d", "precise-prefix-vllm-b", 0.02, 1 / 60),
+              alloc("llm-d/llm-d-epp-x", "llm-d", "llm-d-epp-x", 0.001),
+              alloc("llm-d/te-driver-baseline-x", "llm-d", "te-driver-baseline-x", 0.005),   # the client: excluded
+              alloc("llm-d-monitoring/prom", "llm-d-monitoring", "prom", 0.003),           # other namespace: excluded
+              alloc("__idle__", "", "__idle__", 0.04)]
+    rows = opencost.cost_rows(kcfg, allocs)
+    assert sorted(r["ResourceId"] for r in rows) == ["__idle__", "llm-d-epp-x", "precise-prefix-vllm-a",
+                                                    "precise-prefix-vllm-b"]
+    # pod a served two tasks; pod b served nothing in this period
+    leaves = [leaf(t0 + 1, "support_bot", "task-1", 0.1, 0.2, replica="precise-prefix-vllm-a"),
+              leaf(t0 + 2, "triage_bot", "task-2", 0.3, 0.4, replica="precise-prefix-vllm-a")]
+    tel = build.allocate(kcfg, rows, leaves, lambda r: r["replica"])
+    by = {(r["TaskId"], r["ResourceId"]): r["x_AllocatedCost"] for r in tel}
+    assert by[("task-1", "precise-prefix-vllm-a")] == pytest.approx(0.02 * 0.3 / 1.0)
+    assert by[("task-2", "precise-prefix-vllm-a")] == pytest.approx(0.02 * 0.7 / 1.0)
+    assert by[("IDLE", "precise-prefix-vllm-b")] == pytest.approx(0.02)       # allocated but unused
+    assert by[("IDLE", "__idle__")] == pytest.approx(0.04)                    # never allocated
+    assert by[("OVERHEAD", "llm-d-epp-x")] == pytest.approx(0.001)            # shared serving component
+    assert sum(r["x_AllocatedCost"] for r in tel) == pytest.approx(sum(r["EffectiveCost"] for r in rows))

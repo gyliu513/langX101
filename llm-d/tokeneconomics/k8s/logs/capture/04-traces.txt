@@ -1,0 +1,84 @@
+gyliu@spark-3bee:~/tokeneconomics$ python3 scripts/trace-tree.py $(python3 -c 'import json; r=[json.loads(l) for l in open("k8s/data/requests.jsonl")]; print([x for x in r if x["phase"]=="baseline" and x["step"]=="compute" and x["trace_id"]][-1]["trace_id"])')
+trace 4a7099cf968d2031ca843db9dc3ce4ce: 20 spans, services ['agent-driver', 'inference.llm-d.ai/inference-payload-processor@payload-processor-697666c4f6-csl25', 'llm-d-inference-gateway@llm-d-inference-gateway-58b9564597-c5ptj', 'llm-d-router/epp@llm-d-epp-56985b47db-4bt6c', 'vllm-precise-prefix@precise-prefix-vllm-5dcd99989c-zstxg'], roots=1
+[agent-driver] agent.compute  (1235.1 ms)
+    demo.step = compute
+    focus.outcome.id = ticket-baseline-a240ef-01018
+    focus.task.id = task-ticket-baseline-a240ef-01018
+    focus.workload.id = support_bot
+    gen_ai.usage.cache_read.input_tokens = 3840
+    gen_ai.usage.input_tokens = 3940
+    gen_ai.usage.output_tokens = 43
+  [llm-d-inference-gateway@llm-d-inference-gateway-58b9564597-c5ptj] POST /*  (1146.4 ms)
+    [inference.llm-d.ai/inference-payload-processor@payload-processor-697666c4f6-csl25] gateway.request  (1145.8 ms)
+      [llm-d-router/epp@llm-d-epp-56985b47db-4bt6c] request  (1143.5 ms)
+        [llm-d-router/epp@llm-d-epp-56985b47db-4bt6c] request_orchestration  (13.6 ms)
+          [llm-d-router/epp@llm-d-epp-56985b47db-4bt6c] tokenize  (13.0 ms)
+            [llm-d-router/epp@llm-d-epp-56985b47db-4bt6c] tokenize_render /v1/chat/completions/render  (12.7 ms)
+          [llm-d-router/epp@llm-d-epp-56985b47db-4bt6c] produce_precise_prefix_cache  (0.2 ms)
+            [llm-d-router/epp@llm-d-epp-56985b47db-4bt6c] match_block_keys  (0.1 ms)
+                llm_d.kv_cache.prefix_match.key_count = 61
+                llm_d.kv_cache.prefix_match.longest_chain = 60
+                llm_d.kv_cache.prefix_match.pod_filter_count = 2
+                llm_d.kv_cache.prefix_match.pods_matched = 2
+                llm_d.kv_cache.prefix_match.walked = True
+              [llm-d-router/epp@llm-d-epp-56985b47db-4bt6c] index_walk  (0.1 ms)
+          [llm-d-router/epp@llm-d-epp-56985b47db-4bt6c] run_scheduler_profile  (0.1 ms)
+            [llm-d-router/epp@llm-d-epp-56985b47db-4bt6c] filter_endpoints  (0.0 ms)
+            [llm-d-router/epp@llm-d-epp-56985b47db-4bt6c] scoring  (0.1 ms)
+              [llm-d-router/epp@llm-d-epp-56985b47db-4bt6c] scorer.kv-cache-utilization-scorer  (0.0 ms)
+              [llm-d-router/epp@llm-d-epp-56985b47db-4bt6c] scorer.queue-scorer  (0.0 ms)
+              [llm-d-router/epp@llm-d-epp-56985b47db-4bt6c] scorer.prefix-cache-scorer  (0.0 ms)
+            [llm-d-router/epp@llm-d-epp-56985b47db-4bt6c] pick_endpoints  (0.0 ms)
+                llm_d.epp.picker.candidate_endpoints = 2
+                llm_d.epp.picker.top_endpoints = ["llm-d/precise-prefix-vllm-5dcd99989c-zstxg-rank-0","llm-d/precise-prefix-vllm-5dcd99989c-rpwf6-rank-0"]
+                llm_d.epp.picker.top_scores = [6.77356119393223,4.012132735962327]
+          [llm-d-router/epp@llm-d-epp-56985b47db-4bt6c] pre_request_precise_prefix_cache  (0.1 ms)
+            [llm-d-router/epp@llm-d-epp-56985b47db-4bt6c] index_add  (0.0 ms)
+        [vllm-precise-prefix@precise-prefix-vllm-5dcd99989c-zstxg] llm_request  (1125.2 ms)
+            gen_ai.latency.time_in_model_decode = 0.9810
+            gen_ai.latency.time_in_model_inference = 1.0789
+            gen_ai.latency.time_in_model_prefill = 0.0978
+            gen_ai.usage.completion_tokens = 43
+            gen_ai.usage.prompt_tokens = 3940
+gyliu@spark-3bee:~/tokeneconomics$ python3 scripts/trace-tree.py $(python3 -c 'import json; r=[json.loads(l) for l in open("k8s/data/requests.jsonl")]; print([x for x in r if x["phase"]=="incident" and x["step"]=="compute" and x["trace_id"] and x["cached_tokens"]<100][-1]["trace_id"])')
+trace c599135941db732cbf753b4cc41e64e5: 20 spans, services ['agent-driver', 'inference.llm-d.ai/inference-payload-processor@payload-processor-697666c4f6-csl25', 'llm-d-inference-gateway@llm-d-inference-gateway-58b9564597-c5ptj', 'llm-d-router/epp@llm-d-epp-76c8d58f4d-k82zm', 'vllm-precise-prefix@precise-prefix-vllm-5dcd99989c-rpwf6'], roots=1
+[agent-driver] agent.compute  (2203.7 ms)
+    demo.step = compute
+    focus.outcome.id = ticket-incident-ba4f54-00880
+    focus.task.id = task-ticket-incident-ba4f54-00880
+    focus.workload.id = support_bot
+    gen_ai.usage.cache_read.input_tokens = 64
+    gen_ai.usage.input_tokens = 3933
+    gen_ai.usage.output_tokens = 49
+  [llm-d-inference-gateway@llm-d-inference-gateway-58b9564597-c5ptj] POST /*  (2197.7 ms)
+    [inference.llm-d.ai/inference-payload-processor@payload-processor-697666c4f6-csl25] gateway.request  (2197.2 ms)
+      [llm-d-router/epp@llm-d-epp-76c8d58f4d-k82zm] request  (2195.5 ms)
+        [llm-d-router/epp@llm-d-epp-76c8d58f4d-k82zm] request_orchestration  (14.4 ms)
+          [llm-d-router/epp@llm-d-epp-76c8d58f4d-k82zm] tokenize  (13.7 ms)
+            [llm-d-router/epp@llm-d-epp-76c8d58f4d-k82zm] tokenize_render /v1/chat/completions/render  (13.4 ms)
+          [llm-d-router/epp@llm-d-epp-76c8d58f4d-k82zm] produce_precise_prefix_cache  (0.1 ms)
+            [llm-d-router/epp@llm-d-epp-76c8d58f4d-k82zm] match_block_keys  (0.1 ms)
+                llm_d.kv_cache.prefix_match.key_count = 61
+                llm_d.kv_cache.prefix_match.longest_chain = 60
+                llm_d.kv_cache.prefix_match.pod_filter_count = 2
+                llm_d.kv_cache.prefix_match.pods_matched = 2
+                llm_d.kv_cache.prefix_match.walked = True
+              [llm-d-router/epp@llm-d-epp-76c8d58f4d-k82zm] index_walk  (0.0 ms)
+          [llm-d-router/epp@llm-d-epp-76c8d58f4d-k82zm] run_scheduler_profile  (0.1 ms)
+            [llm-d-router/epp@llm-d-epp-76c8d58f4d-k82zm] filter_endpoints  (0.0 ms)
+            [llm-d-router/epp@llm-d-epp-76c8d58f4d-k82zm] scoring  (0.0 ms)
+              [llm-d-router/epp@llm-d-epp-76c8d58f4d-k82zm] scorer.kv-cache-utilization-scorer  (0.0 ms)
+              [llm-d-router/epp@llm-d-epp-76c8d58f4d-k82zm] scorer.queue-scorer  (0.0 ms)
+              [llm-d-router/epp@llm-d-epp-76c8d58f4d-k82zm] scorer.prefix-cache-scorer  (0.0 ms)
+            [llm-d-router/epp@llm-d-epp-76c8d58f4d-k82zm] pick_endpoints  (0.0 ms)
+                llm_d.epp.picker.candidate_endpoints = 2
+                llm_d.epp.picker.top_endpoints = ["llm-d/precise-prefix-vllm-5dcd99989c-rpwf6-rank-0","llm-d/precise-prefix-vllm-5dcd99989c-zstxg-rank-0"]
+                llm_d.epp.picker.top_scores = [3.962952408093474,3.895126816756911]
+          [llm-d-router/epp@llm-d-epp-76c8d58f4d-k82zm] pre_request_precise_prefix_cache  (0.1 ms)
+            [llm-d-router/epp@llm-d-epp-76c8d58f4d-k82zm] index_add  (0.0 ms)
+        [vllm-precise-prefix@precise-prefix-vllm-5dcd99989c-rpwf6] llm_request  (2175.9 ms)
+            gen_ai.latency.time_in_model_decode = 1.7196
+            gen_ai.latency.time_in_model_inference = 2.1420
+            gen_ai.latency.time_in_model_prefill = 0.4224
+            gen_ai.usage.completion_tokens = 49
+            gen_ai.usage.prompt_tokens = 3933
