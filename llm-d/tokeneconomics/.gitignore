@@ -2,3 +2,5 @@ data/
 data-*/
 __pycache__/
 *.pyc
+nonk8s/data/
+k8s/data/

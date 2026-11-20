@@ -78,7 +78,7 @@ Stack"）中未能继续深入的问题。那次演讲借助 OpenCost 做到了*
 `baggage` 会到达每一跳，因为 Envoy 会转发该请求头，但**没有任何组件
 把 baggage 条目复制到自己的 span 上**，而且 OTel Collector 看不到
 baggage。根 span 是唯一记录这些键的地方。对 EPP 做一个小改动
-就能把这些键也放到路由器的 span 上；参见 [README §9](../README-zh.md#9-后续计划)。
+就能把这些键也放到路由器的 span 上；参见 [README §9](../nonk8s/README-zh.md#9-后续计划)。
 
 ## 4. 数据模型映射
 

@@ -79,7 +79,7 @@ which is what makes the `trace_id` join possible.
 `baggage` reaches every hop, since Envoy forwards the header, but **no component
 copies baggage entries onto its spans**, and the OTel Collector cannot see
 baggage. The root span is the only place the keys are recorded. A small EPP change
-would put them on the router's spans as well; see [README §9](../README.md#9-future-plan).
+would put them on the router's spans as well; see [README §9](../nonk8s/README.md#9-future-plan).
 
 ## 4. Data model mapping
 
