@@ -8,7 +8,8 @@ from OpenCost**, per pod and per minute. It no longer comes from a synthesized G
 
 Everything below was run on **2026-11-19/20** on the `llm-d` Kind cluster from
 [`../../llm-d-spark-full-demo`](../../llm-d-spark-full-demo). Every `console` block is copied
-from the session (`logs/capture/`).
+from the session (`logs/capture/`). The Python package has since been renamed from `tokeneconomics` to
+`attribution`: read `python3 -m tokeneconomics.<module>` in them as `python3 -m attribution.<module>`.
 
 中文版见 [`README-zh.md`](README-zh.md). Design and code are shared with the
 no-Kubernetes variant: [`../docs/design.md`](../docs/design.md). Section 2 lists what is different here.
@@ -82,7 +83,7 @@ read per task, per outcome and per dollar of value.
 |---|---|---|
 | Serving path | Envoy → EPP → 2 vLLM containers (Docker Compose) | agentgateway → payload processor (IPP) → EPP → 2 vLLM **pods** |
 | Where the agent driver runs | a process on the host | a **Kubernetes Job** in the `llm-d` namespace (`manifests/driver-job.tmpl.yaml`), code from a ConfigMap |
-| Cost and Usage | synthesized FOCUS rows: $4/GPU-h, one GPU scope | **OpenCost allocation API**, one row per pod per minute (`tokeneconomics/opencost.py`) |
+| Cost and Usage | synthesized FOCUS rows: $4/GPU-h, one GPU scope | **OpenCost allocation API**, one row per pod per minute (`attribution/opencost.py`) |
 | Consumption Scope | the GPU (`spark-3bee/gpu0`) | the **pod** |
 | Unallocated capacity | only periods with no traffic | OpenCost `__idle__` → `IDLE`, every minute |
 | Non-serving pods | not billed | EPP, gateway, IPP, P/D pods → `OVERHEAD` (paper 2.3.3, not scrap) |
@@ -90,7 +91,7 @@ read per task, per outcome and per dollar of value.
 | Trace topology | client → Envoy → vLLM; EPP span a sibling | client → gateway → IPP → EPP `request` → vLLM |
 | Getting leaf spans out of Jaeger | query after the run | **harvest every 60 s** during the run + KV-event trace filter ([K2](#k2-the-epps-kv-event-tracing-floods-jaeger)) |
 
-Allocation rule (`tokeneconomics/build.py:allocate`). For each (ResourceId, minute):
+Allocation rule (`attribution/build.py:allocate`). For each (ResourceId, minute):
 
 - a **vLLM pod**: its OpenCost cost is split over the requests it served, by ActivityWeight
   (vLLM prefill + decode time). If it served nothing that minute, the cost goes to `IDLE`
@@ -141,7 +142,7 @@ k8s/
 └── logs/capture/                          raw command + output captures
 ```
 
-The Python code is shared: `../tokeneconomics/opencost.py` is new, and `build.py` gained
+The Python code is shared: `../attribution/opencost.py` is new, and `build.py` gained
 `allocate()`, `--harvest` and pod-aware leaf rows. `../tests/` covers the OpenCost path.
 
 ---

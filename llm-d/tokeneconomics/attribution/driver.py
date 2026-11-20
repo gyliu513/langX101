@@ -1,6 +1,6 @@
 """Agent driver: runs the demo workloads against the llm-d entry point.
 
-    python3 -m tokeneconomics.driver --phase baseline --duration 300 --concurrency 12
+    python3 -m attribution.driver --phase baseline --duration 300 --concurrency 12
 
 Every model call is one trace. The driver opens it with a root span that
 carries the value-attribution lineage keys (``focus.workload.id``,

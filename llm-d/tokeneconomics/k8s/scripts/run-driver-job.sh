@@ -6,8 +6,8 @@ cd "$(dirname "$0")/../.."           # the tokeneconomics folder
 export PHASE=${1:?phase} NOTE=${2:?note} DURATION=${3:-300} CONCURRENCY=${4:-12}
 export DRIVER_IMAGE=${DRIVER_IMAGE:-python:3.12-slim}
 kubectl -n llm-d create configmap tokeneconomics-code \
-  --from-file=tokeneconomics/__init__.py --from-file=tokeneconomics/otlp.py \
-  --from-file=tokeneconomics/workloads.py --from-file=tokeneconomics/driver.py \
+  --from-file=attribution/__init__.py --from-file=attribution/otlp.py \
+  --from-file=attribution/workloads.py --from-file=attribution/driver.py \
   --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 kubectl -n llm-d delete job "te-driver-$PHASE" --ignore-not-found >/dev/null
 envsubst '${PHASE} ${NOTE} ${DURATION} ${CONCURRENCY} ${DRIVER_IMAGE}' < k8s/manifests/driver-job.tmpl.yaml | kubectl apply -f -

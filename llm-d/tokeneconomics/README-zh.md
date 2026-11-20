@@ -35,7 +35,7 @@ tokeneconomics/
 ├── docs/
 │   ├── design.md / design-zh.md 设计文档（共用）
 │   └── findings.md              全部发现，中英文对照
-├── tokeneconomics/              共用的 Python 包（只用标准库）
+├── attribution/                 共用的 Python 包（只用标准库）
 ├── scripts/trace-tree.py        共用工具
 ├── tests/                       离线单元测试（CI 会运行）
 ├── nonk8s/                      版本 1：报告、配置、脚本、结果、命令输出记录、截图

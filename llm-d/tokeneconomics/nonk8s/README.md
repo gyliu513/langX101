@@ -182,7 +182,7 @@ both phases see the same kinds of work.
 tokeneconomics/                       (shared by both variants)
 ├── README.md / README-zh.md          overview of both variants
 ├── docs/design*.md, docs/findings.md design document and bilingual findings
-├── tokeneconomics/                   Python package, standard library only (3.11+)
+├── attribution/                      Python package, standard library only (3.11+)
 │   ├── otlp.py                       W3C traceparent/baggage + OTLP/HTTP JSON span exporter
 │   ├── workloads.py                  support_bot / triage_bot / playground + gates
 │   ├── driver.py                     runs a phase; writes requests/tasks/phases.jsonl
@@ -210,7 +210,8 @@ tokeneconomics/                       (shared by both variants)
 All commands run from the `tokeneconomics/` folder (the Python package lives there). The
 console blocks below were recorded before this variant moved into `nonk8s/`. Read
 `scripts/run-demo.sh`, `scripts/set-prefix-weight.sh`, `data/` and `configs/` in them as
-`nonk8s/scripts/…`, `nonk8s/data/` and `nonk8s/configs/`.
+`nonk8s/scripts/…`, `nonk8s/data/` and `nonk8s/configs/`. The Python package was also renamed from
+`tokeneconomics` to `attribution`: read `python3 -m tokeneconomics.<module>` as `python3 -m attribution.<module>`.
 
 ---
 
@@ -460,7 +461,7 @@ restarted. The KPI views keep it, and the report's phase tables leave it out.
 
 The full generated report is [`results/report.md`](results/report.md) (HTML:
 [`results/report.html`](results/report.html)). The KPI views are in
-[`../tokeneconomics/kpis.sql`](../tokeneconomics/kpis.sql).
+[`../attribution/kpis.sql`](../attribution/kpis.sql).
 
 ### 7.1 The mechanism: affinity → cache → prefill
 

@@ -63,10 +63,10 @@ Stack"）中未能继续深入的问题。那次演讲借助 OpenCost 做到了*
 
 | 论文中的层 | 本演示中的对应组件 | 它添加了什么 |
 |---|---|---|
-| 1. Agent 框架 / 应用 | `tokeneconomics/driver.py` | 在根 span 上和 W3C baggage 中添加 `focus.workload.id`、`focus.task.id`、`focus.outcome.id`（工单 / 告警在运行前就已存在，因此结果 id 在开始时即已知） |
+| 1. Agent 框架 / 应用 | `attribution/driver.py` | 在根 span 上和 W3C baggage 中添加 `focus.workload.id`、`focus.task.id`、`focus.outcome.id`（工单 / 告警在运行前就已存在，因此结果 id 在开始时即已知） |
 | 2. 网关、路由器、推理引擎 | Envoy、EPP、vLLM | 仅传递 trace 上下文。vLLM 的 `llm_request` span 带有 `gen_ai.usage.prompt_tokens`、`completion_tokens`、`gen_ai.latency.time_in_model_prefill/decode` |
 | 3. 遥测采集器 | OTel Collector | 目前不额外添加任何内容（可以添加主机 / GPU 资源属性） |
-| 4. 企业级数据补全 | `tokeneconomics/build.py` | 按 `trace_id` 把根 span 的键关联到 vLLM 叶子 span 上；从 `configs/demo.toml` 提供计费范围（`ServiceProviderName`、`BillingAccountId`、`ResourceId` ...） |
+| 4. 企业级数据补全 | `attribution/build.py` | 按 `trace_id` 把根 span 的键关联到 vLLM 叶子 span 上；从 `configs/demo.toml` 提供计费范围（`ServiceProviderName`、`BillingAccountId`、`ResourceId` ...） |
 
 目前没有任何上游组件输出 `focus.*`，本演示也不需要它们这样做。论文
 提醒说，在其作者的测试中 vLLM "没有延续调用方的 trace"。而在这里，vLLM 0.27.1
@@ -161,7 +161,7 @@ baggage。根 span 是唯一记录这些键的地方。对 EPP 做一个小改�
 证明方。`RealizedValue` 仅为 Settled 的结果设置。`PlannedValue` 编码的是
 业务预期（90% 合格）。
 
-### 4.5 KPI（`tokeneconomics/kpis.sql`）
+### 4.5 KPI（`attribution/kpis.sql`）
 
 `kpi_infra`（论文 4.1 节）、`kpi_workload`（4.2-4.4 节）、`kpi_phase`
 （组合视图，报废率中 `UNLINKED` 单独成行，`IDLE` 分开保留）。有两处

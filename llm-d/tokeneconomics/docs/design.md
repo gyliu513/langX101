@@ -64,10 +64,10 @@ library only.
 
 | Paper layer | Who in this demo | What it adds |
 |---|---|---|
-| 1. Agent harness / application | `tokeneconomics/driver.py` | `focus.workload.id`, `focus.task.id`, `focus.outcome.id` (the ticket / alert exists before the run, so the outcome id is known at start) on the root span and in W3C baggage |
+| 1. Agent harness / application | `attribution/driver.py` | `focus.workload.id`, `focus.task.id`, `focus.outcome.id` (the ticket / alert exists before the run, so the outcome id is known at start) on the root span and in W3C baggage |
 | 2. Gateway, router, inference engine | Envoy, EPP, vLLM | trace context only. vLLM's `llm_request` span carries `gen_ai.usage.prompt_tokens`, `completion_tokens`, `gen_ai.latency.time_in_model_prefill/decode` |
 | 3. Telemetry collector | OTel Collector | nothing extra today (could add host / GPU resource attributes) |
-| 4. Enterprise enrichment | `tokeneconomics/build.py` | joins root-span keys onto the vLLM leaf span by `trace_id`; supplies the billing scope (`ServiceProviderName`, `BillingAccountId`, `ResourceId` ...) from `configs/demo.toml` |
+| 4. Enterprise enrichment | `attribution/build.py` | joins root-span keys onto the vLLM leaf span by `trace_id`; supplies the billing scope (`ServiceProviderName`, `BillingAccountId`, `ResourceId` ...) from `configs/demo.toml` |
 
 Nothing upstream emits `focus.*` today, and nothing needs to for this demo. The
 paper warns that vLLM "did not continue the caller's trace" in its authors'
@@ -163,7 +163,7 @@ All claims are `Reported`, never `Booked`: there is no independent attestor in a
 demo. `RealizedValue` is set only for Settled outcomes. `PlannedValue` encodes the
 business case (90% qualified).
 
-### 4.5 KPIs (`tokeneconomics/kpis.sql`)
+### 4.5 KPIs (`attribution/kpis.sql`)
 
 `kpi_infra` (paper section 4.1), `kpi_workload` (sections 4.2-4.4), `kpi_phase`
 (portfolio, scrap rate with `UNLINKED` as its own line, `IDLE` kept apart). Two

@@ -37,7 +37,7 @@ tokeneconomics/
 ├── docs/
 │   ├── design.md / design-zh.md design document (shared)
 │   └── findings.md              all findings, English / Chinese side by side
-├── tokeneconomics/              shared Python package (standard library only)
+├── attribution/                 shared Python package (standard library only)
 ├── scripts/trace-tree.py        shared tool
 ├── tests/                       offline unit tests (run by CI)
 ├── nonk8s/                      variant 1: report, configs, scripts, results, captures, screenshots

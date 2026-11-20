@@ -7,8 +7,8 @@ import tomllib
 
 import pytest
 
-from tokeneconomics import build, otlp
-from tokeneconomics.workloads import (Alert, judge_support, judge_triage, make_ticket, parse_json,
+from attribution import build, otlp
+from attribution.workloads import (Alert, judge_support, judge_triage, make_ticket, parse_json,
                                       refund_calculator)
 
 HERE = os.path.dirname(__file__)
@@ -159,7 +159,7 @@ K8S_CONFIG = os.path.join(HERE, "..", "k8s", "demo-k8s.toml")
 
 
 def test_opencost_rows_and_per_pod_allocation():
-    from tokeneconomics import opencost
+    from attribution import opencost
     with open(K8S_CONFIG, "rb") as f:
         kcfg = tomllib.load(f)
     t0 = 1_800_000_000 - 1_800_000_000 % 60
