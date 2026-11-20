@@ -1,0 +1,13 @@
+gyliu@spark-3bee:~/tokeneconomics$ kubectl -n opencost get pods
+NAME                       READY   STATUS    RESTARTS   AGE
+opencost-d8d65fd7d-v8fss   1/1     Running   0          82m
+gyliu@spark-3bee:~/tokeneconomics$ curl -s 'http://127.0.0.1:9003/allocation/compute?window=3m&aggregate=namespace,pod&step=1m&resolution=1m&includeIdle=true&accumulate=false' | python3 -c 'import json,sys
+for st in json.load(sys.stdin)["data"][:1]:
+  for k,a in sorted(st.items()):
+    if "vllm" in k or "idle" in k or "epp" in k:
+      print(f"{k:58s} {a["window"]["start"]} gpuHours={a.get("gpuHours",0):.4f} gpu=${a.get("gpuCost",0):.5f} cpu=${a["cpuCost"]:.5f} total=${a["totalCost"]:.5f}")'
+__idle__                                                   2026-11-20T00:50:00Z gpuHours=0.0000 gpu=$0.03333 cpu=$0.00641 total=$0.04647
+llm-d/llm-d-epp-5cf44f645c-z6ghg                           2026-11-20T00:50:00Z gpuHours=0.0000 gpu=$0.00000 cpu=$0.00025 total=$0.00032
+llm-d/llm-d-pd-epp-6675d8658c-nlt64                        2026-11-20T00:50:00Z gpuHours=0.0000 gpu=$0.00000 cpu=$0.00013 total=$0.00016
+llm-d/precise-prefix-vllm-5dcd99989c-rpwf6                 2026-11-20T00:50:00Z gpuHours=0.0167 gpu=$0.01667 cpu=$0.00100 total=$0.01807
+llm-d/precise-prefix-vllm-5dcd99989c-zstxg                 2026-11-20T00:50:00Z gpuHours=0.0167 gpu=$0.01667 cpu=$0.00100 total=$0.01807

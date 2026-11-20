@@ -23,7 +23,10 @@ if len(sys.argv) > 1:
 else:
     trace = get("/api/traces?service=agent-driver&limit=1&lookback=1h")["data"][0]
 
-procs = {k: v["serviceName"] for k, v in trace["processes"].items()}
+procs = {}
+for k, v in trace["processes"].items():
+    pod = next((t["value"] for t in v.get("tags", []) if t["key"] == "k8s.pod.name"), None)
+    procs[k] = f"{v['serviceName']}@{pod}" if pod else v["serviceName"]
 spans = {s["spanID"]: s for s in trace["spans"]}
 children, roots = {}, []
 for s in trace["spans"]:

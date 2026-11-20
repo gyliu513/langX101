@@ -13,7 +13,8 @@ Everything below was run on **2026-11-19** on one NVIDIA DGX Spark (`spark-3bee`
 Every `console` block is copied from the actual session (`logs/capture/`).
 
 中文版见 [`README-zh.md`](README-zh.md). The design document is [`docs/design.md`](docs/design.md)
-([中文](docs/design-zh.md)).
+([中文](docs/design-zh.md)). **Kubernetes variant** (llm-d on Kind, Cost and Usage from OpenCost):
+[`k8s/README.md`](k8s/README.md).
 
 ---
 

@@ -14,6 +14,7 @@ llm-d with OpenCost"* 的终点：那次演讲做到了**每 token 成本**。�
 
 English version: [`README.md`](README.md). 设计文档见 [`docs/design-zh.md`](docs/design-zh.md)
 （[English](docs/design.md)）。
+**Kubernetes 版本**（llm-d 部署在 Kind 上，成本数据来自 OpenCost）：[`k8s/README-zh.md`](k8s/README-zh.md)。
 
 ---
 

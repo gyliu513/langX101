@@ -1,0 +1,37 @@
+gyliu@spark-3bee:~/tokeneconomics$ kubectl config current-context; kubectl get nodes -o wide | cut -c1-120
+kind-llm-d
+NAME                  STATUS   ROLES           AGE   VERSION   INTERNAL-IP   EXTERNAL-IP   OS-IMAGE                     
+llm-d-control-plane   Ready    control-plane   60d   v1.37.0   172.18.0.4    <none>        Debian GNU/Linux 13 (trixie) 
+gyliu@spark-3bee:~/tokeneconomics$ kubectl get node llm-d-control-plane -o jsonpath='{.status.allocatable.nvidia\.com/gpu}{" nvidia.com/gpu (GB10 time-sliced x4)\n"}'
+4 nvidia.com/gpu (GB10 time-sliced x4)
+gyliu@spark-3bee:~/tokeneconomics$ helm list -A | awk '{print $1, $2, $9, $10}' | column -t
+NAME               NAMESPACE                                          
+agentgateway       agentgateway-system  agentgateway-v1.4.1           v1.4.1
+agentgateway-crds  agentgateway-system  agentgateway-crds-v1.4.1      v1.4.1
+ipp                llm-d                payload-processor-0.2.0       0.2.0
+llm-d              llm-d                llm-d-router-gateway-v0       v0
+llm-d-pd           llm-d                llm-d-router-gateway-v0       v0
+llmd               llm-d-monitoring     kube-prometheus-stack-91.4.1  v0.94.0
+opencost           opencost             opencost-2.5.34               1.121.4
+gyliu@spark-3bee:~/tokeneconomics$ kubectl -n llm-d get pods -o custom-columns=NAME:.metadata.name,READY:.status.containerStatuses[*].ready,GPU:.spec.containers[*].resources.limits.nvidia\\.com/gpu | grep -v te-driver
+NAME                                       READY   GPU
+jaeger-554cff9d46-b4m7x                    true    <none>
+llm-d-epp-5cf44f645c-z6ghg                 true    <none>
+llm-d-inference-gateway-58b9564597-c5ptj   true    <none>
+llm-d-pd-epp-6675d8658c-nlt64              true    <none>
+otel-collector-bff977b58-t7xsr             true    <none>
+payload-processor-697666c4f6-csl25         true    <none>
+pd-decode-5fbc985d56-vc5ns                 true    <none>
+pd-prefill-6d5db57479-p5nhd                true    <none>
+precise-prefix-vllm-5dcd99989c-rpwf6       true    1
+precise-prefix-vllm-5dcd99989c-zstxg       true    1
+gyliu@spark-3bee:~/tokeneconomics$ kubectl -n llm-d get deploy llm-d-epp -o jsonpath='{.spec.template.spec.containers[0].image}{"\n"}'
+ghcr.io/llm-d/llm-d-router-endpoint-picker:main
+gyliu@spark-3bee:~/tokeneconomics$ kubectl -n llm-d get deploy precise-prefix-vllm -o jsonpath='{.spec.template.spec.containers[0].image}{"\n"}{.spec.template.spec.containers[0].args}{"\n"}' | tr ',' '\n' | grep -E 'nvcr|serve|Qwen|prompt-tokens|otlp|kv-cache-memory'
+nvcr.io/nvidia/vllm:26.08-py3
+"serve"
+"Qwen/Qwen2.5-1.5B-Instruct"
+"--kv-cache-memory-bytes=6442450944"
+\"topic\":\"kv@$(POD_IP):8000@Qwen/Qwen2.5-1.5B-Instruct\"}"
+"--otlp-traces-endpoint=http://otel-collector:4317"
+"--enable-prompt-tokens-details"]

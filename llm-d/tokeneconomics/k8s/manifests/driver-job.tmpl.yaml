@@ -1,0 +1,47 @@
+# Agent driver as a Kubernetes Job (rendered by scripts/run-driver-job.sh).
+# It talks to the llm-d Gateway Service like any in-cluster client and exports
+# its root spans to the in-cluster OTel Collector. The code comes from the
+# ConfigMap `tokeneconomics-code` (the package, standard library only); the
+# JSONL records land on the Kind node at /root/.cache/tokeneconomics-k8s,
+# which the Kind config mounts from the host's ~/llm-d-cache.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: te-driver-${PHASE}
+  namespace: llm-d
+  labels: {app: tokeneconomics-driver, phase: "${PHASE}"}
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels: {app: tokeneconomics-driver, phase: "${PHASE}"}
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: driver
+          image: ${DRIVER_IMAGE}
+          workingDir: /app
+          command:
+            - python3
+            - -m
+            - tokeneconomics.driver
+            - --phase=${PHASE}
+            - --note=${NOTE}
+            - --duration=${DURATION}
+            - --concurrency=${CONCURRENCY}
+            - --endpoint=http://llm-d-inference-gateway.llm-d.svc.cluster.local
+            - --otlp=http://otel-collector.llm-d.svc.cluster.local:4318
+            - --model=Qwen/Qwen2.5-1.5B-Instruct
+            - --out=/data
+          resources:
+            requests: {cpu: 500m, memory: 256Mi}
+            limits: {memory: 1Gi}
+          volumeMounts:
+            - {name: code, mountPath: /app/tokeneconomics, readOnly: true}
+            - {name: data, mountPath: /data}
+      volumes:
+        - name: code
+          configMap: {name: tokeneconomics-code}
+        - name: data
+          hostPath: {path: /root/.cache/tokeneconomics-k8s, type: DirectoryOrCreate}

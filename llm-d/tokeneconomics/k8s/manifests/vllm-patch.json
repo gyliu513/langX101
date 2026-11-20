@@ -1,0 +1,7 @@
+[
+  {"op": "add", "path": "/spec/template/spec/containers/0/args/-", "value": "--enable-prompt-tokens-details"},
+  {"op": "add", "path": "/spec/template/spec/containers/0/env/-",
+   "value": {"name": "POD_NAME", "valueFrom": {"fieldRef": {"fieldPath": "metadata.name"}}}},
+  {"op": "add", "path": "/spec/template/spec/containers/0/env/-",
+   "value": {"name": "OTEL_RESOURCE_ATTRIBUTES", "value": "k8s.pod.name=$(POD_NAME),k8s.namespace.name=llm-d"}}
+]

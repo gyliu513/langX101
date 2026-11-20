@@ -44,10 +44,11 @@ def read_jsonl(path: str) -> list[dict]:
 
 
 # ---------------------------------------------------------------- traces
-def fetch_traces(jaeger: str, start: float, end: float, slice_s: int = 15, limit: int = 3000) -> dict:
+def fetch_traces(jaeger: str, start: float, end: float, slice_s: int = 15, limit: int = 3000,
+                 services: tuple = ("vllm-0", "vllm-1")) -> dict:
     """All traces touching a vLLM replica in [start, end], deduplicated by trace id."""
     traces = {}
-    for service in ("vllm-0", "vllm-1"):
+    for service in services:
         t = start
         while t < end:
             q = urllib.parse.urlencode({"service": service, "operation": "llm_request",
@@ -72,6 +73,10 @@ def leaf_rows(traces: dict) -> list[dict]:
     rows = []
     for tr in traces.values():
         procs = {k: v["serviceName"] for k, v in tr["processes"].items()}
+        # On Kubernetes the replicas share a service name; the pod comes from the
+        # OTel resource attribute k8s.pod.name (process tags in Jaeger).
+        pods = {k: next((t["value"] for t in v.get("tags", []) if t["key"] == "k8s.pod.name"), None)
+                for k, v in tr["processes"].items()}
         root = None
         for s in tr["spans"]:
             if procs[s["processID"]] == "agent-driver":
@@ -87,7 +92,7 @@ def leaf_rows(traces: dict) -> list[dict]:
             rows.append({
                 "trace_id": tr["traceID"],
                 "ts": s["startTime"] / 1e6,
-                "replica": svc,
+                "replica": pods.get(s["processID"]) or svc,
                 "workload": lin.get("focus.workload.id", "UNLINKED"),
                 "task": lin.get("focus.task.id", "UNLINKED"),
                 "outcome": lin.get("focus.outcome.id", "UNLINKED"),
@@ -108,7 +113,7 @@ SCHEMA = {
     "cost_and_usage": """ServiceProviderName TEXT, BillingAccountId TEXT, SubAccountId TEXT, ServiceName TEXT,
         ResourceId TEXT, "SkuPriceDetails.ModelId" TEXT, ChargePeriodStart TEXT, ChargePeriodEnd TEXT,
         ChargeCategory TEXT, PricingCategory TEXT, ConsumedQuantity REAL, ConsumedUnit TEXT,
-        BilledCost REAL, EffectiveCost REAL""",
+        BilledCost REAL, EffectiveCost REAL, x_GpuCost REAL, x_CpuCost REAL, x_RamCost REAL""",
     "telemetry": """TaskId TEXT, OutcomeId TEXT, WorkloadId TEXT, ServiceProviderName TEXT, BillingAccountId TEXT,
         ResourceId TEXT, ServiceName TEXT, SubAccountId TEXT, ModelId TEXT, TelemetryPeriodStart TEXT,
         TelemetryPeriodEnd TEXT, InvocationCount INTEGER, InputTokenCount INTEGER, OutputTokenCount INTEGER,
@@ -135,27 +140,46 @@ SCHEMA = {
 WORKLOAD_NAMES = {"support_bot": "Autonomous Billing Dispute Agent", "triage_bot": "Alert Triage Copilot"}
 
 
-def build_cost_and_telemetry(cfg: dict, leaves: list[dict], t0: float, t1: float):
-    c, aw = cfg["cost"], cfg["activity_weight"]
+def static_cost_rows(cfg: dict, t0: float, t1: float) -> list[dict]:
+    """A synthesized FOCUS bill: one row per charge period for one GPU (no-Kubernetes variant)."""
+    c = cfg["cost"]
     grain = c["charge_period_seconds"]
     per_period_cost = c["gpu_hourly_usd"] * grain / 3600
-    scope = dict(ServiceProviderName=c["service_provider_name"], BillingAccountId=c["billing_account_id"],
-                 SubAccountId=c["sub_account_id"], ServiceName=c["service_name"], ResourceId=c["resource_id"])
-
     first, last = math.floor(t0 / grain) * grain, math.ceil(t1 / grain) * grain
-    cost_rows = []
-    for p in range(int(first), int(last), grain):
-        cost_rows.append(dict(scope, **{"SkuPriceDetails.ModelId": None}, ChargePeriodStart=iso(p),
-                              ChargePeriodEnd=iso(p + grain), ChargeCategory="Usage", PricingCategory="Committed",
-                              ConsumedQuantity=grain / 3600, ConsumedUnit=c["consumed_unit"],
-                              BilledCost=per_period_cost, EffectiveCost=per_period_cost))
+    return [dict(_p=p, _end=p + grain, ServiceProviderName=c["service_provider_name"],
+                 BillingAccountId=c["billing_account_id"], SubAccountId=c["sub_account_id"],
+                 ServiceName=c["service_name"], ResourceId=c["resource_id"], **{"SkuPriceDetails.ModelId": None},
+                 ChargePeriodStart=iso(p), ChargePeriodEnd=iso(p + grain), ChargeCategory="Usage",
+                 PricingCategory="Committed", ConsumedQuantity=grain / 3600, ConsumedUnit=c["consumed_unit"],
+                 BilledCost=per_period_cost, EffectiveCost=per_period_cost)
+            for p in range(int(first), int(last), grain)]
+
+
+def allocate(cfg: dict, cost_rows: list[dict], leaves: list[dict], scope_of) -> list[dict]:
+    """Split every cost row over the telemetry of its (ResourceId, charge period).
+
+    ``scope_of(leaf)`` gives the ResourceId a vLLM leaf span consumed. A cost row
+    with no telemetry becomes IDLE when it is the cluster's idle capacity or a
+    serving resource that served nothing, and OVERHEAD when it is a shared
+    non-serving component (EPP, gateway ...), paper section 2.3.3.
+    """
+    c, aw = cfg["cost"], cfg["activity_weight"]
+    serving_prefix = c.get("serving_pod_prefix")
+    periods = sorted({(r["_p"], r["_end"]) for r in cost_rows})
+
+    def period_of(ts):
+        for p, e in periods:
+            if p <= ts < e:
+                return p
+        return None
 
     groups = defaultdict(lambda: defaultdict(float))
+    ends = dict(periods)
     for r in leaves:
-        p = math.floor(r["ts"] / grain) * grain
-        if not (first <= p < last):
+        p = period_of(r["ts"])
+        if p is None:
             continue
-        g = groups[(p, r["workload"], r["task"], r["outcome"], r["replica"])]
+        g = groups[(scope_of(r), p, r["workload"], r["task"], r["outcome"], r["replica"])]
         g["n"] += 1
         g["input"] += r["input"]
         g["output"] += r["output"]
@@ -171,36 +195,43 @@ def build_cost_and_telemetry(cfg: dict, leaves: list[dict], t0: float, t1: float
         return g["prefill_s"] + g["decode_s"]
 
     total_w = defaultdict(float)
-    for (p, *_), g in groups.items():
-        total_w[p] += weight(g)
+    for (rid, p, *_), g in groups.items():
+        total_w[(rid, p)] += weight(g)
+    cost_of = defaultdict(float)
+    for r in cost_rows:
+        cost_of[(r["ResourceId"], r["_p"])] += r["EffectiveCost"]
+
+    def row(task, outcome, wl, rid, p, replica, alloc, g=None, w=0.0):
+        g = g or defaultdict(float)
+        return dict(TaskId=task, OutcomeId=outcome, WorkloadId=wl, ServiceProviderName=c["service_provider_name"],
+                    BillingAccountId=c["billing_account_id"], ResourceId=rid, ServiceName=c["service_name"],
+                    SubAccountId=c["sub_account_id"], ModelId=c["model_id"], TelemetryPeriodStart=iso(p),
+                    TelemetryPeriodEnd=iso(ends[p]), InvocationCount=int(g["n"]), InputTokenCount=int(g["input"]),
+                    OutputTokenCount=int(g["output"]), CacheReadTokenCount=int(g["cache_read"]),
+                    CacheWriteTokenCount=None, TotalDurationMs=round(g["duration_ms"], 3),
+                    ActivityWeight=round(w, 6), x_ServingReplica=replica, x_PrefillSeconds=round(g["prefill_s"], 6),
+                    x_DecodeSeconds=round(g["decode_s"], 6), x_AllocatedCost=alloc)
 
     tel = []
-    for (p, wl, task, outcome, replica), g in sorted(groups.items()):
+    for (rid, p, wl, task, outcome, replica), g in sorted(groups.items()):
         w = weight(g)
-        alloc = per_period_cost * w / total_w[p] if total_w[p] else 0.0
-        tel.append(dict(TaskId=task, OutcomeId=outcome, WorkloadId=wl, ServiceProviderName=scope["ServiceProviderName"],
-                        BillingAccountId=scope["BillingAccountId"], ResourceId=scope["ResourceId"],
-                        ServiceName=scope["ServiceName"], SubAccountId=scope["SubAccountId"], ModelId=c["model_id"],
-                        TelemetryPeriodStart=iso(p), TelemetryPeriodEnd=iso(p + grain), InvocationCount=int(g["n"]),
-                        InputTokenCount=int(g["input"]), OutputTokenCount=int(g["output"]),
-                        CacheReadTokenCount=int(g["cache_read"]), CacheWriteTokenCount=None,
-                        TotalDurationMs=round(g["duration_ms"], 3), ActivityWeight=round(w, 6),
-                        x_ServingReplica=replica, x_PrefillSeconds=round(g["prefill_s"], 6),
-                        x_DecodeSeconds=round(g["decode_s"], 6), x_AllocatedCost=alloc))
-    # A charge period with no activity at all is idle capacity: keep it visible
-    # as its own line instead of silently dropping it (open question in 2.3.2).
-    active = set(total_w)
-    for p in range(int(first), int(last), grain):
-        if p not in active or total_w[p] == 0:
-            tel.append(dict(TaskId="IDLE", OutcomeId="IDLE", WorkloadId="IDLE",
-                            ServiceProviderName=scope["ServiceProviderName"], BillingAccountId=scope["BillingAccountId"],
-                            ResourceId=scope["ResourceId"], ServiceName=scope["ServiceName"],
-                            SubAccountId=scope["SubAccountId"], ModelId=c["model_id"], TelemetryPeriodStart=iso(p),
-                            TelemetryPeriodEnd=iso(p + grain), InvocationCount=0, InputTokenCount=0,
-                            OutputTokenCount=0, CacheReadTokenCount=0, CacheWriteTokenCount=None, TotalDurationMs=0,
-                            ActivityWeight=0, x_ServingReplica=None, x_PrefillSeconds=0, x_DecodeSeconds=0,
-                            x_AllocatedCost=per_period_cost))
-    return cost_rows, tel
+        tw = total_w[(rid, p)]
+        tel.append(row(task, outcome, wl, rid, p, replica, cost_of[(rid, p)] * w / tw if tw else 0.0, g, w))
+    # Cost rows nobody's telemetry absorbed: keep them visible instead of dropping them.
+    for (rid, p), cost in sorted(cost_of.items()):
+        if total_w.get((rid, p)):
+            continue
+        serving = rid == c.get("resource_id") or (serving_prefix and rid.startswith(serving_prefix))
+        kind = "IDLE" if (rid == "__idle__" or serving) else "OVERHEAD"
+        tel.append(row(kind, kind, kind, rid, p, rid if serving else None, cost))
+    return tel
+
+
+def build_cost_and_telemetry(cfg: dict, leaves: list[dict], t0: float, t1: float):
+    """No-Kubernetes variant: synthesized bill for one GPU shared by all replicas."""
+    cost_rows = static_cost_rows(cfg, t0, t1)
+    rid = cfg["cost"]["resource_id"]
+    return cost_rows, allocate(cfg, cost_rows, leaves, lambda r: rid)
 
 
 def build_task_outcome_value(cfg: dict, tasks: list[dict], tel: list[dict], phases: list[dict], now: float):
@@ -304,12 +335,35 @@ def main() -> None:
     p.add_argument("--data", default="data")
     p.add_argument("--config", default="configs/demo.toml")
     p.add_argument("--jaeger", default="http://127.0.0.1:16686")
+    p.add_argument("--harvest", action="store_true",
+                   help="only fetch the latest phase's vLLM leaf spans from Jaeger into leaves.jsonl and exit "
+                        "(run right after each phase: an in-memory Jaeger evicts old traces)")
+    p.add_argument("--window", default=None, help="with --harvest: START,END unix seconds instead of the last phase")
+    p.add_argument("--opencost", default=None, help="OpenCost API URL (overrides [cost] opencost_url)")
     p.add_argument("--now", type=float, default=None, help="evaluate settlement as of this unix time")
     args = p.parse_args()
 
     with open(args.config, "rb") as f:
         cfg = tomllib.load(f)
+    services = tuple(cfg.get("traces", {}).get("vllm_services", ["vllm-0", "vllm-1"]))
+    leaves_path = os.path.join(args.data, "leaves.jsonl")
     phases = read_jsonl(os.path.join(args.data, "phases.jsonl"))
+
+    if args.harvest:
+        if args.window:
+            a, b = (float(x) for x in args.window.split(","))
+        elif phases:
+            a, b = phases[-1]["start"] - 5, phases[-1]["end"] + 30
+        else:
+            raise SystemExit("--harvest needs --window or a phases.jsonl")
+        leaves = leaf_rows(fetch_traces(args.jaeger, a, b, services=services))
+        os.makedirs(args.data, exist_ok=True)
+        with open(leaves_path, "a") as f:
+            for r in leaves:
+                f.write(json.dumps(r) + "\n")
+        print(f"harvested {len(leaves)} vLLM leaf spans in [{iso(a)}, {iso(b)}] -> {leaves_path}")
+        return
+
     tasks = read_jsonl(os.path.join(args.data, "tasks.jsonl"))
     requests = read_jsonl(os.path.join(args.data, "requests.jsonl"))
     if not phases:
@@ -317,14 +371,37 @@ def main() -> None:
     t0, t1 = min(ph["start"] for ph in phases), max(ph["end"] for ph in phases)
     now = args.now or time.time()
 
-    traces = fetch_traces(args.jaeger, t0 - 5, t1 + 30)
-    leaves = leaf_rows(traces)
+    if os.path.exists(leaves_path):
+        # The harvester's windows overlap, and a trace can be harvested before the
+        # client's root span arrived: keep one row per span, preferring the
+        # linked copy, and only spans inside the phase windows.
+        best = {}
+        for r in read_jsonl(leaves_path):
+            k = (r["trace_id"], r["ts"])
+            if k not in best or (best[k]["task"] == "UNLINKED" and r["task"] != "UNLINKED"):
+                best[k] = r
+        leaves = [r for r in best.values() if any(ph["start"] - 5 <= r["ts"] <= ph["end"] + 30 for ph in phases)]
+        traces = {r["trace_id"] for r in leaves}
+        print(f"using {len(leaves)} harvested leaf spans from {leaves_path} "
+              f"({len(best) - len(leaves)} outside the phase windows dropped)")
+    else:
+        traces = fetch_traces(args.jaeger, t0 - 5, t1 + 30, services=services)
+        leaves = leaf_rows(traces)
     linked_req = sum(1 for r in requests if r["trace_id"] and not r["error"])
     linked_leaf = sum(1 for r in leaves if r["task"] != "UNLINKED")
     print(f"traces={len(traces)} vLLM leaf spans={len(leaves)} (linked {linked_leaf} of {linked_req} "
           f"linked driver calls, unlinked {len(leaves) - linked_leaf})")
 
-    cost, tel = build_cost_and_telemetry(cfg, leaves, t0, t1)
+    if cfg["cost"].get("source", "static") == "opencost":
+        from . import opencost
+        grain = cfg["cost"]["charge_period_seconds"]
+        first, last = math.floor(t0 / grain) * grain, math.ceil(t1 / grain) * grain
+        allocs = opencost.fetch_allocations(args.opencost or cfg["cost"]["opencost_url"], first, last, grain)
+        cost = opencost.cost_rows(cfg, allocs)
+        tel = allocate(cfg, cost, leaves, lambda r: r["replica"])  # Consumption Scope = the pod
+        print(f"opencost: {len(allocs)} allocations -> {len(cost)} cost rows in scope")
+    else:
+        cost, tel = build_cost_and_telemetry(cfg, leaves, t0, t1)
     # Phase of a telemetry row: from its Task when linked, else from the time
     # of its charge period (UNLINKED / IDLE rows).
     task_phase = {t["task_id"]: t["phase"] for t in tasks}

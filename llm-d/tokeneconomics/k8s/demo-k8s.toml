@@ -1,0 +1,71 @@
+# Token-economics demo configuration. Every number here is an input the
+# Tokenomics "Value Attribution Data Architecture" leaves to the organization.
+# All prices are ILLUSTRATIVE.
+
+[cost]
+# The FOCUS Cost and Usage rows come from OpenCost's allocation API: one row per
+# pod per charge period, priced by k8s/helm-values/opencost.values.yaml.
+source = "opencost"                     # Cost and Usage from OpenCost, per pod per minute
+opencost_url = "http://127.0.0.1:9003"
+namespace = "llm-d"                      # pods of this namespace are in scope (+ __idle__)
+serving_pod_prefix = "precise-prefix-vllm-"   # vLLM pods: their cost is split by ActivityWeight
+exclude_pod_prefixes = ["te-driver-"]    # the demo's client Job is the application, not serving cost
+gpu_hourly_usd = 4.00                    # unused with OpenCost (prices live in helm-values/opencost.values.yaml)
+# Charge period. FOCUS is usually hourly/daily; the demo compresses it so the
+# baseline and incident phases land in different periods.
+charge_period_seconds = 60
+service_provider_name = "On-prem (DGX Spark, Kubernetes)"
+billing_account_id = "lab-001"
+sub_account_id = "spark-3bee-llm-d"         # OpenCost cluster id
+service_name = "Kubernetes"
+resource_id = "unused-with-opencost"           # with OpenCost the scope is the pod
+consumed_unit = "GPU Hours"
+model_id = "Qwen/Qwen2.5-1.5B-Instruct"
+
+[activity_weight]
+# How a row's share of the GPU bill is computed (section 2.3.2). The paper's
+# token-price weighting fits pay-per-token APIs; for a self-hosted engine the
+# demo defaults to GPU time measured by vLLM itself.
+#   "gpu_time" : time_in_model_prefill + time_in_model_decode from the vLLM span
+#   "tokens"   : uncached_input * a + cached_input * b + output * c
+method = "gpu_time"
+uncached_input = 1.0
+cached_input = 0.1
+output = 4.0
+
+[settlement]
+# Seconds after a Task ends before its Outcome is Settled (compressed SLA window).
+window_seconds = 60
+
+[workloads.support_bot]
+task_type = "refund_calc"
+outcome_type = "deflected_ticket"
+outcome_unit = "deflected_tickets"
+baseline_minutes = 15.0          # a human handling the dispute end to end
+friction_minutes = 2.0           # human spot-checks every refund the bot sends
+task_rework_minutes = 3.0        # bot failed Gate 1: human takes over and cleans up
+outcome_rework_minutes = 12.0    # refund was wrong: customer reopens the ticket
+stakeholder = "CFO"
+value_category = "Cost Reduction"
+conversion_multiplier = 8.50     # USD per deflected ticket (BPO cost per ticket)
+labor_usd_per_minute = 1.50      # loaded cost of the human friction / rework
+planned_qualified_rate = 0.90    # the business case assumed 90% deflection
+
+[workloads.triage_bot]
+task_type = "alert_triage"
+outcome_type = "alert_triaged"
+outcome_unit = "minutes"
+baseline_minutes = 10.0
+friction_minutes = 0.5
+task_rework_minutes = 1.0
+outcome_rework_minutes = 5.0     # wrong label: alert re-escalated and re-triaged
+stakeholder = "CTO"
+value_category = "Engineering Capacity"
+conversion_multiplier = 1.50     # USD per net engineer-minute returned
+labor_usd_per_minute = 1.50
+planned_qualified_rate = 0.90
+
+[traces]
+# On Kubernetes both replicas export as one OTel service; the pod is taken
+# from the k8s.pod.name resource attribute.
+vllm_services = ["vllm-precise-prefix"]

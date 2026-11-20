@@ -72,12 +72,15 @@ WITH tot AS (
   SELECT x_Phase AS phase,
          SUM(x_AllocatedCost)                                                   AS total_cost,
          SUM(CASE WHEN WorkloadId = 'IDLE' THEN x_AllocatedCost ELSE 0 END)     AS idle_cost,
+         SUM(CASE WHEN WorkloadId = 'OVERHEAD' THEN x_AllocatedCost ELSE 0 END) AS overhead_cost,
          SUM(CASE WHEN WorkloadId = 'UNLINKED' THEN x_AllocatedCost ELSE 0 END) AS unlinked_cost
   FROM telemetry GROUP BY x_Phase),
 f AS (SELECT phase, SUM(failed_task_cost) AS failed_cost, SUM(q_outcomes) AS q_outcomes,
              SUM(estimated) AS value FROM kpi_workload GROUP BY phase)
-SELECT tot.phase, tot.total_cost, tot.idle_cost, tot.unlinked_cost, f.failed_cost,
-       ROUND((tot.unlinked_cost + f.failed_cost) / NULLIF(tot.total_cost - tot.idle_cost, 0), 3) AS scrap_rate,
-       ROUND(tot.unlinked_cost / NULLIF(tot.total_cost - tot.idle_cost, 0), 3)                  AS scrap_unlinked_share,
+-- Scrap Rate is over serving cost: IDLE and OVERHEAD (paper 2.3.3) are not scrap.
+SELECT tot.phase, tot.total_cost, tot.idle_cost, tot.overhead_cost, tot.unlinked_cost, f.failed_cost,
+       ROUND((tot.unlinked_cost + f.failed_cost)
+             / NULLIF(tot.total_cost - tot.idle_cost - tot.overhead_cost, 0), 3)                  AS scrap_rate,
+       ROUND(tot.unlinked_cost / NULLIF(tot.total_cost - tot.idle_cost - tot.overhead_cost, 0), 3) AS scrap_unlinked_share,
        f.q_outcomes, f.value
 FROM tot LEFT JOIN f USING (phase);
