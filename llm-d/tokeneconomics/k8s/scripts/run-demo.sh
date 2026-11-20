@@ -23,7 +23,7 @@ harvester() {
   while true; do
     sleep 60
     local now=$(date +%s)
-    python3 -m tokeneconomics.build --data "$OUT" --config k8s/demo-k8s.toml --harvest --window "$((since - 10)),$now" \
+    python3 -m attribution.build --data "$OUT" --config k8s/demo-k8s.toml --harvest --window "$((since - 10)),$now" \
       | sed 's/^/[harvester] /'
     since=$now
   done
@@ -42,5 +42,5 @@ k8s/scripts/set-prefix-weight.sh 3
 echo "waiting ${SETTLE}s for settlement + 120s for OpenCost/Prometheus to cover the last minute..."
 sleep $((SETTLE + 120))
 cp "$HOSTDATA"/*.jsonl "$OUT"/
-python3 -m tokeneconomics.build --data "$OUT" --config k8s/demo-k8s.toml
-python3 -m tokeneconomics.report --data "$OUT"
+python3 -m attribution.build --data "$OUT" --config k8s/demo-k8s.toml
+python3 -m attribution.report --data "$OUT"

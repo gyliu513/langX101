@@ -8,7 +8,8 @@ OpenCost**，按 pod、按分钟计。它不再来自合成的 GPU 账单。
 
 下文所有内容均于 **2026-11-19/20** 在来自
 [`../../llm-d-spark-full-demo`](../../llm-d-spark-full-demo) 的 `llm-d` Kind 集群上运行。每个 `console` 块都复制自
-该会话（`logs/capture/`）。
+该会话（`logs/capture/`）。Python 包后来已从 `tokeneconomics` 改名为 `attribution`，其中的
+`python3 -m tokeneconomics.<模块>` 现在是 `python3 -m attribution.<模块>`。
 
 English version: [`README.md`](README.md). 设计与代码与
 非 Kubernetes 版本共享：[`../docs/design-zh.md`](../docs/design-zh.md)（English: [`../docs/design.md`](../docs/design.md)）。第 2 节列出了这里的不同之处。
@@ -81,7 +82,7 @@ Kubernetes + OpenCost 相比非 Kubernetes 结果新增了什么：
 |---|---|---|
 | 服务路径 | Envoy → EPP → 2 个 vLLM 容器（Docker Compose） | agentgateway → payload processor（IPP）→ EPP → 2 个 vLLM **pod** |
 | 智能体驱动程序运行位置 | 主机上的一个进程 | `llm-d` 命名空间中的一个 **Kubernetes Job**（`manifests/driver-job.tmpl.yaml`），代码来自 ConfigMap |
-| 成本与用量 | 合成的 FOCUS 行：$4/GPU-h，单一 GPU 范围 | **OpenCost allocation API**，每个 pod 每分钟一行（`tokeneconomics/opencost.py`） |
+| 成本与用量 | 合成的 FOCUS 行：$4/GPU-h，单一 GPU 范围 | **OpenCost allocation API**，每个 pod 每分钟一行（`attribution/opencost.py`） |
 | 消费范围 | GPU（`spark-3bee/gpu0`） | **pod** |
 | 未分配容量 | 仅限没有流量的时段 | OpenCost `__idle__` → `IDLE`，每分钟 |
 | 非服务 pod | 不计费 | EPP、gateway、IPP、P/D pod → `OVERHEAD`（论文 2.3.3，不算报废） |
@@ -89,7 +90,7 @@ Kubernetes + OpenCost 相比非 Kubernetes 结果新增了什么：
 | Trace 拓扑 | client → Envoy → vLLM；EPP span 为兄弟节点 | client → gateway → IPP → EPP `request` → vLLM |
 | 从 Jaeger 取出叶子 span | 运行结束后查询 | 运行期间**每 60 s 采集一次** + KV 事件 trace 过滤（[K2](#k2-epp-的-kv-事件追踪淹没了-jaeger)） |
 
-分摊规则（`tokeneconomics/build.py:allocate`）。对每个 (ResourceId, 分钟)：
+分摊规则（`attribution/build.py:allocate`）。对每个 (ResourceId, 分钟)：
 
 - **vLLM pod**：其 OpenCost 成本按 ActivityWeight（vLLM prefill + decode 时间）
   分摊到它所处理的请求上。如果该分钟它没有处理任何请求，成本归入 `IDLE`
@@ -140,7 +141,7 @@ k8s/
 └── logs/capture/                          raw command + output captures
 ```
 
-Python 代码是共享的：`../tokeneconomics/opencost.py` 是新增的，`build.py` 新增了
+Python 代码是共享的：`../attribution/opencost.py` 是新增的，`build.py` 新增了
 `allocate()`、`--harvest` 以及感知 pod 的叶子行。`../tests/` 覆盖了 OpenCost 路径。
 
 ---

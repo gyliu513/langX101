@@ -1,6 +1,6 @@
 """Render the KPI views as Markdown (for the README) and HTML (for screenshots).
 
-    python3 -m tokeneconomics.report --data data
+    python3 -m attribution.report --data data
 """
 
 from __future__ import annotations

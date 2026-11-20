@@ -181,7 +181,7 @@ llm-d 同样支持的环境中：Kubernetes 之外。
 tokeneconomics/                       （两个版本共用）
 ├── README.md / README-zh.md          overview of both variants
 ├── docs/design*.md, docs/findings.md design document and bilingual findings
-├── tokeneconomics/                   Python package, standard library only (3.11+)
+├── attribution/                      Python package, standard library only (3.11+)
 │   ├── otlp.py                       W3C traceparent/baggage + OTLP/HTTP JSON span exporter
 │   ├── workloads.py                  support_bot / triage_bot / playground + gates
 │   ├── driver.py                     runs a phase; writes requests/tasks/phases.jsonl
@@ -208,7 +208,8 @@ tokeneconomics/                       （两个版本共用）
 
 所有命令都在 `tokeneconomics/` 目录下运行（共用的 Python 包在那里）。下文的 console 代码块是在本版本移入
 `nonk8s/` 之前录制的，其中的 `scripts/run-demo.sh`、`scripts/set-prefix-weight.sh`、`data/` 和 `configs/`
-现在分别对应 `nonk8s/scripts/…`、`nonk8s/data/` 和 `nonk8s/configs/`。
+现在分别对应 `nonk8s/scripts/…`、`nonk8s/data/` 和 `nonk8s/configs/`。Python 包也已从 `tokeneconomics`
+改名为 `attribution`：其中的 `python3 -m tokeneconomics.<模块>` 现在是 `python3 -m attribution.<模块>`。
 
 ---
 
@@ -458,7 +459,7 @@ agent gave up: handed to a human  12
 
 完整的生成报告见 [`results/report.md`](results/report.md)（HTML：
 [`results/report.html`](results/report.html)）。KPI 视图位于
-[`../tokeneconomics/kpis.sql`](../tokeneconomics/kpis.sql)。
+[`../attribution/kpis.sql`](../attribution/kpis.sql)。
 
 ### 7.1 机制：亲和性 → 缓存 → prefill
 

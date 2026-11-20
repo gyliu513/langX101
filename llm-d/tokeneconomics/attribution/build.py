@@ -1,6 +1,6 @@
 """Build the five value-attribution datasets from traces + the driver's records.
 
-    python3 -m tokeneconomics.build --data nonk8s/data --config nonk8s/configs/demo.toml
+    python3 -m attribution.build --data nonk8s/data --config nonk8s/configs/demo.toml
 
 Inputs
   * Jaeger (``--jaeger``): every trace in the run window. The leaf span for the

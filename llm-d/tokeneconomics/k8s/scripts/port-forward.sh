@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Jaeger (16686) and OpenCost (9003) on this host, for tokeneconomics.build.
+# Jaeger (16686) and OpenCost (9003) on this host, for attribution.build.
 set -euo pipefail
 pkill -f "svc/jaeger-collector 16686" 2>/dev/null || true
 pkill -f "svc/opencost 9003" 2>/dev/null || true

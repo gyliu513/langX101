@@ -11,15 +11,15 @@ SETTLE=$(awk -F= '/^window_seconds/ {gsub(/ /,"",$2); print $2}' nonk8s/configs/
 mkdir -p "$OUT"
 
 nonk8s/scripts/set-prefix-weight.sh 3
-python3 -m tokeneconomics.driver --phase baseline --note "prefix-cache-scorer weight 3" \
+python3 -m attribution.driver --phase baseline --note "prefix-cache-scorer weight 3" \
   --duration "$DUR" --concurrency "$CONC" --out "$OUT"
 
 nonk8s/scripts/set-prefix-weight.sh 0
-python3 -m tokeneconomics.driver --phase incident --note "prefix-cache-scorer weight 0" \
+python3 -m attribution.driver --phase incident --note "prefix-cache-scorer weight 0" \
   --duration "$DUR" --concurrency "$CONC" --out "$OUT"
 
 nonk8s/scripts/set-prefix-weight.sh 3          # restore the healthy config
 echo "waiting ${SETTLE}s for the last outcomes' settlement window..."
 sleep $((SETTLE + 5))
-python3 -m tokeneconomics.build --data "$OUT" --config nonk8s/configs/demo.toml
-python3 -m tokeneconomics.report --data "$OUT"
+python3 -m attribution.build --data "$OUT" --config nonk8s/configs/demo.toml
+python3 -m attribution.report --data "$OUT"
