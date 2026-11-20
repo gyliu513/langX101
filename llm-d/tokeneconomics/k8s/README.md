@@ -1,6 +1,6 @@
 # llm-d Token Economics on Kubernetes: OpenCost as the bill
 
-This is the Kubernetes variant of [`../`](../README.md). It runs the same agent workloads,
+This is the Kubernetes variant of [`../nonk8s/`](../nonk8s/README.md). It runs the same agent workloads,
 the same five value-attribution datasets and the same KubeCon incident (EPP
 `prefix-cache-scorer` weight 3 → 0). This time llm-d runs **on Kubernetes** (Kind on the DGX
 Spark, GPU through the NVIDIA device plugin), and the **Cost and Usage dataset comes
@@ -67,7 +67,7 @@ What Kubernetes + OpenCost adds to the no-Kubernetes result:
 
 ## 1. Background
 
-See [`../README.md` §1](../README.md#1-background) for the Tokenomics Foundation paper
+See [`../README.md` §1](../nonk8s/README.md#1-background) for the Tokenomics Foundation paper
 (*Value Attribution Data Architecture* v0.1.8: Cost and Usage → Telemetry → Task → Outcome → Value,
 joined by `focus.workload.id` / `focus.task.id` / `focus.outcome.id`) and for the KubeCon NA
 2026 talk this continues. That talk showed llm-d + **OpenCost** producing cost per token. This
@@ -78,7 +78,7 @@ read per task, per outcome and per dollar of value.
 
 ## 2. What changes on Kubernetes
 
-| | no Kubernetes ([`../`](../README.md)) | Kubernetes (this folder) |
+| | no Kubernetes ([`../nonk8s/`](../nonk8s/README.md)) | Kubernetes (this folder) |
 |---|---|---|
 | Serving path | Envoy → EPP → 2 vLLM containers (Docker Compose) | agentgateway → payload processor (IPP) → EPP → 2 vLLM **pods** |
 | Where the agent driver runs | a process on the host | a **Kubernetes Job** in the `llm-d` namespace (`manifests/driver-job.tmpl.yaml`), code from a ConfigMap |
@@ -103,7 +103,7 @@ Allocation rule (`tokeneconomics/build.py:allocate`). For each (ResourceId, minu
 
 ## 3. Use cases and test cases
 
-The workloads, gates, rate cards and phases are identical to [`../README.md` §3](../README.md#3-use-cases-and-test-design):
+The workloads, gates, rate cards and phases are identical to [`../README.md` §3](../nonk8s/README.md#3-use-cases-and-test-design):
 support_bot (billing dispute agent, long unique context, 2 steps), triage_bot (alert triage),
 and UNLINKED playground traffic. They run with the same seed and the same mix.
 
@@ -399,7 +399,7 @@ why the demo keeps `IDLE` as its own line.
 ### 7.5 Quality still decides value
 
 Gate 1 at 100% and Gate 2 at about 33% for support_bot; value −$6,807 against a vLLM-pod bill
-of $0.43 for the whole run. This is the same conclusion as [`../README.md` §7.4](../README.md#74-quality-dominates-value).
+of $0.43 for the whole run. This is the same conclusion as [`../README.md` §7.4](../nonk8s/README.md#74-quality-dominates-value).
 
 ---
 

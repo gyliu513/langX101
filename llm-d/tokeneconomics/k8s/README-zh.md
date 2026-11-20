@@ -1,6 +1,6 @@
 # Kubernetes 上的 llm-d Token 经济学：以 OpenCost 作为账单
 
-这是 [`../`](../README-zh.md) 的 Kubernetes 版本。它运行相同的智能体工作负载、
+这是 [`../nonk8s/`](../nonk8s/README-zh.md) 的 Kubernetes 版本。它运行相同的智能体工作负载、
 相同的五个价值归因数据集以及相同的 KubeCon 事故（EPP
 `prefix-cache-scorer` 权重 3 → 0）。这一次 llm-d 运行**在 Kubernetes 上**（DGX
 Spark 上的 Kind，GPU 通过 NVIDIA device plugin 提供），**成本与用量数据集来自
@@ -69,7 +69,7 @@ Kubernetes + OpenCost 相比非 Kubernetes 结果新增了什么：
 
 关于 Tokenomics Foundation 论文（*Value Attribution Data Architecture* v0.1.8：成本与用量 → 遥测 → 任务 → 结果 → 价值，
 通过 `focus.workload.id` / `focus.task.id` / `focus.outcome.id` 关联）以及本工作所延续的 KubeCon NA
-2026 演讲，参见 [`../README-zh.md` §1](../README-zh.md#1-背景)。那次演讲展示了 llm-d + **OpenCost** 产出每 token 成本。本
+2026 演讲，参见 [`../README-zh.md` §1](../nonk8s/README-zh.md#1-背景)。那次演讲展示了 llm-d + **OpenCost** 产出每 token 成本。本
 版本将 OpenCost 的按 pod 分摊结果送入论文的数据集，从而同一份账单可以
 按任务、按结果、按每美元价值来解读。
 
@@ -77,7 +77,7 @@ Kubernetes + OpenCost 相比非 Kubernetes 结果新增了什么：
 
 ## 2. Kubernetes 上有哪些变化
 
-| | 非 Kubernetes（[`../`](../README-zh.md)） | Kubernetes（本目录） |
+| | 非 Kubernetes（[`../nonk8s/`](../nonk8s/README-zh.md)） | Kubernetes（本目录） |
 |---|---|---|
 | 服务路径 | Envoy → EPP → 2 个 vLLM 容器（Docker Compose） | agentgateway → payload processor（IPP）→ EPP → 2 个 vLLM **pod** |
 | 智能体驱动程序运行位置 | 主机上的一个进程 | `llm-d` 命名空间中的一个 **Kubernetes Job**（`manifests/driver-job.tmpl.yaml`），代码来自 ConfigMap |
@@ -102,7 +102,7 @@ Kubernetes + OpenCost 相比非 Kubernetes 结果新增了什么：
 
 ## 3. 用例与测试用例
 
-工作负载、门、费率卡和阶段与 [`../README-zh.md` §3](../README-zh.md#3-用例与测试设计) 完全相同：
+工作负载、门、费率卡和阶段与 [`../README-zh.md` §3](../nonk8s/README-zh.md#3-用例与测试设计) 完全相同：
 support_bot（账单争议智能体，长且唯一的上下文，2 个步骤）、triage_bot（告警分诊），
 以及 UNLINKED 的 playground 流量。它们使用相同的随机种子和相同的流量配比运行。
 
@@ -398,7 +398,7 @@ CPQO 都会翻倍，而路由事故会被淹没在噪声中。这就是
 ### 7.5 质量仍然决定价值
 
 support_bot 第一道门（任务门）为 100%，第二道门（结果门）约为 33%；价值为 −$6,807，而整个运行的 vLLM pod 账单
-仅为 $0.43。这与 [`../README-zh.md` §7.4](../README-zh.md#74-质量主导价值) 的结论相同。
+仅为 $0.43。这与 [`../README-zh.md` §7.4](../nonk8s/README-zh.md#74-质量主导价值) 的结论相同。
 
 ---
 

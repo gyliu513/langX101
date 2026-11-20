@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Records "prompt + command + real output" for every README step into
-# logs/capture/NN-*.txt (pasted into README.md / README-zh.md).
+# nonk8s/logs/capture/NN-*.txt (pasted into README.md / README-zh.md).
 # Not needed to use the demo; kept so the documented output can be regenerated.
-# Run after scripts/run-demo.sh has produced data/.
+# Run after nonk8s/scripts/run-demo.sh has produced nonk8s/data/.
 set -uo pipefail
-cd "$(dirname "$0")/.."
-OUT=logs/capture; rm -rf "$OUT"; mkdir -p "$OUT"
+cd "$(dirname "$0")/../.."           # the tokeneconomics folder
+OUT=nonk8s/logs/capture; rm -rf "$OUT"; mkdir -p "$OUT"
 P='gyliu@spark-3bee:~/tokeneconomics$'
 NONK8S_DIR=${NONK8S_DIR:-$HOME/llm-d-nonk8s}
 blk() { exec >"$OUT/$1.txt" 2>&1; }
@@ -28,13 +28,13 @@ run "curl -s localhost:8081/v1/chat/completions -H 'Content-Type: application/js
   | python3 -c 'import json,sys; r=json.load(sys.stdin); print(r[\"choices\"][0][\"message\"][\"content\"], r[\"usage\"])'"
 
 blk 03-weight
-run "NONK8S_DIR=$NONK8S_DIR scripts/set-prefix-weight.sh 0 2>&1 | grep -v -E '^ *Container'"
-run "NONK8S_DIR=$NONK8S_DIR scripts/set-prefix-weight.sh 3 2>&1 | grep -v -E '^ *Container'"
+run "NONK8S_DIR=$NONK8S_DIR nonk8s/scripts/set-prefix-weight.sh 0 2>&1 | grep -v -E '^ *Container'"
+run "NONK8S_DIR=$NONK8S_DIR nonk8s/scripts/set-prefix-weight.sh 3 2>&1 | grep -v -E '^ *Container'"
 
 blk 04-trace
 run "python3 scripts/trace-tree.py \$(python3 - <<'PY'
 import json
-rows=[json.loads(l) for l in open('data/requests.jsonl')]
+rows=[json.loads(l) for l in open('nonk8s/data/requests.jsonl')]
 r=[x for x in rows if x['phase']=='baseline' and x['step']=='compute' and x['trace_id']][-1]
 print(r['trace_id'])
 PY
@@ -42,10 +42,10 @@ PY
 
 blk 05-datasets
 for t in cost_and_usage telemetry task outcome value; do
-  run "head -3 data/$t.csv; echo ...; wc -l < data/$t.csv"
+  run "head -3 nonk8s/data/$t.csv; echo ...; wc -l < nonk8s/data/$t.csv"
 done
 
 blk 06-sql
-run "sqlite3 -header -column data/tokeneconomics.db \"SELECT phase, WorkloadId, requests, kv_cache_hit_ratio, prefill_gpu_s, decode_gpu_s, printf('%.4f', cost_usd) cost FROM kpi_infra\""
-run "sqlite3 -header -column data/tokeneconomics.db \"SELECT phase, WorkloadId, tasks, task_yield, sla_survival, printf('%.5f', cpqo) cpqo, printf('%.3f', gpu_s_per_qo) gpu_s_per_qo, printf('%.2f', estimated) value FROM kpi_workload\""
-run "sqlite3 -header -column data/tokeneconomics.db \"SELECT OutcomeEntryNotes, COUNT(*) n FROM outcome GROUP BY 1 ORDER BY 2 DESC\""
+run "sqlite3 -header -column nonk8s/data/tokeneconomics.db \"SELECT phase, WorkloadId, requests, kv_cache_hit_ratio, prefill_gpu_s, decode_gpu_s, printf('%.4f', cost_usd) cost FROM kpi_infra\""
+run "sqlite3 -header -column nonk8s/data/tokeneconomics.db \"SELECT phase, WorkloadId, tasks, task_yield, sla_survival, printf('%.5f', cpqo) cpqo, printf('%.3f', gpu_s_per_qo) gpu_s_per_qo, printf('%.2f', estimated) value FROM kpi_workload\""
+run "sqlite3 -header -column nonk8s/data/tokeneconomics.db \"SELECT OutcomeEntryNotes, COUNT(*) n FROM outcome GROUP BY 1 ORDER BY 2 DESC\""

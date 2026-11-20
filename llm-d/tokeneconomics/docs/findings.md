@@ -3,13 +3,13 @@
 Source run: `llm-d/tokeneconomics`, DGX Spark (GB10), 2026-11-19, vLLM 0.27.1, EPP `main`
 (2026-11-16), Qwen2.5-1.5B-Instruct × 2, baseline (`prefix-cache-scorer` weight 3) vs
 incident (weight 0), 310 s each, 12 concurrent agents. Full evidence:
-[`../README.md`](../README.md) / [`../README-zh.md`](../README-zh.md); Kubernetes findings K1-K6:
+[`../nonk8s/README.md`](../nonk8s/README.md) / [`../nonk8s/README-zh.md`](../nonk8s/README-zh.md); Kubernetes findings K1-K6:
 [`../k8s/README.md`](../k8s/README.md) / [`../k8s/README-zh.md`](../k8s/README-zh.md).
 
 数据来源：`llm-d/tokeneconomics`，DGX Spark（GB10），2026-11-19，vLLM 0.27.1，EPP `main`
 （2026-11-16），Qwen2.5-1.5B-Instruct × 2，基线（`prefix-cache-scorer` 权重 3）对比
 故障（权重 0），每个阶段 310 秒，12 个并发 agent。完整证据见
-[`../README.md`](../README.md) / [`../README-zh.md`](../README-zh.md)；Kubernetes 相关发现 K1-K6 见
+[`../nonk8s/README.md`](../nonk8s/README.md) / [`../nonk8s/README-zh.md`](../nonk8s/README-zh.md)；Kubernetes 相关发现 K1-K6 见
 [`../k8s/README.md`](../k8s/README.md) / [`../k8s/README-zh.md`](../k8s/README-zh.md)。
 
 ---

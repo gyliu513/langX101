@@ -12,7 +12,7 @@ from tokeneconomics.workloads import (Alert, judge_support, judge_triage, make_t
                                       refund_calculator)
 
 HERE = os.path.dirname(__file__)
-CONFIG = os.path.join(HERE, "..", "configs", "demo.toml")
+CONFIG = os.path.join(HERE, "..", "nonk8s", "configs", "demo.toml")
 
 
 @pytest.fixture

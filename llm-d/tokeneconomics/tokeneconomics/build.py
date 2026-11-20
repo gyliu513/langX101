@@ -1,6 +1,6 @@
 """Build the five value-attribution datasets from traces + the driver's records.
 
-    python3 -m tokeneconomics.build --data data --config configs/demo.toml
+    python3 -m tokeneconomics.build --data nonk8s/data --config nonk8s/configs/demo.toml
 
 Inputs
   * Jaeger (``--jaeger``): every trace in the run window. The leaf span for the
@@ -333,7 +333,7 @@ def write(db: sqlite3.Connection, out: str, name: str, rows: list[dict]) -> None
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--data", default="data")
-    p.add_argument("--config", default="configs/demo.toml")
+    p.add_argument("--config", default="nonk8s/configs/demo.toml")
     p.add_argument("--jaeger", default="http://127.0.0.1:16686")
     p.add_argument("--harvest", action="store_true",
                    help="only fetch the latest phase's vLLM leaf spans from Jaeger into leaves.jsonl and exit "

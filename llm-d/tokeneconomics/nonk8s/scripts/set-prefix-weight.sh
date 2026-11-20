@@ -2,10 +2,10 @@
 # Re-render the EPP precise-prefix config with a given prefix-cache-scorer
 # weight and restart the EPP on it. weight 3 = upstream default (healthy);
 # weight 0 = the KubeCon NA 2026 demo's bad config change.
-#   scripts/set-prefix-weight.sh 0
+#   nonk8s/scripts/set-prefix-weight.sh 0
 set -euo pipefail
 W=${1:?usage: set-prefix-weight.sh <weight>}
-NONK8S_DIR=${NONK8S_DIR:-$(cd "$(dirname "$0")/../../llm-d-spark-nonk8s-demo" && pwd)}
+NONK8S_DIR=${NONK8S_DIR:-$(cd "$(dirname "$0")/../../../llm-d-spark-nonk8s-demo" && pwd)}
 cd "$NONK8S_DIR"
 set -a; . ./.env; set +a
 CFG=config-precise-w$W.yaml
